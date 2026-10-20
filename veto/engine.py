@@ -293,7 +293,8 @@ class Engine:
                 return self.vault_id
 
         setup = self.pp.create_setup_token(
-            payment_source=self._vault_source(), idempotency_key="veto-vault-setup"
+            payment_source=self._vault_source(),
+            idempotency_key=f"veto-vault-setup-{int(time.time()) // 60}",
         )
         setup_id = setup["id"]
 
