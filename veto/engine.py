@@ -287,8 +287,10 @@ class Engine:
 
         state = ROOT / ".state" / "vault.json"
         if self.live and state.exists():
-            self.vault_id = json.loads(state.read_text())["vault_id"]
-            return self.vault_id
+            saved = json.loads(state.read_text())
+            if saved.get("mode", "sandbox") == "sandbox":
+                self.vault_id = saved["vault_id"]
+                return self.vault_id
 
         setup = self.pp.create_setup_token(
             payment_source=self._vault_source(), idempotency_key="veto-vault-setup"
@@ -324,7 +326,10 @@ class Engine:
         self.vault_id = token["id"]
         state = ROOT / ".state" / "vault.json"
         state.parent.mkdir(exist_ok=True)
-        state.write_text(json.dumps({"vault_id": self.vault_id}, indent=2))
+        state.write_text(json.dumps({
+            "vault_id": self.vault_id,
+            "mode": "sandbox" if self.live else "mock",
+        }, indent=2))
         return self.vault_id
 
     # -- pipeline -------------------------------------------------------
