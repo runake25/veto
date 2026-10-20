@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slack harness · Veto</title>
+<link rel="stylesheet" href="/ui/src/app.css">
+<style>
+@font-face{font-family:"IBM Plex Sans";font-style:normal;font-weight:400;font-display:block;src:url("/ui/assets/sans400.woff2") format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-style:normal;font-weight:500;font-display:block;src:url("/ui/assets/sans500.woff2") format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-style:normal;font-weight:600;font-display:block;src:url("/ui/assets/sans600.woff2") format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:400;font-display:block;src:url("/ui/assets/mono400.woff2") format("woff2")}
+
+body { overflow: hidden; }
+@keyframes arrive { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes stampIn { 0% { opacity: 0; transform: scale(1.035); } 55% { opacity: 1; transform: scale(.998); } 100% { opacity: 1; transform: none; } }
+.msg { animation: arrive 240ms cubic-bezier(.16,.9,.24,1) both; }
+.msg .card { animation: arrive 280ms cubic-bezier(.16,.9,.24,1) both; }
+.consent.is-stamping { animation: stampIn 300ms cubic-bezier(.2,.8,.2,1) both; }
+@media (prefers-reduced-motion: reduce) { .msg, .msg .card, .consent.is-stamping { animation: none !important; } }
+.thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding-right: 4px; }
+.msg { display: flex; gap: 10px; }
+.who { display: flex; align-items: baseline; gap: 8px; }
+.who b { font-size: 13px; font-weight: 600; }
+.who span { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.bubble {
+  margin-top: 3px;
+  font-size: 14px;
+  line-height: 21px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 2px 10px 10px 10px;
+  padding: 9px 12px;
+  max-width: 60ch;
+}
+.avatar.dark { background: var(--text); color: #fff; }
+.avatar.accent { background: var(--accent); color: #fff; }
+.composer { display: flex; gap: 8px; flex: none; }
+.composer input {
+  flex: 1; min-width: 0; height: 36px;
+  border: 1px solid var(--control); border-radius: var(--radius-control);
+  background: var(--surface); padding: 0 12px; font-size: 14px;
+}
+.composer input:focus-visible { outline-offset: 1px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; flex: none; }
+.preset {
+  font-size: 12px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 4px 10px; background: var(--surface);
+}
+.preset:hover { border-color: var(--control); color: var(--text); }
+.card { flex: none; }
+.agent-inline { font-size: 12px; color: var(--muted); }
+.tag-c3 { border-color: var(--accent-soft); background: var(--accent-soft); color: var(--accent-ink); }
+.line .item { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.thumb { width: 26px; height: 26px; border-radius: 3px; object-fit: cover; background: var(--raised); flex: none; }
+.ltext { min-width: 0; display: block; }
+.lname { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.lmerc { display: block; font-size: 11px; color: var(--faint); line-height: 15px; }
+.lmerc a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--border); }
+.lmerc a:hover { color: var(--text); border-color: var(--text); }
+.card-sum { display: flex; align-items: baseline; gap: 8px; margin-left: auto; font-size: 12px; color: var(--faint); }
+.card-sum b { font-size: 15px; color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.rail-inline { display: grid; grid-template-columns: 1fr 250px; gap: 18px; }
+.rail-inline .rail { display: block; }
+.rail-inline .rail-step { padding-bottom: 12px; }
+@media (max-width: 860px) { .rail-inline { grid-template-columns: 1fr; } }
+.mode { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; padding: 0 8px; }
+.mode .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--positive); flex: none; }
+.mode.warn .dot { background: var(--warning); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 4.2 9.9 15.6l6.5-11.4"/><path d="M12.4 17.4h5"/></svg>
+      <span class="brand-name">Veto</span>
+      <span class="brand-scope">Local harness</span>
+    </div>
+    <div></div>
+    <div class="topbar-right">
+      <a class="btn btn-sm" href="/">Console</a>
+      <span class="avatar">PR</span>
+    </div>
+  </header>
+  <div class="body">
+    <div class="sidebar">
+      <div class="nav-label">Surfaces</div>
+      <a class="nav-item" href="/"><span class="lbl">Console</span></a>
+      <a class="nav-item" href="/demo" aria-current="page"><span class="lbl">Slack harness</span></a>
+      <div class="nav-label">Runtime</div>
+      <div class="mode" id="m-paypal"><span class="dot"></span><span>checking…</span></div>
+      <div class="mode" id="m-llm"><span class="dot"></span><span>checking…</span></div>
+      <div class="mode" id="m-vault"><span class="dot"></span><span>no vault</span></div>
+      <div class="sidebar-foot">
+        <div class="side-note"><b>Intake is Slack only</b><span>Each message is a <code class="mono">/veto</code> in an agent's channel. The agent extracts the items, prices them, applies its rules, and tags the request for analytics.</span></div>
+      </div>
+    </div>
+    <div class="sheet-wrap">
+      <main class="sheet">
+        <div class="sheet-inner">
+          <div class="titlerow">
+            <div class="lead">
+              <h1>Slack harness</h1>
+              <p class="sub">One message in, one decision out. This runs the same engine, the same charter rules and the same PayPal calls as the deployed bot.</p>
+            </div>
+            <div class="actions"><span class="stamp" id="stamp">connecting…</span></div>
+          </div>
+          <div class="presets" id="presets"></div>
+          <div class="thread" id="thread"></div>
+          <form class="composer" id="composer">
+            <input id="text" type="text" autocomplete="off" placeholder="Post to #office-ops as Dan Okafor…" aria-label="Message text">
+            <button class="btn btn-primary" type="submit">Send</button>
+          </form>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+<script>
+const PRESETS = [
+  "we need 2 boxes of vertuo intenso capsules and 1 pack of bamboo toilet paper from kettle supply",
+  "can you order a split ergonomic keyboard for me from northgate tools",
+  "order one anti-fatigue standing mat from ergo depot"
+];
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function api(path, body) {
+  const res = await fetch(path, body
+    ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }
+    : {});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.status + " " + res.statusText);
+  return data;
+}
+
+const STATUS = {
+  awaiting: ["pill pill-await", "Awaiting your consent"],
+  vetoed: ["pill pill-veto", "Vetoed"],
+  blocked: ["pill pill-veto", "Blocked"],
+  captured: ["plain-status", "Captured"],
+  auto: ["plain-status", "Auto-approved"]
+};
+function statusMark(s) {
+  const [cls, label] = STATUS[s] || ["plain-status", s];
+  return '<span class="' + cls + '">' + label + "</span>";
+}
+
+function fmtWhen(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  return d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function rail(events, status) {
+  const steps = events.map((e, i) => {
+    const last = i === events.length - 1;
+    const live = last && status === "awaiting";
+    const stopped = last && (status === "vetoed" || status === "blocked");
+    const cls = live ? "is-live" : stopped ? "is-stopped" : "is-done";
+    const label = e.kind === "slack" ? "Slash /veto" : e.label;
+    return '<li class="rail-step ' + cls + '"><span class="rail-mark"></span>' +
+      '<div class="rail-head"><span class="rail-what">' + esc(label) + "</span></div>" +
+      (e.detail ? '<div class="rail-ref">' + esc(e.detail) + "</div>" : "") + "</li>";
+  });
+  if (status === "awaiting") {
+    steps.push('<li class="rail-step is-todo"><span class="rail-mark"></span>' +
+      '<div class="rail-head"><span class="rail-what">Order and capture</span></div>' +
+      '<div class="rail-ref">nothing moves until you sign</div></li>');
+  }
+  return '<ol class="rail">' + steps.join("") + "</ol>";
+}
+
+function requestCard(r) {
+  const awaiting = r.status === "awaiting";
+  const badUnit = (r.reasons || []).find((x) => x.rule === "per_unit_cap");
+  const lines = r.lines.map((l) => {
+    const over = badUnit && parseFloat(String(l.unit).replace(/[$,]/g, "")) > parseFloat(String(badUnit.limit).replace(/[$,]/g, ""));
+    const thumb = l.image ? '<img class="thumb" src="' + esc(l.image) + '" alt="" loading="lazy">' : "";
+    const merc = l.vendor
+      ? '<span class="lmerc">' + (l.url ? '<a href="' + esc(l.url) + '" target="_blank" rel="noopener">' + esc(l.vendor) + "</a>" : esc(l.vendor)) +
+        (l.source === "channel3" ? " · Channel3" : "") + "</span>"
+      : "";
+    return '<div class="line' + (over ? " bad" : "") + '">' +
+      '<span class="item" title="' + esc(l.item) + '">' + thumb +
+        '<span class="ltext"><span class="lname">' + esc(l.item) + "</span>" + merc + "</span></span>" +
+      '<span class="qty">' + esc(l.qty) + '</span><span class="unit num">' + esc(l.unit) + '</span>' +
+      '<span class="total num">' + esc(l.line) + "</span></div>";
+  }).join("");
+  const reasons = (r.reasons || []).map((x) =>
+    "<dt>" + esc(x.rule) + "</dt><dd>" + esc(x.observed) + " against " + esc(x.limit) + "</dd>").join("");
+  const p = r.paypal || {};
+  const consent = r.consent || {};
+  return '<article class="card">' +
+    '<div class="card-head"><h2 class="card-title">' + esc(r.title) + "</h2>" + statusMark(r.status) +
+      (r.agent ? '<span class="agent-inline">' + esc(r.agent.name) + '</span><span class="tag">' + esc(r.agent.tag) + "</span>" : "") +
+      ((r.lines || []).some((l) => l.source === "channel3") ? '<span class="tag tag-c3">Channel3</span>' : "") +
+      '<span class="card-sum">' + esc(r.charter) + " · <b>" + esc(r.total) + "</b></span></div>" +
+    '<div class="lines"><div class="line-head"><span>Item</span><span class="r">Qty</span><span class="r">Unit</span><span class="r">Line</span></div>' +
+      lines + '<div class="lines-total">' + esc(r.id) + ' <span class="note">requested by ' + esc(r.requester) + " in " + esc(r.channel) + "</span><b>" + esc(r.total) + "</b></div></div>" +
+    '<div class="rail-inline" style="padding:0 16px 16px">' +
+      '<div>' + (reasons ? '<dl class="kv" style="padding:0">' + reasons + "</dl>" : "") +
+        (consent.cart_hash
+          ? '<div class="consent' + (consent.issued ? " is-stamping" : "") + '" style="margin-top:12px"><div class="consent-head"><h2>Consent</h2>' +
+            '<span class="consent-flag">' + (consent.issued ? "Signed" : "Not issued") + "</span></div>" +
+            (consent.issued
+              ? '<div class="hash"><code>sha256:' + esc(consent.cart_hash).slice(0, 24) + '…</code></div>'
+              : '<p class="consent-none">Signing issues one hash of this exact cart, single use.</p>') +
+            '<div class="consent-grid"><div><span class="k">Approver</span><span class="v">' + esc(consent.approver) + "</span></div>" +
+            '<div><span class="k">Bound to</span><span class="v">' + esc(r.id) + " · " + esc(r.total) + "</span></div>" +
+            '<div><span class="k">Single use</span><span class="v">' + (consent.single_use ? "Yes" : "No") + "</span></div>" +
+            '<div><span class="k">Expires</span><span class="v">' + esc(fmtWhen(consent.expires_at)) + "</span></div></div></div>"
+          : "") +
+        (p.order_id ? '<div class="kv" style="padding:12px 0 0"><dt>PayPal</dt><dd class="mono-val">' + esc(p.order_id) + (p.capture_id ? " · " + esc(p.capture_id) : "") + "</dd></div>" : "") +
+      "</div>" +
+      '<div><div class="card-title" style="font-size:13px;margin-bottom:6px">Authority</div>' + rail(r.events || [], r.status) + "</div>" +
+    "</div>" +
+    (awaiting ? '<div class="card-foot" style="gap:8px"><button class="btn btn-primary" data-approve="' + esc(r.id) + '">Approve</button>' +
+      '<button class="btn btn-danger" data-veto="' + esc(r.id) + '">Veto</button>' +
+      '<span class="end" style="color:var(--faint)">Approving issues one single-use consent, then calls PayPal.</span></div>' : "") +
+    (p.needs_vault ? '<div class="card-foot" style="gap:8px">' +
+      '<button class="btn" type="button" data-connect>Connect the company wallet</button>' +
+      '<span class="end" style="color:var(--faint)">Approved. Capture waits for a one-time PayPal approval of the wallet.</span></div>' : "") +
+    "</article>";
+}
+
+const message = (text) => '<div class="msg"><span class="avatar dark">DO</span><div style="min-width:0">' +
+  '<div class="who"><b>Dan Okafor</b><span>#office-ops · 14:29</span></div>' +
+  '<div class="bubble"><code class="mono">/veto</code> ' + esc(text) + "</div></div></div>";
+
+const agentNote = (html) => '<div class="msg"><span class="avatar accent">V</span>' +
+  '<div style="min-width:0;flex:1"><div class="who"><b>Veto</b><span>agent</span></div>' + html + "</div></div>";
+
+async function send(text) {
+  const thread = $("#thread");
+  thread.insertAdjacentHTML("beforeend", message(text));
+  thread.insertAdjacentHTML("beforeend", agentNote('<div class="bubble">Reading the message, pricing the cart, checking the charter…</div>'));
+  thread.scrollTop = thread.scrollHeight;
+  try {
+    const { request } = await api("/api/request", { text });
+    thread.lastElementChild.remove();
+    thread.insertAdjacentHTML("beforeend", agentNote(requestCard(request)));
+  } catch (e) {
+    thread.lastElementChild.remove();
+    thread.insertAdjacentHTML("beforeend", agentNote('<div class="block-error">' + esc(e.message) + "</div>"));
+  }
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function decide(id, action, btn) {
+  btn.disabled = true;
+  try {
+    const { request } = await api("/api/decide", { id, action });
+    btn.closest(".card").outerHTML = requestCard(request);
+    $("#thread").insertAdjacentHTML("beforeend", agentNote('<div class="bubble" style="background:var(--surface)">' +
+      (action === "approve"
+        ? "Consent signed. PayPal captured " + esc(request.total) + "."
+        : "Vetoed. No consent, no order, no capture.") + "</div>"));
+    $("#thread").scrollTop = $("#thread").scrollHeight;
+  } catch (e) {
+    btn.disabled = false;
+    btn.insertAdjacentHTML("afterend", '<span class="block-error" style="margin:0 0 0 8px">' + esc(e.message) + "</span>");
+  }
+}
+
+async function connectWallet(btn) {
+  btn.disabled = true;
+  btn.textContent = "Opening PayPal…";
+  try {
+    const res = await api("/api/connect");
+    const url = res.approve_url;
+    if (!url) {
+      btn.textContent = "Wallet connected";
+      return;
+    }
+    window.open(url, "_blank", "noopener");
+    const foot = btn.parentElement;
+    foot.insertAdjacentHTML("beforeend",
+      '<span class="conn" style="display:flex;gap:8px;align-items:center;margin-left:10px">' +
+      '<a class="link" href="' + esc(url) + '" target="_blank" rel="noopener">Open the approval page</a>' +
+      '<button class="btn btn-sm btn-primary" type="button" data-connect-finish>I approved it</button></span>');
+    btn.remove();
+    foot.querySelector("[data-connect-finish]").focus();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "Connect the company wallet";
+    alert(e.message);
+  }
+}
+
+async function finishConnect(btn) {
+  btn.disabled = true;
+  btn.textContent = "Finishing…";
+  try {
+    await api("/api/connect/finish");
+    btn.textContent = "Wallet connected";
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "I approved it";
+    alert(e.message);
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const conn = e.target.closest("[data-connect]");
+  if (conn) { connectWallet(conn); return; }
+  const fin = e.target.closest("[data-connect-finish]");
+  if (fin) { finishConnect(fin); return; }
+  const a = e.target.closest("[data-approve]");
+  const v = e.target.closest("[data-veto]");
+  const p = e.target.closest("[data-preset]");
+  if (a) decide(a.getAttribute("data-approve"), "approve", a);
+  if (v) decide(v.getAttribute("data-veto"), "veto", v);
+  if (p) { $("#text").value = p.getAttribute("data-preset"); $("#text").focus(); }
+});
+
+$("#composer").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("#text");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  send(text);
+});
+
+$("#presets").innerHTML = PRESETS.map((p) =>
+  '<button class="preset" type="button" data-preset="' + esc(p) + '">' + esc(p.slice(0, 46)) + (p.length > 46 ? "…" : "") + "</button>").join("");
+
+(async () => {
+  try {
+    const state = await api("/api/state");
+    const pp = $("#m-paypal");
+    pp.classList.toggle("warn", state.paypal_mode !== "live");
+    pp.lastElementChild.textContent = "PayPal " + (state.paypal_mode || "sandbox");
+    const llm = $("#m-llm");
+    llm.classList.toggle("warn", state.llm_mode !== "live");
+    llm.lastElementChild.textContent = "DeepSeek " + (state.llm_mode === "deepseek" ? "live" : state.llm_mode || "stub");
+    if (state.catalog_mode) {
+      let el = $("#m-catalog");
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "mode";
+        el.id = "m-catalog";
+        el.innerHTML = '<span class="dot"></span><span></span>';
+        $("#m-vault").before(el);
+      }
+      el.lastElementChild.textContent = "Channel3 " + (state.catalog_mode === "channel3" ? "live" : "off");
+      el.classList.toggle("warn", state.catalog_mode !== "channel3");
+    }
+    if (state.vault_id) $("#m-vault").lastElementChild.textContent = "Vault " + state.vault_id;
+    $("#stamp").textContent = state.requests.length + " requests this session";
+    const last = state.requests[state.requests.length - 1];
+    if (last) {
+      $("#thread").insertAdjacentHTML("beforeend", agentNote(requestCard(last)));
+      $("#thread").scrollTop = $("#thread").scrollHeight;
+    } else {
+      $("#thread").innerHTML = '<div class="msg"><span class="avatar accent">V</span><div style="min-width:0">' +
+        '<div class="who"><b>Veto</b><span>agent</span></div>' +
+        '<div class="bubble">Nothing this session yet. Pick a preset above or send your own message.</div></div></div>';
+    }
+  } catch (e) {
+    $("#stamp").textContent = "engine offline";
+    $("#thread").innerHTML = '<div class="block-error">The engine is not answering on this port. Start it with ' +
+      '<code class="mono">python3 server.py</code>, then open <code class="mono">/demo</code>. (' + esc(e.message) + ")</div>";
+  }
+})();
+</script>
+</body>
+</html>

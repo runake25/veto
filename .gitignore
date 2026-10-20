@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+node_modules/
+.taste-skill/
+*.log
+
+# agent tooling installed by npx, not part of the project
+.agents/
+.claude/
+agent/
+skills-lock.json
+__pycache__/
+*.pyc
+.state/
