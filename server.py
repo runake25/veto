@@ -128,7 +128,10 @@ class Handler(BaseHTTPRequestHandler):
             view = ENGINE._view(req)
             verdict = "approved and captured" if view["status"] == "captured" else (
                 "approved, capture waits for the wallet" if view["status"] in ("auto", "approved") else "vetoed")
-            text = f"*{verdict}* by {user} · {view['title']} · {view['total']}\n{rid} · tag `{view['tag']}`"
+            tag = (view.get("agent") or {}).get("tag") or "general"
+            paypal_id = (view.get("paypal") or {}).get("capture_id") or (view.get("paypal") or {}).get("order_id") or ""
+            text = (f"*{verdict}* by {user} · {view['title']} · {view['total']}\n"
+                    f"{rid} · tag `{tag}`" + (f" · `{paypal_id}`" if paypal_id else ""))
             return self._json(200, {
                 "replace_original": True,
                 "response_type": "in_channel",

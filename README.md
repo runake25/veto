@@ -96,6 +96,30 @@ If no approved merchant carries the item, or nothing maps to an allowed category
 request is **blocked with that reason** instead of quietly proposing something outside
 policy. Meals stay on the local list: food is a service, not a catalogue product.
 
+### PayPal: two modes, one line apart
+
+| `.env` | What the runner does | Needs a login? |
+|---|---|---|
+| `PAYPAL_LIVE=0` | built-in simulator: order → authorise → capture, same shapes, fake ids | no |
+| `PAYPAL_LIVE=1` | the real PayPal **sandbox**: real ids, real approval | one sandbox login |
+
+The code path is identical; only the base URL changes. The runner ships on `0` so
+everything works out of the box. Flip it to `1` after the step below and captures become
+real, with no other change.
+
+**The sandbox is a separate fake world — your normal PayPal login does not work there.**
+To get a sandbox login:
+
+1. Open **developer.paypal.com/dashboard** → **Testing Tools** → **Sandbox Accounts**.
+2. If no *Personal* (buyer) account is listed, create one — Type **Personal**, any country.
+3. Click **Log in** on that account. It opens `sandbox.paypal.com` already signed in.
+4. In that **same browser window**, open **http://127.0.0.1:8787/connect** and press
+   *Connect PayPal*, then Approve.
+5. Set `PAYPAL_LIVE=1` in `.env` and restart the runner.
+
+Nothing else changes: same consent, same rules, same rail — the capture just moves from
+the simulator to PayPal.
+
 ### Connecting the wallet (one click, one login)
 
 ```bash
