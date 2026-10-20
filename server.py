@@ -6,8 +6,11 @@
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
+import time
 import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -78,6 +81,69 @@ class Handler(BaseHTTPRequestHandler):
         return {k: v[0] for k, v in parse_qs(raw).items()}
 
     # -- routes ---------------------------------------------------------
+    def _verify_slack(self, raw: bytes) -> bool:
+        """Slack signs every request: v0=HMAC-SHA256(signing_secret, "v0:" + ts + ":" + body)."""
+        secret = os.environ.get("SLACK_SIGNING_SECRET", "").strip()
+        if not secret:
+            return True  # dev mode: no secret configured yet
+        ts = self.headers.get("X-Slack-Request-Timestamp", "")
+        sig = self.headers.get("X-Slack-Signature", "")
+        if not ts or not sig:
+            return False
+        try:
+            if abs(time.time() - int(ts)) > 60 * 5:
+                return False
+        except ValueError:
+            return False
+        base = ("v0:" + ts + ":").encode() + raw
+        want = "v0=" + hmac.new(secret.encode(), base, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(want, sig)
+
+    def _slack_interact(self) -> None:
+        """A human pressed Approve or Veto in Slack. Slack posts a urlencoded form
+        with a `payload` JSON blob; we answer with an updated message."""
+        raw = self._raw()
+        if not self._verify_slack(raw):
+            return self._json(401, {"error": "bad signature"})
+        form = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace")).items()}
+        try:
+            payload = json.loads(form.get("payload") or "{}")
+        except json.JSONDecodeError:
+            return self._json(400, {"error": "payload must be JSON"})
+        actions = payload.get("actions") or []
+        if not actions:
+            return self._json(200, {"ok": True})
+        action = actions[0]
+        rid = action.get("value") or ""
+        verb = "approve" if action.get("action_id") == "veto_approve" else "veto"
+        user = (payload.get("user") or {}).get("username") or (payload.get("user") or {}).get("name") or "a human"
+        try:
+            req = ENGINE.requests.get(rid)
+            if req is None:
+                raise KeyError(rid)
+            if verb == "approve":
+                ENGINE.approve(rid)
+            else:
+                ENGINE.veto(rid)
+            view = ENGINE._view(req)
+            verdict = "approved and captured" if view["status"] == "captured" else (
+                "approved, capture waits for the wallet" if view["status"] in ("auto", "approved") else "vetoed")
+            text = f"*{verdict}* by {user} · {view['title']} · {view['total']}\n{rid} · tag `{view['tag']}`"
+            return self._json(200, {
+                "replace_original": True,
+                "response_type": "in_channel",
+                "text": text,
+                "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": text}}],
+            })
+        except VaultRequired as exc:
+            return self._json(200, {
+                "replace_original": False,
+                "response_type": "ephemeral",
+                "text": f"Approved, but the company wallet has to be connected first: {exc}",
+            })
+        except Exception as exc:  # noqa: BLE001
+            return self._json(200, {"response_type": "ephemeral", "text": f"Could not action {rid}: {exc}"})
+
     def _slack_veto(self) -> None:
         """The slash command itself. Slack sends command/text/user_name/channel_name;
         we answer in Slack's own shape, so the same URL works as a Slack app endpoint
@@ -135,8 +201,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        if path == "/api/slack/veto" and urlparse(self.path).query.startswith("ssl_check"):
+            return self._json(200, {"ok": True})
         if path == "/":
             return self._file("index.html")
+        if path == "/connect":
+            return self._file("demo/connect.html")
         if path == "/demo":
             return self._file("demo/demo.html")
         if path == "/api/state":
@@ -152,6 +222,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/slack/veto":
             return self._slack_veto()
+        if path == "/api/slack/interact":
+            return self._slack_interact()
         body = self._body()
         try:
             if path == "/api/request":

@@ -1,0 +1,29 @@
+# Paste this into api.slack.com/apps → Create New App → From an app manifest.
+# Replace the two https://… placeholders with your public tunnel URL, then
+# install the app to your workspace and copy the two secrets into .env.
+display_information:
+  name: Veto
+  description: Every purchase an agent proposes has to pass the team's spending charter. Over the line? A human signs first.
+  background_color: "#17191b"
+features:
+  bot_user:
+    display_name: Veto
+    always_online: true
+  slash_commands:
+    - command: /veto
+      url: https://REPLACE-ME.ngrok-free.app/api/slack/veto
+      description: Ask Veto to buy something
+      usage_hint: 2 packs of bamboo toilet paper from the studio budget
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - commands
+      - chat:write
+      - chat:write.public
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://REPLACE-ME.ngrok-free.app/api/slack/interact
+  org_deploy_enabled: false
+  socket_mode_enabled: false

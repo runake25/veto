@@ -96,6 +96,34 @@ If no approved merchant carries the item, or nothing maps to an allowed category
 request is **blocked with that reason** instead of quietly proposing something outside
 policy. Meals stay on the local list: food is a service, not a catalogue product.
 
+### Connecting the wallet (one click, one login)
+
+```bash
+python3 server.py
+open http://127.0.0.1:8787/connect
+```
+
+One button. PayPal asks you to log in as the **sandbox buyer** and approve; the page
+notices by itself and turns all three steps green. Until this is done, approved carts
+stop at "capture waits for the wallet" instead of moving money.
+
+### Putting `/veto` in a real Slack channel (three steps)
+
+The endpoint already speaks Slack; what is missing is an app registration.
+
+1. Run a public tunnel to the runner: `ngrok http 8787` (or any tunnel), and note the
+   `https://…` URL.
+2. `slack/manifest.yml` has the whole app in one file. Replace `REPLACE-ME` with the
+   tunnel host, paste the file at **api.slack.com/apps → Create New App → From an app
+   manifest**, then install it to your workspace.
+3. Copy two values into `.env` and restart: the **Signing Secret** (Basic Information)
+   and the **Bot token** (`xoxb-…`, OAuth & Permissions). Set `SLACK_SIGNING_SECRET`
+   and every request from Slack is now signature-checked.
+
+Type `/veto 2 packs of bamboo toilet paper` in any channel the app is in. The reply
+carries the decision and two buttons; pressing Approve signs the consent and calls
+PayPal, and the message updates in place.
+
 ### The slash command
 
 `POST /api/slack/veto` is the only door a request can come through. It reads the same
