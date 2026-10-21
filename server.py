@@ -127,7 +127,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _slack_interact(self) -> None:
         """A human pressed Approve or Veto in Slack. Slack posts a urlencoded form
-        with a `payload` JSON blob; we answer with an updated message."""
+        with a `payload` JSON blob; we answer with an updated message.
+
+        It is also the URL Slack probes when the app is created, before a signing
+        secret exists, so a challenge has to be echoed back or the manifest fails
+        with "Request URL did not respond with a challenge"."""
         raw = self._raw()
         if not self._verify_slack(raw):
             return self._json(401, {"error": "bad signature"})
@@ -135,7 +139,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(form.get("payload") or "{}")
         except json.JSONDecodeError:
-            return self._json(400, {"error": "payload must be JSON"})
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        challenge = payload.get("challenge") or form.get("challenge") or ""
+        if challenge and payload.get("type") in ("url_verification", None):
+            return self._json(200, {"challenge": challenge})
         actions = payload.get("actions") or []
         if not actions:
             return self._json(200, {"ok": True})
