@@ -316,10 +316,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             signed = bool((os.environ.get("SLACK_SIGNING_SECRET") or "").strip())
             bot = bool((os.environ.get("SLACK_BOT_TOKEN") or "").strip())
+            saved = ENGINE._read_vault_state()
+            vault = ENGINE.vault_id or saved.get("vault_id")
             return self._json(200, {
                 "ok": True, "paypal": ENGINE.paypal_mode, "llm": ENGINE.llm_mode,
-                "catalog": ENGINE.catalog_mode, "vault": bool(ENGINE.vault_id),
-                "vault_pending": bool(ENGINE.pending_setup or ENGINE._read_vault_state().get("pending_setup")),
+                "catalog": ENGINE.catalog_mode, "vault": bool(vault),
+                "vault_id": vault,
+                "vault_pending": bool(ENGINE.pending_setup or saved.get("pending_setup")),
                 "public_url": PUBLIC_URL or None,
                 "slack": {"signing_secret": signed, "bot_token": bot,
                           "app_ready": signed and bot},

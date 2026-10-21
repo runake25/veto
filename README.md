@@ -126,6 +126,15 @@ To get a sandbox login:
 Nothing else changes: same consent, same rules, same rail — the capture just moves from
 the simulator to PayPal.
 
+**A vaulted wallet changes the shape of the calls.** Once the payer approves once, the
+payment is merchant-initiated (`stored_credential`, `usage: SUBSEQUENT`), and PayPal fills
+the order while creating it: the order comes back `COMPLETED` with its authorization
+already attached. Calling `/authorize` on that order answers `422
+ORDER_ALREADY_AUTHORIZED`. So `_pay` reads what PayPal built and only falls back to an
+explicit authorize-then-capture when the order arrives empty. Verified both ways against
+the sandbox: auto-approval captured `7EK989323J293960J`, a human-approved cart captured
+`54A73878WD450251A`.
+
 ### Connecting the wallet (one click, one login)
 
 ```bash
@@ -220,8 +229,8 @@ Honest inventory. Do not claim more than this in the pitch.
 | Pricing | **Live Channel3** — real products, real merchants, real buy links; local 8-line list only as fallback | already |
 | Charter rules | Real, deterministic, 7 rules | already |
 | Consent | Real sha256 cart hash, single-use, 10-min expiry | already |
-| PayPal | **Live sandbox** — OAuth and order creation verified against `api-m.sandbox.paypal.com`; needs one vaulted wallet for the capture path | open the `/api/connect` approve URL as the sandbox buyer |
-| Slack | Not wired; the harness stands in for `#office-ops` | Slack app + `/veto` |
+| PayPal | **Live sandbox, end to end** — vaulted wallet, real order → authorization → capture, real ids. Both paths run: rules-pass captures with no human, a Slack approval captures after the click | already |
+| Slack | Endpoints built and tested — slash command, block-kit reply, interactivity with HMAC verification, `ssl_check`. No workspace registration (Slack restricts account creation in some regions, Hong Kong included), so the harness stands in for the channel | install the app in a workspace outside a restricted region |
 | Console | Static October dataset so the screenshots are reproducible | feed `ui/src/app.js` its `DATA` from `/api/state` |
 
 The mock reproduces PayPal's real shape — status lifecycle, 4xx envelopes, and

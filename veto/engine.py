@@ -646,21 +646,32 @@ class Engine:
         req["events"].append({"kind": "order", "label": "Order created",
                               "detail": f"intent AUTHORIZE · {order_id}"})
 
-        auth_resp = self.pp.authorize_order(order_id, idempotency_key=nonce + ":auth")
-        auth = PayPalClient.first_authorization(auth_resp) or auth_resp
+        # A vaulted wallet makes this a merchant-initiated payment: PayPal fills the
+        # order while creating it, so the authorization already exists and calling
+        # /authorize again answers 422 ORDER_ALREADY_AUTHORIZED. Read what it built;
+        # only authorize ourselves when the order came back empty.
+        auth = PayPalClient.first_authorization(order)
+        if auth is None and (order.get("status") or "").upper() != "COMPLETED":
+            auth_resp = self.pp.authorize_order(order_id, idempotency_key=nonce + ":auth")
+            auth = PayPalClient.first_authorization(auth_resp) or auth_resp
+        auth = auth or {}
         auth_id = auth.get("id", "")
-        req["paypal"]["authorization_id"] = auth_id
-        req["events"].append({"kind": "auth", "label": "Authorized",
-                              "detail": f"{auth_id} · funds held, not taken"})
+        if auth_id:
+            req["paypal"]["authorization_id"] = auth_id
+            req["events"].append({"kind": "auth", "label": "Authorized",
+                                  "detail": f"{auth_id} · funds held, not taken"})
 
-        cap_resp = self.pp.capture_authorization(auth_id, idempotency_key=nonce + ":capture")
-        cap = PayPalClient.first_capture(cap_resp) or cap_resp
+        cap = PayPalClient.first_capture(order)
+        if cap is None and auth_id:
+            cap_resp = self.pp.capture_authorization(auth_id, idempotency_key=nonce + ":capture")
+            cap = PayPalClient.first_capture(cap_resp) or cap_resp
+        cap = cap or {}
         cap_id = cap.get("id", "")
         req["paypal"]["capture_id"] = cap_id
         req["paypal"]["status"] = (cap.get("status") or "COMPLETED")
         req["events"].append({
             "kind": "capture", "label": "Captured",
-            "detail": f"{cap_id} · {money(req['total'])} moved",
+            "detail": f"{cap_id or 'no capture id'} · {money(req['total'])} moved",
         })
         req["status"] = "captured"
         return req
