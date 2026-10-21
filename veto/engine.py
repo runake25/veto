@@ -307,6 +307,17 @@ class Engine:
             return {}
         return saved
 
+    def _env_vault(self) -> dict:
+        """A pre-approved wallet supplied by the environment.
+
+        Hosted deployments have no browser to walk the /connect approval in, and an
+        ephemeral filesystem cannot keep .state. Handing the approved payment token
+        in as PAYPAL_VAULT_ID lets the hosted demo capture for real on first boot."""
+        vault_id = (os.environ.get("PAYPAL_VAULT_ID") or "").strip()
+        if not vault_id or not self.live:
+            return {}
+        return {"vault_id": vault_id, "mode": "sandbox", "source": "env"}
+
     def _write_vault_state(self, **fields) -> None:
         state = self._read_vault_state()
         if fields.get("vault_id"):
@@ -324,6 +335,11 @@ class Engine:
         server picks up the approval the payer already gave instead of burning
         a fresh one and orphaning the link in their browser."""
         if self.vault_id:
+            return self.vault_id
+
+        from_env = self._env_vault()
+        if from_env.get("vault_id"):
+            self.vault_id = from_env["vault_id"]
             return self.vault_id
 
         saved = self._read_vault_state()

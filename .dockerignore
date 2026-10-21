@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+*.log
+.state/
+node_modules/
+shots/
+demo/veto-demo.mp4
+.agents/
+.claude/
+agent/
+.taste-skill/
+slack/manifest.json

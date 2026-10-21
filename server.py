@@ -27,6 +27,8 @@ from veto.engine import ApprovalPending, Engine, VaultRequired  # noqa: E402
 
 ENGINE = Engine()
 PORT = int(os.environ.get("PORT", "8787"))
+# containers and hosted platforms need 0.0.0.0; local runs stay on loopback
+HOST = (os.environ.get("HOST") or "127.0.0.1").strip()
 # set VETO_PUBLIC_URL when the app is behind a tunnel, so Slack buttons link out
 PUBLIC_URL = (os.environ.get("VETO_PUBLIC_URL") or "").strip().rstrip("/")
 
@@ -325,7 +327,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             signed = bool((os.environ.get("SLACK_SIGNING_SECRET") or "").strip())
             bot = bool((os.environ.get("SLACK_BOT_TOKEN") or "").strip())
-            saved = ENGINE._read_vault_state()
+            saved = {**ENGINE._env_vault(), **ENGINE._read_vault_state()}
             vault = ENGINE.vault_id or saved.get("vault_id")
             return self._json(200, {
                 "ok": True, "paypal": ENGINE.paypal_mode, "llm": ENGINE.llm_mode,
@@ -413,9 +415,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"\n  Veto runner")
-    print(f"  console   http://127.0.0.1:{PORT}/")
+    print(f"  app       http://{HOST}:{PORT}/")
     print(f"  harness   http://127.0.0.1:{PORT}/demo")
     print(f"  wallet    http://127.0.0.1:{PORT}/connect")
     print(f"  paypal    {ENGINE.paypal_mode}   llm  {ENGINE.llm_mode}   catalog {ENGINE.catalog_mode}")

@@ -1,0 +1,39 @@
+# One-click deploy on Render (free plan, Docker). Secrets are set in the dashboard,
+# never in this file. Health check keeps the service awake while a demo is running.
+services:
+  - type: web
+    name: veto
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PAYPAL_LIVE
+        value: "1"
+      - key: PAYPAL_BASE
+        value: https://api-m.sandbox.paypal.com
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      # the already-approved wallet token, so the hosted demo can capture without a browser
+      - key: PAYPAL_VAULT_ID
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_BASE
+        value: https://api.deepseek.com
+      - key: CHANNEL3_API_KEY
+        sync: false
+      - key: CHANNEL3_COUNTRY
+        value: US
+      - key: CHANNEL3_CURRENCY
+        value: USD
+      # public hostname, e.g. https://veto.onrender.com — used for the Slack callback links
+      - key: VETO_PUBLIC_URL
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: SLACK_BOT_TOKEN
+        sync: false
