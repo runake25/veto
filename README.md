@@ -15,16 +15,22 @@ Two things live here:
 ## Run it
 
 ```bash
-python3 server.py
+./start.sh          # tunnel + runner, one command
+python3 server.py   # runner only, local
 ```
 
 ```
 console   http://127.0.0.1:8787/
 harness   http://127.0.0.1:8787/demo
-paypal    mock   llm  deepseek
+wallet    http://127.0.0.1:8787/connect
+paypal    sandbox   llm  deepseek   catalog channel3
 ```
 
 Python 3.10+, no dependencies, nothing to install. Keys are read from `.env`.
+
+`start.sh` brings up a Cloudflare quick tunnel first (so Slack can reach the machine),
+writes the new host into `.env`, and then starts the runner. Quick-tunnel hosts change on
+every start; the script says so and tells you to re-run `slack/link.py` when they do.
 
 **The harness (`/demo`) is the demo.** Type a message or hit a preset, and the
 whole pipeline runs for real: DeepSeek extracts the items, the catalogue prices
@@ -131,22 +137,51 @@ One button. PayPal asks you to log in as the **sandbox buyer** and approve; the 
 notices by itself and turns all three steps green. Until this is done, approved carts
 stop at "capture waits for the wallet" instead of moving money.
 
-### Putting `/veto` in a real Slack channel (three steps)
+The approval survives things that used to break it: the setup token is written to
+`.state/vault.json`, so reloading the page, clicking *Connect* twice, or restarting the
+runner picks the same pending approval back up instead of minting a new link and
+orphaning the one open in your browser. While the payer has not pressed Approve yet the
+API answers `425` ("waiting"), not `500`.
 
-The endpoint already speaks Slack; what is missing is an app registration.
+### Putting `/veto` in a real Slack channel (one link, two secrets)
 
-1. Run a public tunnel to the runner: `ngrok http 8787` (or any tunnel), and note the
-   `https://…` URL.
-2. `slack/manifest.yml` has the whole app in one file. Replace `REPLACE-ME` with the
-   tunnel host, paste the file at **api.slack.com/apps → Create New App → From an app
-   manifest**, then install it to your workspace.
-3. Copy two values into `.env` and restart: the **Signing Secret** (Basic Information)
-   and the **Bot token** (`xoxb-…`, OAuth & Permissions). Set `SLACK_SIGNING_SECRET`
-   and every request from Slack is now signature-checked.
+The endpoints already speak Slack — slash command, block-kit reply, interactivity
+buttons, `ssl_check`, HMAC-SHA256 signature checks. What is missing is the app
+registration. Point a tunnel at the runner, then let the script fill in the manifest:
 
-Type `/veto 2 packs of bamboo toilet paper` in any channel the app is in. The reply
-carries the decision and two buttons; pressing Approve signs the consent and calls
-PayPal, and the message updates in place.
+```bash
+cloudflared tunnel --url http://127.0.0.1:8787     # prints https://…trycloudflare.com
+echo 'VETO_PUBLIC_URL=https://…trycloudflare.com' >> .env
+python3 slack/link.py                              # prints a one-click install link
+```
+
+1. Open the printed link, pick your workspace, press **Create**.
+2. In the new app: **Install to Workspace**.
+3. Copy two values into `.env` and restart the runner:
+
+```
+SLACK_SIGNING_SECRET=…   # Basic Information → App Credentials
+SLACK_BOT_TOKEN=xoxb-…   # OAuth & Permissions
+```
+
+Then `/veto 2 packs of bamboo toilet paper` in any channel. The reply names the agent,
+its tag, the rules that fired and the consent hash, and carries Approve / Veto buttons.
+
+Two things that matter in a real workspace:
+
+- **Slack gives a slash command three seconds.** Pricing a cart takes one to four —
+  DeepSeek, then the live catalogue. So a real Slack call is acknowledged in
+  milliseconds (*"Checking the charter…"*) and the decision arrives through
+  `response_url` from a worker thread. `curl` gets the answer inline as before.
+- **Approving needs a connected wallet.** With no vault, the ephemeral reply carries a
+  *Connect PayPal* button that opens `/connect` on the tunnel instead of failing.
+
+`GET /api/health` reports both bindings at a glance:
+
+```json
+{"paypal":"sandbox","vault":false,"vault_pending":true,
+ "slack":{"signing_secret":false,"bot_token":false,"app_ready":false}}
+```
 
 ### The slash command
 
@@ -254,6 +289,9 @@ index.html           the console, offline, demo data
 ui/src/              console source: data.js (dataset, agents, catalogue), app.css, app.js
 ui/shoot.mjs         drives Chrome: interaction checks + the three screenshots
 spike/               PayPal capability gate: client, mock, notes, live gate
+slack/link.py        one-command Slack app install link (fills in the tunnel URL)
+slack/manifest.yml   the same app manifest, for pasting by hand
+demo/connect.html    the one-page wallet connect flow
 proto/extract_items.py  prompt-level tests for the extraction step
 shots/               console screenshots, 1440x900 @2x
 ```

@@ -164,6 +164,14 @@ class VaultRequired(Exception):
         self.setup_id = setup_id
 
 
+class ApprovalPending(Exception):
+    """The payer has not pressed Approve in PayPal yet."""
+
+    def __init__(self, setup_id: str = "") -> None:
+        super().__init__("the payer has not approved the wallet yet")
+        self.setup_id = setup_id
+
+
 # ---------------------------------------------------------------------------
 # LLM
 # ---------------------------------------------------------------------------
@@ -281,56 +289,114 @@ class Engine:
             }
         }
 
+    # -- wallet state on disk -------------------------------------------
+    @property
+    def _vault_file(self) -> Path:
+        return ROOT / ".state" / "vault.json"
+
+    def _read_vault_state(self) -> dict:
+        try:
+            saved = json.loads(self._vault_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(saved, dict):
+            return {}
+        # a token minted by the local mock must never be replayed against the sandbox
+        want = "sandbox" if self.live else "mock"
+        if saved.get("mode", "sandbox") != want:
+            return {}
+        return saved
+
+    def _write_vault_state(self, **fields) -> None:
+        state = self._read_vault_state()
+        if fields.get("vault_id"):
+            state.pop("pending_setup", None)
+            state.pop("approve_url", None)
+        state.update(fields)
+        state.setdefault("mode", "sandbox" if self.live else "mock")
+        self._vault_file.parent.mkdir(exist_ok=True)
+        self._vault_file.write_text(json.dumps(state, indent=2))
+
     def ensure_vault(self) -> str:
+        """Return the company wallet token, minting one if needed.
+
+        The setup token is persisted, so reloading /connect or restarting the
+        server picks up the approval the payer already gave instead of burning
+        a fresh one and orphaning the link in their browser."""
         if self.vault_id:
             return self.vault_id
 
-        state = ROOT / ".state" / "vault.json"
-        if self.live and state.exists():
-            saved = json.loads(state.read_text())
-            if saved.get("mode", "sandbox") == "sandbox":
-                self.vault_id = saved["vault_id"]
-                return self.vault_id
+        saved = self._read_vault_state()
+        if saved.get("vault_id"):
+            self.vault_id = saved["vault_id"]
+            return self.vault_id
+
+        if not self.live:
+            setup = self.pp.create_setup_token(
+                payment_source=self._vault_source(),
+                idempotency_key=f"veto-vault-setup-{int(time.time()) // 60}",
+            )
+            setup_id = setup["id"]
+            self.pending_setup = setup_id
+            self.mock.approve_setup_token(setup_id)
+            token = self.pp.create_payment_token(
+                payment_source={"token": {"id": setup_id, "type": "SETUP_TOKEN"}},
+                idempotency_key="veto-vault-token",
+            )
+            self.vault_id = token["id"]
+            return self.vault_id
+
+        # already waiting on a human? keep the same link alive
+        pending = saved.get("pending_setup")
+        if pending:
+            self.pending_setup = pending
+            setup = self.pp.get_setup_token(pending)
+            status = (setup.get("status") or "").upper()
+            if status == "APPROVED":
+                return self.finish_connect()
+            link = (PayPalClient.find_link(setup, "approve")
+                    or PayPalClient.find_link(setup, "payer-action")
+                    or saved.get("approve_url"))
+            if link:
+                raise VaultRequired(link, pending)
+            raise ApprovalPending(pending)
 
         setup = self.pp.create_setup_token(
             payment_source=self._vault_source(),
             idempotency_key=f"veto-vault-setup-{int(time.time()) // 60}",
         )
         setup_id = setup["id"]
-
-        link = PayPalClient.find_link(setup, "approve") or PayPalClient.find_link(setup, "payer-action")
+        link = (PayPalClient.find_link(setup, "approve")
+                or PayPalClient.find_link(setup, "payer-action"))
         self.pending_setup = setup_id
-
-        if not self.live:
-            self.mock.approve_setup_token(setup_id)
-        elif link:
-            raise VaultRequired(link, setup_id)
-
-        token = self.pp.create_payment_token(
-            payment_source={"token": {"id": setup_id, "type": "SETUP_TOKEN"}},
-            idempotency_key="veto-vault-token",
-        )
-        self.vault_id = token["id"]
-        if self.live:
-            state.parent.mkdir(exist_ok=True)
-            state.write_text(json.dumps({"vault_id": self.vault_id}, indent=2))
-        return self.vault_id
+        if not link:
+            raise ApprovalPending(setup_id)
+        self._write_vault_state(pending_setup=setup_id, approve_url=link)
+        raise VaultRequired(link, setup_id)
 
     def finish_connect(self) -> str:
         """Call after the payer approves in the browser (live mode only)."""
-        if not self.pending_setup:
+        saved = self._read_vault_state()
+        if saved.get("vault_id") and not self.pending_setup:
+            self.vault_id = saved["vault_id"]
+            return self.vault_id
+
+        setup_id = self.pending_setup or saved.get("pending_setup")
+        if not setup_id:
             raise RuntimeError("no pending setup token; call /api/connect first")
-        token = self.pp.create_payment_token(
-            payment_source={"token": {"id": self.pending_setup, "type": "SETUP_TOKEN"}},
-            idempotency_key="veto-vault-token",
-        )
+
+        try:
+            token = self.pp.create_payment_token(
+                payment_source={"token": {"id": setup_id, "type": "SETUP_TOKEN"}},
+                idempotency_key="veto-vault-token",
+            )
+        except Exception as exc:  # noqa: BLE001 - PayPal says "not approved yet"
+            if "SETUP_TOKEN" in str(exc).upper() or "422" in str(exc):
+                raise ApprovalPending(setup_id) from exc
+            raise
         self.vault_id = token["id"]
-        state = ROOT / ".state" / "vault.json"
-        state.parent.mkdir(exist_ok=True)
-        state.write_text(json.dumps({
-            "vault_id": self.vault_id,
-            "mode": "sandbox" if self.live else "mock",
-        }, indent=2))
+        self.pending_setup = None
+        self._write_vault_state(vault_id=self.vault_id, customer_id=token.get("customer", {}).get("id"))
         return self.vault_id
 
     # -- pipeline -------------------------------------------------------

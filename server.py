@@ -10,9 +10,11 @@ import hashlib
 import hmac
 import json
 import os
+import threading
 import time
 import sys
 import traceback
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -21,10 +23,34 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from veto.engine import Engine, VaultRequired  # noqa: E402
+from veto.engine import ApprovalPending, Engine, VaultRequired  # noqa: E402
 
 ENGINE = Engine()
 PORT = int(os.environ.get("PORT", "8787"))
+# set VETO_PUBLIC_URL when the app is behind a tunnel, so Slack buttons link out
+PUBLIC_URL = (os.environ.get("VETO_PUBLIC_URL") or "").strip().rstrip("/")
+
+
+def public_base() -> str:
+    if PUBLIC_URL:
+        return PUBLIC_URL
+    return f"http://127.0.0.1:{PORT}"
+
+
+def connect_url(path: str = "/connect") -> str:
+    return public_base() + path
+
+
+def post_json(url: str, payload: dict) -> None:
+    """Post a Slack response_url body. Fire and forget; failures are not fatal."""
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json; charset=utf-8"}
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15).read()
+    except Exception:  # noqa: BLE001
+        pass
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -117,6 +143,22 @@ class Handler(BaseHTTPRequestHandler):
         rid = action.get("value") or ""
         verb = "approve" if action.get("action_id") == "veto_approve" else "veto"
         user = (payload.get("user") or {}).get("username") or (payload.get("user") or {}).get("name") or "a human"
+        response_url = payload.get("response_url") or ""
+
+        # PayPal captures take a second or two; Slack gives us three. Ack first,
+        # then replace the message through response_url from a worker thread.
+        if response_url:
+            self._json(200, {"ok": True})
+            threading.Thread(
+                target=self._slack_decide_job, args=(rid, verb, user, response_url), daemon=True
+            ).start()
+            return
+        self._json(200, self._slack_decide_payload(rid, verb, user))
+
+    def _slack_decide_job(self, rid: str, verb: str, user: str, response_url: str) -> None:
+        post_json(response_url, self._slack_decide_payload(rid, verb, user))
+
+    def _slack_decide_payload(self, rid: str, verb: str, user: str) -> dict:
         try:
             req = ENGINE.requests.get(rid)
             if req is None:
@@ -132,20 +174,43 @@ class Handler(BaseHTTPRequestHandler):
             paypal_id = (view.get("paypal") or {}).get("capture_id") or (view.get("paypal") or {}).get("order_id") or ""
             text = (f"*{verdict}* by {user} · {view['title']} · {view['total']}\n"
                     f"{rid} · tag `{tag}`" + (f" · `{paypal_id}`" if paypal_id else ""))
-            return self._json(200, {
+            return {
                 "replace_original": True,
                 "response_type": "in_channel",
                 "text": text,
                 "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": text}}],
-            })
+            }
         except VaultRequired as exc:
-            return self._json(200, {
+            wallet_url = connect_url("/connect")
+            return {
                 "replace_original": False,
                 "response_type": "ephemeral",
-                "text": f"Approved, but the company wallet has to be connected first: {exc}",
-            })
+                "text": "The company wallet has to be connected before this can capture.",
+                "blocks": [
+                    {"type": "section", "text": {"type": "mrkdwn",
+                     "text": "*Connect the wallet first*\nOne payer approval, then every rule-pass captures on its own."}},
+                    {"type": "actions", "elements": [
+                        {"type": "button", "text": {"type": "plain_text", "text": "Connect PayPal"},
+                         "style": "primary", "url": wallet_url, "action_id": "veto_connect"},
+                    ]},
+                ],
+            }
+        except ApprovalPending:
+            return {
+                "replace_original": False,
+                "response_type": "ephemeral",
+                "text": "Still waiting on the PayPal approval. Open the wallet page and press Approve.",
+                "blocks": [
+                    {"type": "section", "text": {"type": "mrkdwn",
+                     "text": "*Waiting on the payer*\nThe wallet approval has not come back yet."}},
+                    {"type": "actions", "elements": [
+                        {"type": "button", "text": {"type": "plain_text", "text": "Finish connecting"},
+                         "style": "primary", "url": connect_url("/connect"), "action_id": "veto_connect"},
+                    ]},
+                ],
+            }
         except Exception as exc:  # noqa: BLE001
-            return self._json(200, {"response_type": "ephemeral", "text": f"Could not action {rid}: {exc}"})
+            return {"response_type": "ephemeral", "text": f"Could not action {rid}: {exc}"}
 
     def _slack_veto(self) -> None:
         """The slash command itself. Slack sends command/text/user_name/channel_name;
@@ -153,27 +218,61 @@ class Handler(BaseHTTPRequestHandler):
         and from curl:
             curl -X POST localhost:8787/api/slack/veto \
                  -d 'command=/veto&text=2 boxes of capsules from kettle supply&user_name=dan'
+
+        Searching the catalogue takes 1-4s, and Slack drops the slash command after
+        three, so a real Slack call gets an immediate "on it" and the result arrives
+        through response_url. curl (no response_url) still gets the answer inline.
         """
         form = self._form()
+        text = (form.get("text") or "").strip()
+        command = form.get("command") or "/veto"
+        response_url = form.get("response_url") or ""
+        if text and response_url:
+            self._json(200, {
+                "response_type": "ephemeral",
+                "text": f"Checking the charter for “{text[:80]}”…",
+            })
+            threading.Thread(target=self._slack_veto_job, args=(form, response_url), daemon=True).start()
+            return
+        self._json(200, self._slack_veto_payload(form))
+
+    def _slack_veto_job(self, form: dict, response_url: str) -> None:
+        message = self._slack_veto_payload(form)
+        message.setdefault("response_type", "in_channel")
+        post_json(response_url, message)
+
+    def _slack_veto_payload(self, form: dict) -> dict:
         command = form.get("command") or "/veto"
         text = (form.get("text") or "").strip()
         channel = "#" + (form.get("channel_name") or "office-ops").lstrip("#")
         requester = (form.get("user_name") or "dan").strip() or "dan"
         if not text:
-            return self._json(200, {
+            return {
                 "response_type": "ephemeral",
                 "text": f"`{command}` needs something to buy. Try: `{command} 2 boxes of capsules from kettle supply`",
-            })
+            }
         try:
             req = ENGINE.create_request(text, channel=channel, requester=requester.title())
-        except VaultRequired as exc:
-            return self._json(200, {
+        except VaultRequired:
+            return {
                 "response_type": "ephemeral",
                 "text": "This workspace has to connect PayPal once before the agent can spend.",
-                "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": f"*Connect PayPal first*\n{exc}"}}],
-            })
+                "blocks": [{"type": "section", "text": {"type": "mrkdwn",
+                 "text": "*Connect PayPal first*\nThe agent can price and judge a cart, but the capture needs one payer approval."}},
+                 {"type": "actions", "elements": [
+                    {"type": "button", "text": {"type": "plain_text", "text": "Connect PayPal"},
+                     "style": "primary", "url": connect_url("/connect"), "action_id": "veto_connect"}]}],
+            }
+        except ApprovalPending:
+            return {
+                "response_type": "ephemeral",
+                "text": "The wallet approval is still pending. Finish it, then ask again.",
+                "blocks": [{"type": "actions", "elements": [
+                    {"type": "button", "text": {"type": "plain_text", "text": "Finish connecting"},
+                     "style": "primary", "url": connect_url("/connect"), "action_id": "veto_connect"}]}],
+            }
         except Exception as exc:  # noqa: BLE001
-            return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
+            return {"response_type": "ephemeral", "text": f"Could not price that: {exc}"}
 
         view = ENGINE._view(req)
         agent = view.get("agent") or {"name": "an agent", "tag": "general"}
@@ -185,7 +284,7 @@ class Handler(BaseHTTPRequestHandler):
             "auto": "Ordered automatically",
             "captured": "Ordered and captured",
         }.get(view["status"], view["status"])
-        return self._json(200, {
+        return {
             "response_type": "in_channel",
             "text": f"{head} · {view['title']} · {view['total']}",
             "blocks": [
@@ -200,7 +299,7 @@ class Handler(BaseHTTPRequestHandler):
                 {"type": "button", "text": {"type": "plain_text", "text": "Veto"}, "style": "danger",
                  "action_id": "veto_veto", "value": view["id"]},
             ]}] if view["status"] == "awaiting" else []),
-        })
+        }
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -215,9 +314,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             return self._json(200, ENGINE.snapshot())
         if path == "/api/health":
+            signed = bool((os.environ.get("SLACK_SIGNING_SECRET") or "").strip())
+            bot = bool((os.environ.get("SLACK_BOT_TOKEN") or "").strip())
             return self._json(200, {
                 "ok": True, "paypal": ENGINE.paypal_mode, "llm": ENGINE.llm_mode,
                 "catalog": ENGINE.catalog_mode, "vault": bool(ENGINE.vault_id),
+                "vault_pending": bool(ENGINE.pending_setup or ENGINE._read_vault_state().get("pending_setup")),
+                "public_url": PUBLIC_URL or None,
+                "slack": {"signing_secret": signed, "bot_token": bot,
+                          "app_ready": signed and bot},
             })
         return self._file(path.lstrip("/"))
 
@@ -252,11 +357,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"request": ENGINE._view(req)})
 
             if path == "/api/connect":
+                if body.get("reset"):
+                    ENGINE.vault_id = None
+                    ENGINE.pending_setup = None
+                    ENGINE._vault_file.unlink(missing_ok=True)
                 vault = ENGINE.ensure_vault()
                 return self._json(200, {"vault_id": vault})
 
             if path == "/api/connect/finish":
                 return self._json(200, {"vault_id": ENGINE.finish_connect()})
+
+            if path == "/api/slack/test":
+                # build, but do not send, the payload a real Slack call would get
+                return self._json(200, self._slack_veto_payload({
+                    "command": "/veto", "text": body.get("text") or "2 packs of bamboo toilet paper",
+                    "user_name": body.get("user") or "dan", "channel_name": "office-ops",
+                }))
 
             return self._json(404, {"error": "unknown route"})
 
@@ -265,7 +381,15 @@ class Handler(BaseHTTPRequestHandler):
                 "error": "payer approval required",
                 "approve_url": exc.approve_url,
                 "setup_id": exc.setup_id,
+                "connect": connect_url("/connect"),
                 "next": "open approve_url as the sandbox buyer, then POST /api/connect/finish",
+            })
+        except ApprovalPending as exc:
+            return self._json(425, {
+                "error": "waiting on the PayPal approval",
+                "setup_id": exc.setup_id,
+                "connect": connect_url("/connect"),
+                "next": "press Approve in the open PayPal tab, then POST /api/connect/finish",
             })
         except KeyError as exc:
             return self._json(404, {"error": f"no such request: {exc}"})
@@ -281,7 +405,11 @@ def main() -> int:
     print(f"\n  Veto runner")
     print(f"  console   http://127.0.0.1:{PORT}/")
     print(f"  harness   http://127.0.0.1:{PORT}/demo")
-    print(f"  paypal    {ENGINE.paypal_mode}   llm  {ENGINE.llm_mode}")
+    print(f"  wallet    http://127.0.0.1:{PORT}/connect")
+    print(f"  paypal    {ENGINE.paypal_mode}   llm  {ENGINE.llm_mode}   catalog {ENGINE.catalog_mode}")
+    if PUBLIC_URL:
+        print(f"  public    {PUBLIC_URL}")
+        print(f"  slack     {PUBLIC_URL}/api/slack/veto   {PUBLIC_URL}/api/slack/interact")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
