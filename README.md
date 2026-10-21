@@ -185,7 +185,9 @@ Two things that matter in a real workspace:
 - **Approving needs a connected wallet.** With no vault, the ephemeral reply carries a
   *Connect PayPal* button that opens `/connect` on the tunnel instead of failing.
 
-`GET /api/health` reports both bindings at a glance:
+`python3 slack/verify.py` checks the whole binding in one command: secrets present, bot token
+accepted by `auth.test` (and which workspace it is), the public URL reachable, `ssl_check`, and a
+signed `/veto` call. `GET /api/health` reports both bindings at a glance:
 
 ```json
 {"paypal":"sandbox","vault":false,"vault_pending":true,
@@ -230,7 +232,7 @@ Honest inventory. Do not claim more than this in the pitch.
 | Charter rules | Real, deterministic, 7 rules | already |
 | Consent | Real sha256 cart hash, single-use, 10-min expiry | already |
 | PayPal | **Live sandbox, end to end** — vaulted wallet, real order → authorization → capture, real ids. Both paths run: rules-pass captures with no human, a Slack approval captures after the click | already |
-| Slack | Endpoints built and tested — slash command, block-kit reply, interactivity with HMAC verification, `ssl_check`. No workspace registration (Slack restricts account creation in some regions, Hong Kong included), so the harness stands in for the channel | install the app in a workspace outside a restricted region |
+| Slack | **Live in a real workspace** — `/veto` slash command, block-kit reply, Approve/Veto buttons with HMAC-verified interactivity, `ssl_check`. Bot `veto` installed in `vetollc.slack.com`; answer acknowledged in milliseconds and delivered through `response_url` | already |
 | Console | Static October dataset so the screenshots are reproducible | feed `ui/src/app.js` its `DATA` from `/api/state` |
 
 The mock reproduces PayPal's real shape — status lifecycle, 4xx envelopes, and
