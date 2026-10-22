@@ -13,7 +13,7 @@ export function OutcomePill({
       ? 'Would pay automatically'
       : outcome === 'review'
         ? 'Would wait for a signature'
-        : 'Refused by a rule'
+        : 'Refused'
     : outcome === 'auto'
       ? 'Auto-approved'
       : outcome === 'review'

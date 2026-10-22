@@ -361,9 +361,10 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None) -> dict
     if not items:
         raise ValueError("no purchase intent found")
 
+    plural = "" if len(items) == 1 else "s"
     events = [{
         "kind": "extract",
-        "label": f"{len(items)} item(s) extracted",
+        "label": f"{len(items)} item{plural} extracted",
         "detail": ", ".join(f"{item['name']} x{item['qty']}" for item in items),
     }]
 
@@ -390,12 +391,16 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None) -> dict
         lines.append(line)
         sources.add(source)
 
-    via = "Channel3" if "channel3" in sources else "local catalogue"
     merchant_hint = ", ".join(agent.get("vendors") or []) or "no merchant"
+    if lines:
+        via = "Channel3" if "channel3" in sources else "local catalogue"
+        found = f"{via} · {merchant_hint}"
+    else:
+        found = "no match inside these merchants"
     events.append({
         "kind": "catalogue",
         "label": "Searched the catalogue",
-        "detail": f"{_text(agent.get('name'))} · {via} · {merchant_hint}",
+        "detail": f"{_text(agent.get('name'))} · {found}",
     })
     events.append({
         "kind": "price",

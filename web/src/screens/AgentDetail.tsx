@@ -7,6 +7,7 @@ import {
   money,
   type Agent,
   type AgentInput,
+  type Reason,
   type ScopedSearch,
   type SimulateResult,
 } from '../api'
@@ -14,6 +15,23 @@ import { AgentForm } from '../components/AgentForm'
 import { OutcomePill, Track } from '../components/Bits'
 import { PressButton, Spinner } from '../components/PressButton'
 import { motionSet } from '../components/motion'
+
+/* What each rule is called when a person reads it, not when the engine does. */
+const RULE_WORD: Record<string, string> = {
+  catalogue: 'catalogue',
+  category_allowlist: 'category',
+  vendor_allowlist: 'merchant',
+  monthly_cap: 'monthly cap',
+  per_order_cap: 'order cap',
+  per_unit_cap: 'item cap',
+  approval_threshold: 'signature',
+}
+
+const OVERRIDE_WORD: Record<string, string> = {
+  per_unit_cap: 'per item',
+  per_order_cap: 'per order',
+  approval_threshold: 'to sign',
+}
 
 function defaultCart(agent: Agent): string {
   if (agent.categories.includes('equipment')) return '2 anti-fatigue standing mats for the studio'
@@ -31,52 +49,125 @@ function defaultQuery(agent: Agent): string {
   return 'standing mat'
 }
 
-function Limit({ label, value }: { label: string; value: string }) {
+function Money({ cents, fallback }: { cents: number | null; fallback: string }) {
+  return cents === null ? <span className="spec-void">{fallback}</span> : <>{money(cents)}</>
+}
+
+/**
+ * The whole charter on one band: the monthly budget is the lead figure, the three
+ * caps sit beside it, and the scope (categories, merchants, exceptions) reads as
+ * plain sentences underneath. This is the policy; the read-only rule table it
+ * replaces only repeated these numbers in snake_case.
+ */
+function Guardrails({ agent }: { agent: Agent }) {
+  const on = new Set(agent.rules)
+  const monthly = on.has('monthly_cap') ? agent.monthly_cap_cents : null
+  const perOrder = on.has('per_order_cap') ? agent.per_order_cap_cents : null
+  const perItem = on.has('per_unit_cap') ? agent.per_unit_cap_cents : null
+  const signature = on.has('approval_threshold') ? agent.approval_threshold_cents : null
+  const categories = on.has('category_allowlist') ? agent.categories : null
+  const merchants = on.has('vendor_allowlist') ? agent.vendors : null
+  const exceptions = agent.overrides.filter((override) => override.value_cents !== null)
+
   return (
-    <div className="limit">
-      <p className="limit-label">{label}</p>
-      <p className="limit-value mono">{value}</p>
-    </div>
+    <section className="card guardrails">
+      <header className="card-head">
+        <h2>Guardrails</h2>
+        <span className="card-note">what this agent may do</span>
+      </header>
+
+      <div className="spec-band">
+        <div className="spec-lead">
+          <p className="spec-label">Monthly budget</p>
+          <p className="spec-number">
+            <Money cents={monthly} fallback="No cap" />
+          </p>
+        </div>
+        <div className="spec-cell">
+          <p className="spec-label">Per order</p>
+          <p className="spec-figure">
+            <Money cents={perOrder} fallback="No cap" />
+          </p>
+        </div>
+        <div className="spec-cell">
+          <p className="spec-label">Per item</p>
+          <p className="spec-figure">
+            <Money cents={perItem} fallback="No cap" />
+          </p>
+        </div>
+        <div className="spec-cell">
+          <p className="spec-label">Signature above</p>
+          <p className="spec-figure">
+            <Money cents={signature} fallback="Pays alone" />
+          </p>
+        </div>
+      </div>
+
+      {monthly !== null ? (
+        <div className="band-track">
+          <Track spentCents={0} committedCents={0} capCents={monthly} />
+        </div>
+      ) : null}
+
+      <dl className="scope-list">
+        <div className="scope">
+          <dt>Can buy</dt>
+          <dd>
+            {categories === null ? (
+              <span className="spec-void">Any category</span>
+            ) : categories.length ? (
+              <span className="scope-chips">
+                {categories.map((category) => (
+                  <span className="chip chip-quiet" key={category}>
+                    {category}
+                  </span>
+                ))}
+              </span>
+            ) : (
+              <span className="spec-void">Nothing yet</span>
+            )}
+          </dd>
+        </div>
+        <div className="scope">
+          <dt>Merchants</dt>
+          <dd>
+            {merchants === null ? (
+              <span className="spec-void">Any merchant</span>
+            ) : merchants.length ? (
+              <span className="scope-mono mono">{merchants.join(' · ')}</span>
+            ) : (
+              <span className="spec-void">None approved yet</span>
+            )}
+          </dd>
+        </div>
+        {exceptions.length ? (
+          <div className="scope">
+            <dt>Exception</dt>
+            <dd>
+              {exceptions.map((override) => (
+                <span className="scope-exception" key={`${override.category}-${override.kind}`}>
+                  <span className="chip chip-quiet">{override.category}</span>{' '}
+                  {money(override.value_cents as number)}{' '}
+                  {OVERRIDE_WORD[override.kind] ?? 'override'}
+                </span>
+              ))}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+    </section>
   )
 }
 
-function RuleRows({ agent }: { agent: Agent }) {
-  const rows: { rule: string; scope: string; value: string }[] = []
-  if (agent.monthly_cap_cents !== null)
-    rows.push({ rule: 'monthly_cap', scope: 'agent', value: money(agent.monthly_cap_cents) })
-  if (agent.per_order_cap_cents !== null)
-    rows.push({ rule: 'per_order_cap', scope: 'agent', value: money(agent.per_order_cap_cents) })
-  if (agent.per_unit_cap_cents !== null)
-    rows.push({ rule: 'per_unit_cap', scope: 'agent', value: money(agent.per_unit_cap_cents) })
-  if (agent.approval_threshold_cents !== null)
-    rows.push({
-      rule: 'approval_threshold',
-      scope: 'agent',
-      value: money(agent.approval_threshold_cents),
-    })
-  for (const override of agent.overrides) {
-    rows.push({
-      rule: override.kind,
-      scope: `${override.category} · exception`,
-      value: money(override.value_cents),
-    })
-  }
-  rows.push({ rule: 'vendor_allowlist', scope: 'agent', value: `${agent.vendors.length} merchants` })
-  rows.push({
-    rule: 'category_allowlist',
-    scope: 'agent',
-    value: agent.categories.join(', ') || 'none',
-  })
+function ReasonRow({ reason }: { reason: Reason }) {
   return (
-    <div className="rule-rows">
-      {rows.map((row) => (
-        <div className="rule-row" key={`${row.rule}-${row.scope}`}>
-          <span className="mono rule-kind">{row.rule}</span>
-          <span className="rule-scope">{row.scope}</span>
-          <span className="mono rule-value">{row.value}</span>
-        </div>
-      ))}
-    </div>
+    <li>
+      <span className={`rule-flag ${reason.severity === 'block' ? 'is-neg' : 'is-wait'}`}>
+        {RULE_WORD[reason.rule] ?? reason.rule}
+      </span>
+      <span className="reason-text">{reason.message}</span>
+      {reason.unblock ? <span className="reason-unblock">{reason.unblock}</span> : null}
+    </li>
   )
 }
 
@@ -104,11 +195,10 @@ function DryRun({ agent }: { agent: Agent }) {
     <section className="card">
       <header className="card-head">
         <h2>Try a cart</h2>
-        <span className="card-note mono">dry run</span>
+        <span className="card-note">dry run</span>
       </header>
       <p className="card-lede">
-        The real pipeline — extraction, catalogue, rules — stops before consent. Nothing is
-        ordered and no money moves.
+        The real pipeline, stopped before consent — nothing is ordered.
       </p>
       <form className="inline-form" onSubmit={run}>
         <input
@@ -144,9 +234,14 @@ function DryRun({ agent }: { agent: Agent }) {
           >
             <div className="dry-head">
               <OutcomePill outcome={result.decision.outcome} dry />
-              <span className="dry-total mono">{money(result.total_cents)}</span>
-              <span className="dry-meta mono">
-                {result.source} · {Math.round(result.elapsed_ms)}ms
+              <span className="dry-total">{money(result.total_cents)}</span>
+              <span className="dry-meta">
+                {result.lines.length
+                  ? result.source === 'channel3'
+                    ? 'Channel3'
+                    : 'local catalogue'
+                  : 'no catalogue match'}{' '}
+                · {Math.round(result.elapsed_ms)}ms
               </span>
             </div>
 
@@ -156,47 +251,67 @@ function DryRun({ agent }: { agent: Agent }) {
                   <li key={`${line.sku ?? line.title}-${line.qty}`}>
                     <span className="cart-qty mono">{line.qty}×</span>
                     <span className="cart-title">{line.title}</span>
-                    <span className="mono cart-vendor">{line.vendor ?? 'unknown'}</span>
-                    <span className="mono cart-money">{money(line.line_cents)}</span>
+                    <span className="cart-vendor mono">{line.vendor ?? 'unknown'}</span>
+                    <span className="cart-money">{money(line.line_cents)}</span>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="fineprint">Nothing could be priced for this message.</p>
+              <p className="dry-empty">
+                No offer was found inside this agent&rsquo;s scope, so the cart never got priced.
+              </p>
             )}
 
             {result.decision.reasons.length ? (
               <ul className="reason-list">
                 {result.decision.reasons.map((reason, i) => (
-                  <li key={`${reason.rule}-${i}`}>
-                    <span className={`rule-flag ${reason.severity === 'block' ? 'is-neg' : 'is-wait'}`}>
-                      {reason.rule}
-                    </span>
-                    <span className="reason-text">{reason.message}</span>
-                    {reason.unblock ? <span className="reason-unblock">{reason.unblock}</span> : null}
-                  </li>
+                  <ReasonRow reason={reason} key={`${reason.rule}-${i}`} />
                 ))}
               </ul>
             ) : (
-              <p className="fineprint">Inside every rule — in a real request this would pay with no human.</p>
+              <p className="dry-note">Inside every rule — this would pay with no human.</p>
             )}
 
             <ol className="mini-rail">
               {result.events.map((event, i) => (
                 <li key={`${event.kind}-${i}`}>
-                  <span className="mini-dot" aria-hidden="true" />
+                  <span className="mini-step mono">{String(i + 1).padStart(2, '0')}</span>
                   <span className="mini-label">{event.label}</span>
                   {event.detail ? <span className="mini-detail mono">{event.detail}</span> : null}
                 </li>
               ))}
             </ol>
-
-            <p className="fineprint">Dry run: no order, no consent, no money moved.</p>
           </motion.div>
         ) : null}
       </AnimatePresence>
     </section>
   )
+}
+
+function FitFlags({ item }: { item: ScopedSearch['results'][number] }) {
+  const flags: string[] = []
+  if (!item.fits.category) flags.push('category blocked')
+  if (!item.fits.per_unit) flags.push('over per-item cap')
+  if (!item.fits.per_order) flags.push('over per-order cap')
+  if (!flags.length) return null
+  return (
+    <span className="fit-flags">
+      {flags.map((flag) => (
+        <span className="fit-bad" key={flag}>
+          {flag}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+/** A search result's own verdict — not an approval, so it does not borrow the
+    consent language ("fits", not "auto-approved"). */
+function FitPill({ item }: { item: ScopedSearch['results'][number] }) {
+  const blocked = !item.fits.category || !item.fits.per_unit || !item.fits.per_order
+  if (blocked) return <span className="pill is-neg">Blocked</span>
+  if (!item.fits.threshold) return <span className="pill is-wait">Needs signature</span>
+  return <span className="pill is-pos">Fits</span>
 }
 
 function FindProduct({ agent }: { agent: Agent }) {
@@ -220,15 +335,15 @@ function FindProduct({ agent }: { agent: Agent }) {
     }
   }
 
+  const scope = result?.scoped_by
   return (
     <section className="card">
       <header className="card-head">
         <h2>Find a product</h2>
-        <span className="card-note mono">inside this agent&rsquo;s rules</span>
+        <span className="card-note">inside the rules</span>
       </header>
       <p className="card-lede">
-        The agent can only find what it is allowed to buy: its merchants, its categories, under
-        its caps. Results outside those lines are shown as fitting or not.
+        Only what its merchants, categories and caps allow.
       </p>
       <form className="inline-form" onSubmit={run}>
         <input
@@ -261,11 +376,9 @@ function FindProduct({ agent }: { agent: Agent }) {
             exit={{ opacity: 0, transition: { duration: 0.1 } }}
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
           >
-            <p className="scoped-line mono">
-              searched {result.scoped_by.vendors.length ? result.scoped_by.vendors.join(', ') : 'no merchants'}
-              {result.scoped_by.max_price_cents
-                ? ` · up to ${money(result.scoped_by.max_price_cents)} per order`
-                : ''}
+            <p className="scoped-line">
+              Searched {scope?.vendors.length ?? 0} merchants
+              {scope?.max_price_cents ? `, under ${money(scope.max_price_cents)} per order` : ''}
             </p>
 
             {result.results.length ? (
@@ -293,35 +406,26 @@ function FindProduct({ agent }: { agent: Agent }) {
                         <span className="mono">{item.vendor ?? 'unknown merchant'}</span>
                         {item.category ? <span className="chip chip-quiet">{item.category}</span> : null}
                       </span>
-                      <span className="fit-flags">
-                        {!item.fits.category ? <span className="fit-bad">category blocked</span> : null}
-                        {!item.fits.per_unit ? <span className="fit-bad">over per-line cap</span> : null}
-                        {!item.fits.per_order ? <span className="fit-bad">over per-order cap</span> : null}
-                        {!item.fits.threshold ? (
-                          <span className="fit-warn">would need a signature</span>
-                        ) : null}
-                        {item.fits.category && item.fits.per_unit && item.fits.per_order && item.fits.threshold ? (
-                          <span className="fit-good">fits every rule</span>
-                        ) : null}
-                      </span>
+                      <FitFlags item={item} />
                     </span>
                     <span className="result-right">
-                      <span className="mono result-price">{money(item.unit_cents)}</span>
-                      <OutcomePill outcome={item.verdict} />
+                      <span className="result-price mono">{money(item.unit_cents)}</span>
+                      <FitPill item={item} />
                     </span>
                   </motion.li>
                 ))}
               </ul>
             ) : (
-              <p className="fineprint">
-                Nothing matched inside these rules. That is the point: the agent cannot buy it.
+              <p className="dry-empty">
+                Nothing matched inside these rules. The agent cannot buy what its scope does not
+                cover.
               </p>
             )}
 
-            {result.filtered.irrelevant || result.filtered.category ? (
-              <p className="fineprint mono">
-                {result.filtered.irrelevant} dropped as irrelevant · {result.filtered.category} outside
-                the agent&rsquo;s categories
+            {result.filtered.irrelevant ? (
+              <p className="fineprint">
+                {result.filtered.irrelevant} unrelated catalogue{' '}
+                {result.filtered.irrelevant === 1 ? 'offer was' : 'offers were'} left out.
               </p>
             ) : null}
           </motion.div>
@@ -408,11 +512,17 @@ export function AgentDetail() {
         <Link to="/agents">Agents</Link> <span aria-hidden="true">/</span> <span>{agent.name}</span>
       </motion.nav>
 
-      <motion.header className="screen-head" variants={m.riseIn}>
-        <div className="agent-head">
+      <motion.header className="screen-head agent-header" variants={m.riseIn}>
+        <div>
           <h1>{agent.name}</h1>
-          <span className="chip chip-quiet">{agent.tag}</span>
-          {agent.channel ? <span className="mono agent-channel">{agent.channel}</span> : null}
+          <div className="agent-meta">
+            <span className="chip chip-quiet">{agent.tag}</span>
+            {agent.channel ? <span className="mono agent-channel">{agent.channel}</span> : null}
+            <span className={`agent-state${agent.status === 'active' ? ' is-live' : ''}`}>
+              <span className="agent-dot" aria-hidden="true" />
+              {agent.status}
+            </span>
+          </div>
         </div>
         <PressButton variant={editing ? 'quiet' : 'secondary'} onClick={() => setEditing((v) => !v)}>
           {editing ? 'Close editor' : 'Edit rules'}
@@ -432,7 +542,7 @@ export function AgentDetail() {
           >
             <header className="card-head">
               <h2>Rules for {agent.name}</h2>
-              <span className="card-note mono">guided</span>
+              <span className="card-note">guided</span>
             </header>
             <AgentForm
               initial={agent}
@@ -447,68 +557,14 @@ export function AgentDetail() {
         ) : null}
       </AnimatePresence>
 
-      <div className="cols">
-        <motion.section className="card" variants={m.riseIn}>
-          <header className="card-head">
-            <h2>Budget</h2>
-            <span className="card-note mono">
-              {agent.monthly_cap_cents ? `${money(agent.monthly_cap_cents)} / month` : 'no monthly cap'}
-            </span>
-          </header>
-          <Track spentCents={0} committedCents={0} capCents={agent.monthly_cap_cents} />
+      <motion.div variants={m.riseIn}>
+        <Guardrails agent={agent} />
+      </motion.div>
 
-          <div className="limit-grid">
-            <Limit
-              label="Per order"
-              value={agent.per_order_cap_cents !== null ? money(agent.per_order_cap_cents) : '—'}
-            />
-            <Limit
-              label="Per item"
-              value={agent.per_unit_cap_cents !== null ? money(agent.per_unit_cap_cents) : '—'}
-            />
-            <Limit
-              label="Ask above"
-              value={
-                agent.approval_threshold_cents !== null
-                  ? money(agent.approval_threshold_cents)
-                  : '—'
-              }
-            />
-            <Limit label="Merchants" value={String(agent.vendors.length)} />
-          </div>
-
-          <p className="fineprint">
-            Spent and unsigned figures fill from requests in the next milestone; the caps and
-            allowlists on this screen are already live.
-          </p>
-        </motion.section>
-
+      <div className="cols cols-tools">
         <motion.div variants={m.riseIn}>
           <DryRun agent={agent} />
         </motion.div>
-      </div>
-
-      <div className="cols cols-policy">
-        <motion.section className="card" variants={m.riseIn}>
-          <header className="card-head">
-            <h2>Policy</h2>
-            <span className="card-note mono">read-only · the actual rows</span>
-          </header>
-          <RuleRows agent={agent} />
-          <div className="chips-row">
-            {agent.categories.map((category) => (
-              <span className="chip" key={category}>
-                {category}
-              </span>
-            ))}
-            {agent.vendors.map((vendor) => (
-              <span className="chip mono" key={vendor}>
-                {vendor}
-              </span>
-            ))}
-          </div>
-        </motion.section>
-
         <motion.div variants={m.riseIn}>
           <FindProduct agent={agent} />
         </motion.div>

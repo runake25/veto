@@ -43,15 +43,18 @@ The only filled primary is near-black. Red is a refusal signal, one mark per obj
 ## Type
 
 IBM Plex Sans 400/500/600, IBM Plex Mono 400 for identifiers and keys only.
-Five sizes: 24 title (600) · 26-30 the lead figure (400) · 16 card title (600) ·
-14 body (400, 1.43) · 12 meta and labels (500 for labels). Sentence case
-throughout, no tracked capitals, tabular figures on every number.
+The scale: 24 title (600) · 26 lead figure (500) · 19 secondary figure (500) ·
+16 card title (600) · 13 body (400, 1.5) · 11.5 labels and meta (500). Sentence
+case throughout, no tracked capitals, tabular figures on every number. A card
+title is always heavier than the body text under it, and a figure is always
+larger than its label.
 
 ## Screens
 
-Six, all reachable, none decorative: the ledger, the agent list, one agent (rules as
-switches, tags, requests, the catalogue it can reach), the catalogue searched as an
-agent, analytics by tag and agent, the charters.
+Six, all reachable, none decorative: the ledger, the agent list, one agent (its
+guardrails as one band, then a dry run and a product search scoped by those
+guardrails), the catalogue searched as an agent, analytics by tag and agent, the
+charters.
 
 ## Components
 
@@ -72,6 +75,12 @@ agent, analytics by tag and agent, the charters.
   is signed yet.
 - **Palette**: 640px, 8px radius, real shadow (it floats), grouped results, `↵` on
   every row, a footer naming the keys.
+- **Guardrail band**: the agent screen's charter in one card. A lead monthly figure at
+  26px with the charter track under it, three secondary figures (per order, per item,
+  signature above) at 19px across a hairline row, then the scope as definition rows
+  (categories, merchants, exceptions) in 11.5px labels and 12.5px values. It replaces
+  the read-only rule table: every rule appears exactly once, in words, at the size its
+  importance deserves.
 - **Rule switch**: 34x20, the on state in the one hue, the rule's limit written under
   it in 12px grey. Switching it changes the catalogue count on the same screen, so the
   control has a visible consequence.
