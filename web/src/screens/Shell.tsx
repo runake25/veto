@@ -2,12 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { initials, type Me } from '../api'
 import { Wordmark } from '../components/Logo'
 
-const LATER = [
-  { label: 'Inbox' },
-  { label: 'Agents' },
-  { label: 'Analytics' },
-  { label: 'Integrations' },
-]
+const LATER = [{ label: 'Inbox' }, { label: 'Analytics' }, { label: 'Integrations' }]
 
 export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const walletOn = me.wallet.status === 'connected'
@@ -30,6 +25,12 @@ export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
               className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
             >
               Overview
+            </NavLink>
+            <NavLink
+              to="/agents"
+              className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
+            >
+              Agents
             </NavLink>
             {LATER.map((item) => (
               <span className="nav-item is-soon" key={item.label} aria-disabled="true">

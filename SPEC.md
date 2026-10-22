@@ -84,10 +84,10 @@ New endpoints answer `{"ok":true,"data":…}` or `{"ok":false,"error":{"code","m
 | `POST /api/v1/demo-session` | — | **M1 done** |
 | `GET /api/v1/me` | session | **M1 done** |
 | `GET /api/v1/agents` | session | **M1 done** |
-| `POST /api/v1/agents` · `PATCH /api/v1/agents/{id}` | admin | M2 |
-| `GET /api/v1/agents/{id}/search?q=` | session | M2 — scoped product search |
-| `POST /api/v1/simulate` | session | M2 — dry-run, persists nothing |
-| `GET /api/v1/overview` | session | M2 |
+| `POST /api/v1/agents` · `PATCH /api/v1/agents/{id}` | admin/approver | **M2 done** |
+| `GET /api/v1/agents/{id}/search?q=` | session | **M2 done** — scoped product search |
+| `POST /api/v1/simulate` | session | **M2 done** — dry-run, persists nothing |
+| `GET /api/v1/overview` | session | M3 (the screen uses `/agents` for now) |
 | `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | M3 |
 | `POST /api/v1/requests` | agent / session | M3 |
 | `POST /api/v1/requests/{id}/decision` · `/void` | approver / admin | M3 |
@@ -140,8 +140,8 @@ the end state.
 |---|---|---|
 | M0 | this spec, branch `v2` | **done** |
 | M1 | SQLite store, auth, seeded demo, session API, React shell + auth screen | **done (2026-10-22)** |
-| M2 | policy engine, agents/rules CRUD, scoped search, dry-run, Overview live | next |
-| M3 | requests/consent/payments/void/events, Slack rewired, API keys | |
+| M2 | policy engine, guided agent rules, scoped search, dry-run | **done (2026-10-22)** |
+| M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | next |
 | M4 | Inbox, Record, Agents, Analytics screens; delete the old console; `/` flips to the app | |
 | M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | |
 | M6 | README/SPEC/PRODUCT, deploy, video, Devpost text | |
@@ -152,8 +152,14 @@ the end state.
 python3 server.py            # http://127.0.0.1:8787/app/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests
+python3 -m unittest discover -s tests    # backend tests (114)
 ```
+
+M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
+extraction → catalogue → rules path and stops before consent; `GET
+/api/v1/agents/{id}/search` returns products annotated with `fits` against that
+agent's caps and verdicts. Channel3 is queried with the agent's merchants and a
+price ceiling, so the agent can only find what it may buy.
 
 `PAYPAL_LIVE=0` runs the whole loop against the in-process PayPal simulator with no keys.
 Hosted deploys pass the approved `PAYPAL_VAULT_ID` through the environment.

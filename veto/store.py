@@ -40,6 +40,20 @@ WORKSPACE_UPDATABLE = (
     "slack_team_id",
 )
 
+# Scalar agent columns a caller may change through update_agent(). The child
+# lists (vendors/categories/rules/overrides) are replaced through their own
+# keyword arguments.
+AGENT_UPDATABLE = (
+    "name",
+    "tag",
+    "channel",
+    "status",
+    "monthly_cap_cents",
+    "per_order_cap_cents",
+    "per_unit_cap_cents",
+    "approval_threshold_cents",
+)
+
 _AGENT_FIELDS = (
     "name",
     "tag",
@@ -678,6 +692,91 @@ class Store:
                 "SELECT COUNT(*) AS n FROM agents WHERE workspace_id = ?", (workspace_id,)
             )
         return int(row["n"]) if row else 0
+
+    def update_agent(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        *,
+        fields: dict | None = None,
+        vendors: list[str] | None = None,
+        categories: list[str] | None = None,
+        rules: list[str] | None = None,
+        overrides: list[dict] | None = None,
+    ) -> dict | None:
+        """Update one agent's scalars and/or replace the child lists given.
+
+        ``None`` means "leave this child list untouched". Returns the assembled
+        agent, or ``None`` when the agent does not belong to the workspace.
+        """
+        if self.agent(workspace_id, agent_id) is None:
+            return None
+        updates = dict(fields or {})
+        unknown = set(updates) - set(AGENT_UPDATABLE)
+        if unknown:
+            raise ValueError(f"unknown agent fields: {', '.join(sorted(unknown))}")
+        if "name" in updates:
+            updates["name"] = str(updates["name"] or "").strip()
+            if not updates["name"]:
+                raise ValueError("agent name is required")
+        if "status" in updates and updates["status"] not in ("active", "paused"):
+            raise ValueError(f"invalid agent status: {updates['status']}")
+        for cap in ("monthly_cap_cents", "per_order_cap_cents",
+                    "per_unit_cap_cents", "approval_threshold_cents"):
+            if cap in updates and updates[cap] is not None:
+                updates[cap] = int(updates[cap])
+
+        with self.transaction():
+            if updates:
+                assignments = ", ".join(f"{key} = ?" for key in updates)
+                self.execute(
+                    f"UPDATE agents SET {assignments} WHERE workspace_id = ? AND id = ?",
+                    list(updates.values()) + [workspace_id, agent_id],
+                )
+            if vendors is not None:
+                self.execute("DELETE FROM agent_vendors WHERE agent_id = ?", (agent_id,))
+                for domain in dict.fromkeys(vendors):
+                    self.execute(
+                        "INSERT OR IGNORE INTO agent_vendors (agent_id, domain) VALUES (?, ?)",
+                        (agent_id, str(domain)),
+                    )
+            if categories is not None:
+                self.execute("DELETE FROM agent_categories WHERE agent_id = ?", (agent_id,))
+                for category in dict.fromkeys(categories):
+                    self.execute(
+                        "INSERT OR IGNORE INTO agent_categories (agent_id, category) VALUES (?, ?)",
+                        (agent_id, str(category)),
+                    )
+            if rules is not None:
+                self.execute("DELETE FROM agent_rules WHERE agent_id = ?", (agent_id,))
+                for kind in dict.fromkeys(rules):
+                    self.execute(
+                        "INSERT OR IGNORE INTO agent_rules (agent_id, kind, enabled) "
+                        "VALUES (?, ?, 1)",
+                        (agent_id, str(kind)),
+                    )
+            if overrides is not None:
+                self.execute("DELETE FROM rule_overrides WHERE agent_id = ?", (agent_id,))
+                for override in overrides:
+                    self.execute(
+                        "INSERT INTO rule_overrides (id, agent_id, category, kind, value_cents) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            new_id("rov_", 4),
+                            agent_id,
+                            str(override.get("category") or ""),
+                            str(override.get("kind") or ""),
+                            int(override.get("value_cents") or 0),
+                        ),
+                    )
+        return self.agent(workspace_id, agent_id)
+
+    def delete_agent(self, workspace_id: str, agent_id: str) -> bool:
+        """Hard delete. Charter children cascade through foreign keys."""
+        cur = self.execute(
+            "DELETE FROM agents WHERE workspace_id = ? AND id = ?", (workspace_id, agent_id)
+        )
+        return cur.rowcount > 0
 
     # -- wallet ---------------------------------------------------------
     def set_wallet(

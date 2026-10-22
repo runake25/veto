@@ -32,6 +32,93 @@ export interface Me {
   wallet: Wallet
 }
 
+
+export type RuleKind =
+  | 'monthly_cap'
+  | 'per_order_cap'
+  | 'per_unit_cap'
+  | 'approval_threshold'
+  | 'vendor_allowlist'
+  | 'category_allowlist'
+
+export interface Reason {
+  rule: string
+  severity: 'block' | 'review'
+  message: string
+  observed_cents?: number | null
+  limit_cents?: number | null
+  unblock?: string | null
+}
+
+export interface Decision {
+  outcome: 'auto' | 'review' | 'block'
+  reasons: Reason[]
+}
+
+export interface PricedLine {
+  sku?: string | null
+  title: string
+  qty: number
+  unit_cents: number
+  line_cents: number
+  vendor?: string | null
+  category?: string | null
+  brand?: string | null
+  image?: string | null
+  url?: string | null
+  source?: string | null
+}
+
+export interface SimulateResult {
+  agent: Agent
+  items: { name: string; qty: number }[]
+  lines: PricedLine[]
+  total_cents: number
+  currency: string
+  decision: Decision
+  events: { kind: string; label: string; detail?: string | null }[]
+  source: string
+  elapsed_ms: number
+  dry_run: boolean
+}
+
+export interface SearchFit {
+  category: boolean
+  per_unit: boolean
+  per_order: boolean
+  threshold: boolean
+}
+
+export interface SearchResult extends PricedLine {
+  fits: SearchFit
+  verdict: 'auto' | 'review' | 'block'
+  reasons: Reason[]
+}
+
+export interface ScopedSearch {
+  agent: Agent
+  query: string
+  qty: number
+  source: string
+  scoped_by: { vendors: string[]; max_price_cents: number | null }
+  results: SearchResult[]
+  filtered: { irrelevant: number; category: number }
+}
+
+export interface AgentInput {
+  name: string
+  tag: string
+  channel: string | null
+  monthly_cap_cents: number | null
+  per_order_cap_cents: number | null
+  per_unit_cap_cents: number | null
+  approval_threshold_cents: number | null
+  vendors: string[]
+  categories: string[]
+  rules: string[]
+  overrides: { category: string; kind: RuleKind; value_cents: number }[]
+}
+
 export interface RuleOverride {
   category: string
   kind: string
@@ -120,6 +207,20 @@ export interface SessionData {
 export const api = {
   me: () => request<Me>('/api/v1/me'),
   agents: () => request<{ agents: Agent[] }>('/api/v1/agents').then((d) => d.agents),
+  agent: (id: string) => request<{ agent: Agent }>(`/api/v1/agents/${id}`).then((d) => d.agent),
+  createAgent: (input: AgentInput) =>
+    post<{ agent: Agent }>('/api/v1/agents', input).then((d) => d.agent),
+  updateAgent: (id: string, input: Partial<AgentInput>) =>
+    request<{ agent: Agent }>(`/api/v1/agents/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }).then((d) => d.agent),
+  searchAgent: (id: string, q: string, qty = 1) =>
+    request<ScopedSearch>(
+      `/api/v1/agents/${id}/search?q=${encodeURIComponent(q)}&qty=${qty}`,
+    ),
+  simulate: (text: string, agentId?: string) =>
+    post<SimulateResult>('/api/v1/simulate', { text, agent_id: agentId ?? null }),
   login: (email: string, password: string) =>
     post<SessionData>('/api/v1/login', { email, password }),
   signup: (payload: SignupPayload) => post<SessionData>('/api/v1/signup', payload),

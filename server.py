@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import threading
 import time
 import sys
@@ -17,7 +18,7 @@ import traceback
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -26,6 +27,8 @@ if str(ROOT) not in sys.path:
 from veto.engine import ApprovalPending, Engine, VaultRequired  # noqa: E402
 from veto.store import Store  # noqa: E402
 from veto import auth as veto_auth  # noqa: E402
+from veto import pipeline as veto_pipeline  # noqa: E402
+from veto.policy import RULE_KINDS  # noqa: E402
 from veto.seed import seed_demo  # noqa: E402
 
 ENGINE = Engine()
@@ -119,6 +122,167 @@ def public_workspace(workspace: dict) -> dict:
         "name": workspace.get("name") or "",
         "currency": workspace.get("currency") or "USD",
         "monthly_budget_cents": int(workspace.get("monthly_budget_cents") or 0),
+    }
+
+
+# ---------------------------------------------------------------------------
+# agent input validation (create / PATCH)
+# ---------------------------------------------------------------------------
+AGENT_WRITE_ROLES = ("admin", "approver")
+MAX_AGENT_NAME = 80
+MAX_AGENT_TAG = 40
+MAX_AGENT_CHANNEL = 60
+MAX_SIMULATE_CHARS = 1000
+_CAP_FIELDS = ("monthly_cap_cents", "per_order_cap_cents",
+               "per_unit_cap_cents", "approval_threshold_cents")
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _invalid_agent(message: str) -> None:
+    raise ApiError(400, "invalid_agent", message)
+
+
+def _clean_domain(value) -> str:
+    """'https://WWW.Amazon.com/path' -> 'www.amazon.com'."""
+    raw = str(value or "").strip().lower()
+    raw = re.sub(r"^[a-z][a-z0-9+.-]*://", "", raw)
+    raw = raw.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0].strip().strip(".")
+    return raw
+
+
+def _whole_cents(value) -> int:
+    """Validate a JSON money field (whole, non-negative cents)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ApiError(400, "invalid_agent", "caps must be whole numbers of cents or null.")
+    whole = int(value)
+    if whole != value:
+        raise ApiError(400, "invalid_agent", "caps must be whole numbers of cents or null.")
+    if whole < 0:
+        raise ApiError(400, "invalid_agent", "caps cannot be negative.")
+    return whole
+
+
+def _clean_agent_payload(body: dict, *, partial: bool) -> dict:
+    """Validate an agent create/PATCH body into store-shaped kwargs.
+
+    ``partial=True`` only touches keys the caller sent; on create every optional
+    field gets its documented default (tag 'general', all six rules, no children).
+    Raises ``ApiError(400, "invalid_agent")`` with a field message.
+    """
+    if not isinstance(body, dict):
+        _invalid_agent("The request body must be a JSON object.")
+    fields: dict = {}
+
+    if not partial or "name" in body:
+        name = str(body.get("name") or "").strip()
+        if not name:
+            _invalid_agent("name is required.")
+        if len(name) > MAX_AGENT_NAME:
+            _invalid_agent(f"name must be {MAX_AGENT_NAME} characters or fewer.")
+        fields["name"] = name
+    if "tag" in body:
+        tag = str(body.get("tag") or "").strip() or "general"
+        if len(tag) > MAX_AGENT_TAG:
+            _invalid_agent(f"tag must be {MAX_AGENT_TAG} characters or fewer.")
+        fields["tag"] = tag
+    elif not partial:
+        fields["tag"] = "general"
+    if "channel" in body:
+        channel = body.get("channel")
+        channel = str(channel).strip() if channel not in (None, "") else None
+        if channel and len(channel) > MAX_AGENT_CHANNEL:
+            _invalid_agent(f"channel must be {MAX_AGENT_CHANNEL} characters or fewer.")
+        fields["channel"] = channel
+    if "status" in body:
+        status = str(body.get("status") or "").strip()
+        if status not in ("active", "paused"):
+            _invalid_agent("status must be active or paused.")
+        fields["status"] = status
+    for cap in _CAP_FIELDS:
+        if cap not in body:
+            continue
+        fields[cap] = None if body[cap] is None else _whole_cents(body[cap])
+
+    vendors = None
+    if "vendors" in body:
+        raw_vendors = body.get("vendors") or []
+        if not isinstance(raw_vendors, list):
+            _invalid_agent("vendors must be a list of domains.")
+        vendors = []
+        for item in raw_vendors:
+            domain = _clean_domain(item)
+            if not domain or any(ch.isspace() for ch in domain):
+                _invalid_agent(f"vendors: {str(item)!r} is not a domain.")
+            if domain not in vendors:
+                vendors.append(domain)
+    elif not partial:
+        vendors = []
+
+    categories = None
+    if "categories" in body:
+        raw_categories = body.get("categories") or []
+        if not isinstance(raw_categories, list):
+            _invalid_agent("categories must be a list of slugs.")
+        categories = []
+        for item in raw_categories:
+            slug = str(item or "").strip().lower()
+            if not _SLUG_RE.match(slug):
+                _invalid_agent(f"categories: {str(item)!r} is not a category slug.")
+            if slug not in categories:
+                categories.append(slug)
+    elif not partial:
+        categories = []
+
+    rules = None
+    if "rules" in body:
+        raw_rules = body.get("rules")
+        if raw_rules is None:
+            raw_rules = list(RULE_KINDS)
+        if not isinstance(raw_rules, list):
+            _invalid_agent("rules must be a list of rule kinds.")
+        rules = []
+        for item in raw_rules:
+            kind = str(item or "").strip()
+            if kind not in RULE_KINDS:
+                _invalid_agent(f"rules: {str(item)!r} is not a rule kind.")
+            if kind not in rules:
+                rules.append(kind)
+    elif not partial:
+        rules = list(RULE_KINDS)
+
+    overrides = None
+    if "overrides" in body:
+        raw_overrides = body.get("overrides") or []
+        if not isinstance(raw_overrides, list):
+            _invalid_agent("overrides must be a list of objects.")
+        overrides = []
+        seen: set[tuple[str, str]] = set()
+        for item in raw_overrides:
+            if not isinstance(item, dict):
+                _invalid_agent("overrides must be objects with category, kind, value_cents.")
+            category = str(item.get("category") or "").strip().lower()
+            if not _SLUG_RE.match(category):
+                _invalid_agent(f"overrides: {category!r} is not a category slug.")
+            kind = str(item.get("kind") or "").strip()
+            if kind not in RULE_KINDS:
+                _invalid_agent(f"overrides: {str(item.get('kind'))!r} is not a rule kind.")
+            if (category, kind) in seen:
+                continue
+            seen.add((category, kind))
+            overrides.append({
+                "category": category,
+                "kind": kind,
+                "value_cents": _whole_cents(item.get("value_cents")),
+            })
+    elif not partial:
+        overrides = []
+
+    return {
+        "fields": fields,
+        "vendors": vendors,
+        "categories": categories,
+        "rules": rules,
+        "overrides": overrides,
     }
 
 
@@ -289,6 +453,14 @@ class Handler(BaseHTTPRequestHandler):
             session = self._require_session()
             self._ok({"agents": STORE.list_agents(session["workspace"]["id"])})
             return True
+        if path.startswith("/api/v1/agents/"):
+            parts = [unquote(part) for part in path[len("/api/v1/agents/"):].split("/") if part]
+            if len(parts) == 1:
+                self._v1_agent_detail(parts[0])
+                return True
+            if len(parts) == 2 and parts[1] == "search":
+                self._v1_agent_search(parts[0])
+                return True
         self._api_error(404, "not_found", "Unknown route.")
         return True
 
@@ -308,6 +480,25 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/demo-session":
             self._v1_demo_session()
             return True
+        if path == "/api/v1/agents":
+            self._v1_create_agent()
+            return True
+        if path == "/api/v1/simulate":
+            self._v1_simulate()
+            return True
+        self._api_error(404, "not_found", "Unknown route.")
+        return True
+
+    def _v2_patch(self, path: str) -> bool:
+        """Handle PATCH /api/v1/agents/{id}. True = handled."""
+        if not path.startswith("/api/v1/"):
+            return False
+        prefix = "/api/v1/agents/"
+        if path.startswith(prefix):
+            parts = [unquote(part) for part in path[len(prefix):].split("/") if part]
+            if len(parts) == 1:
+                self._v1_update_agent(parts[0])
+                return True
         self._api_error(404, "not_found", "Unknown route.")
         return True
 
@@ -391,6 +582,80 @@ class Handler(BaseHTTPRequestHandler):
             "user": public_user(approver),
             "workspace": public_workspace(workspace),
         })
+
+    # -- M2: agents, scoped search, dry run -----------------------------
+    def _workspace_agent(self, agent_id: str) -> dict:
+        session = self._require_session()
+        agent = STORE.agent(session["workspace"]["id"], agent_id)
+        if agent is None:
+            self._api_error(404, "agent_not_found", "That agent does not exist.")
+        return agent
+
+    def _v1_agent_detail(self, agent_id: str) -> None:
+        self._ok({"agent": self._workspace_agent(agent_id)})
+
+    def _v1_agent_search(self, agent_id: str) -> None:
+        agent = self._workspace_agent(agent_id)
+        params = parse_qs(urlparse(self.path).query)
+        query = (params.get("q") or [""])[0].strip()
+        if not query:
+            self._api_error(400, "missing_query", "Pass ?q=<what to buy>.")
+        try:
+            qty = max(1, min(99, int((params.get("qty") or ["1"])[0])))
+        except (TypeError, ValueError):
+            qty = 1
+        self._ok(veto_pipeline.scoped_search(agent, query, qty))
+
+    def _v1_create_agent(self) -> None:
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        payload = _clean_agent_payload(self._body(), partial=False)
+        agent = STORE.create_agent(
+            session["workspace"]["id"],
+            payload["fields"],
+            vendors=payload["vendors"],
+            categories=payload["categories"],
+            rules=payload["rules"],
+            overrides=payload["overrides"],
+        )
+        self._ok({"agent": agent}, status=201)
+
+    def _v1_update_agent(self, agent_id: str) -> None:
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        payload = _clean_agent_payload(self._body(), partial=True)
+        agent = STORE.update_agent(
+            session["workspace"]["id"],
+            agent_id,
+            fields=payload["fields"],
+            vendors=payload["vendors"],
+            categories=payload["categories"],
+            rules=payload["rules"],
+            overrides=payload["overrides"],
+        )
+        if agent is None:
+            self._api_error(404, "agent_not_found", "That agent does not exist.")
+        self._ok({"agent": agent})
+
+    def _v1_simulate(self) -> None:
+        session = self._require_session()
+        body = self._body()
+        text = str(body.get("text") or "").strip()
+        if not text:
+            self._api_error(400, "missing_text", "What should the agent buy?")
+        if len(text) > MAX_SIMULATE_CHARS:
+            text = text[:MAX_SIMULATE_CHARS]  # long threads are truncated, not rejected
+        agent_id = str(body.get("agent_id") or "").strip() or None
+        try:
+            agent = veto_pipeline.resolve_agent(STORE, session["workspace"]["id"], agent_id)
+        except LookupError as exc:
+            code = str(exc) or "no_agent"
+            message = ("That agent does not exist." if code == "agent_not_found"
+                       else "This workspace has no agents yet.")
+            self._api_error(404, code, message)
+        try:
+            result = veto_pipeline.simulate(agent, text)
+        except ValueError as exc:
+            self._api_error(400, "no_intent", str(exc))
+        self._ok(result)
 
     # -- routes ---------------------------------------------------------
     def _verify_slack(self, raw: bytes) -> bool:
@@ -735,6 +1000,20 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
             return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
+
+    def do_PATCH(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        try:
+            if self._v2_patch(path):
+                return
+        except ApiError as exc:
+            return self._send_api_error(exc)
+        except Exception:  # noqa: BLE001 - keep the legacy routes untouched
+            traceback.print_exc()
+            return self._send_api_error(
+                ApiError(500, "server_error", "Something went wrong.")
+            )
+        return self._json(404, {"error": "unknown route"})
 
 
 def main() -> int:

@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { api, ApiError, type Me, type SessionData } from '../api'
 import { FlowRail } from '../components/FlowRail'
 import { Wordmark } from '../components/Logo'
-import { PressButton, Spinner } from '../components/PressButton'
+import { Check, PressButton, Spinner } from '../components/PressButton'
 import { motionSet } from '../components/motion'
 
 type Mode = 'signin' | 'signup'
@@ -26,24 +26,6 @@ function Field({
       </span>
       {children}
     </label>
-  )
-}
-
-function Check() {
-  return (
-    <svg className="check" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      <motion.path
-        d="M3 8.4l3.2 3.2L13 4.8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        initial={{ pathLength: 0 }}
-        animate={{ pathLength: 1 }}
-        transition={{ duration: 0.24, ease: 'easeOut' }}
-      />
-    </svg>
   )
 }
 

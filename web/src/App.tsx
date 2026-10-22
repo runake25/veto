@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { api, ApiError, type Me } from './api'
 import { Auth } from './screens/Auth'
+import { AgentDetail } from './screens/AgentDetail'
+import { Agents } from './screens/Agents'
+import { NewAgent } from './screens/NewAgent'
 import { Overview } from './screens/Overview'
 import { Shell } from './screens/Shell'
 import { BootSheet } from './components/BootSheet'
@@ -68,6 +71,9 @@ export default function App() {
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route element={<Shell me={boot.me} onSignOut={() => void signOut()} />}>
         <Route index element={<Overview me={boot.me} />} />
+        <Route path="agents" element={<Agents />} />
+        <Route path="agents/new" element={<NewAgent />} />
+        <Route path="agents/:id" element={<AgentDetail />} />
         <Route path="*" element={<Overview me={boot.me} />} />
       </Route>
     </Routes>

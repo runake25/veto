@@ -266,6 +266,136 @@ class AgentTests(StoreTestCase):
         )
 
 
+class AgentUpdateTests(StoreTestCase):
+    def test_updates_scalar_fields(self) -> None:
+        workspace = self.make_workspace()
+        agent = self.make_agent(workspace["id"])
+        updated = self.store.update_agent(
+            workspace["id"],
+            agent["id"],
+            fields={
+                "name": "Pantry runner v2",
+                "tag": "snacks",
+                "channel": "#snacks",
+                "status": "paused",
+                "monthly_cap_cents": 90_000,
+                "per_unit_cap_cents": None,
+            },
+        )
+        self.assertEqual(updated["name"], "Pantry runner v2")
+        self.assertEqual(updated["tag"], "snacks")
+        self.assertEqual(updated["channel"], "#snacks")
+        self.assertEqual(updated["status"], "paused")
+        self.assertEqual(updated["monthly_cap_cents"], 90_000)
+        self.assertIsNone(updated["per_unit_cap_cents"])
+        # untouched fields survive
+        self.assertEqual(updated["per_order_cap_cents"], 30_000)
+        self.assertEqual(updated["approval_threshold_cents"], 5_000)
+
+    def test_children_only_replaced_when_provided(self) -> None:
+        workspace = self.make_workspace()
+        agent = self.make_agent(workspace["id"])
+        self.assertEqual(agent["vendors"], ["grove.co", "amazon.com"])
+        updated = self.store.update_agent(
+            workspace["id"], agent["id"], vendors=["target.com"]
+        )
+        self.assertEqual(updated["vendors"], ["target.com"])
+        # untouched child lists stay exactly as they were
+        self.assertEqual(updated["categories"], ["pantry"])
+        self.assertEqual(
+            updated["rules"],
+            ["monthly_cap", "per_order_cap", "approval_threshold"],
+        )
+        self.assertEqual(
+            updated["overrides"],
+            [{"category": "pantry", "kind": "per_unit_cap", "value_cents": 900}],
+        )
+
+    def test_replaces_rules_categories_and_overrides(self) -> None:
+        workspace = self.make_workspace()
+        agent = self.make_agent(workspace["id"])
+        updated = self.store.update_agent(
+            workspace["id"],
+            agent["id"],
+            categories=["pantry", "equipment"],
+            rules=["monthly_cap", "vendor_allowlist"],
+            overrides=[
+                {"category": "equipment", "kind": "per_unit_cap", "value_cents": 12_000},
+            ],
+        )
+        self.assertEqual(updated["categories"], ["pantry", "equipment"])
+        self.assertEqual(updated["rules"], ["monthly_cap", "vendor_allowlist"])
+        self.assertEqual(
+            updated["overrides"],
+            [{"category": "equipment", "kind": "per_unit_cap", "value_cents": 12_000}],
+        )
+
+    def test_clear_children_with_empty_lists(self) -> None:
+        workspace = self.make_workspace()
+        agent = self.make_agent(workspace["id"])
+        updated = self.store.update_agent(
+            workspace["id"], agent["id"],
+            vendors=[], categories=[], rules=[], overrides=[],
+        )
+        self.assertEqual(updated["vendors"], [])
+        self.assertEqual(updated["categories"], [])
+        self.assertEqual(updated["rules"], [])
+        self.assertEqual(updated["overrides"], [])
+
+    def test_empty_update_is_a_no_op(self) -> None:
+        workspace = self.make_workspace()
+        agent = self.make_agent(workspace["id"])
+        unchanged = self.store.update_agent(workspace["id"], agent["id"])
+        self.assertEqual(unchanged["name"], agent["name"])
+        self.assertEqual(unchanged["vendors"], agent["vendors"])
+
+    def test_update_is_workspace_scoped(self) -> None:
+        first = self.make_workspace("Acme")
+        second = self.make_workspace("Globex")
+        agent = self.make_agent(first["id"])
+        self.assertIsNone(
+            self.store.update_agent(second["id"], agent["id"], fields={"name": "Hijack"})
+        )
+        self.assertEqual(self.store.agent(first["id"], agent["id"])["name"], "Pantry runner")
+
+    def test_unknown_fields_are_rejected(self) -> None:
+        workspace = self.make_workspace()
+        agent = self.make_agent(workspace["id"])
+        with self.assertRaises(ValueError):
+            self.store.update_agent(
+                workspace["id"], agent["id"], fields={"workspace_id": "ws_evil"}
+            )
+
+    def test_invalid_values_are_rejected(self) -> None:
+        workspace = self.make_workspace()
+        agent = self.make_agent(workspace["id"])
+        with self.assertRaises(ValueError):
+            self.store.update_agent(workspace["id"], agent["id"], fields={"name": "  "})
+        with self.assertRaises(ValueError):
+            self.store.update_agent(
+                workspace["id"], agent["id"], fields={"status": "sleepy"}
+            )
+
+    def test_delete_agent_cascades(self) -> None:
+        workspace = self.make_workspace()
+        agent = self.make_agent(workspace["id"])
+        self.assertTrue(self.store.delete_agent(workspace["id"], agent["id"]))
+        self.assertIsNone(self.store.agent(workspace["id"], agent["id"]))
+        self.assertEqual(self.store.count_agents(workspace["id"]), 0)
+        self.assertEqual(
+            self.store.query("SELECT * FROM agent_vendors WHERE agent_id = ?", (agent["id"],)),
+            [],
+        )
+        self.assertFalse(self.store.delete_agent(workspace["id"], agent["id"]))
+
+    def test_delete_agent_is_workspace_scoped(self) -> None:
+        first = self.make_workspace("Acme")
+        second = self.make_workspace("Globex")
+        agent = self.make_agent(first["id"])
+        self.assertFalse(self.store.delete_agent(second["id"], agent["id"]))
+        self.assertIsNotNone(self.store.agent(first["id"], agent["id"]))
+
+
 class WalletTests(StoreTestCase):
     def test_wallet_starts_disconnected_and_connects(self) -> None:
         workspace = self.make_workspace()

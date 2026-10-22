@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
+import { Link } from 'react-router-dom'
 import { api, money, type Agent, type Me } from '../api'
 import { motionSet } from '../components/motion'
 
@@ -63,6 +64,12 @@ export function Overview({ me }: { me: Me }) {
           <h1>Overview</h1>
           <p>What needs you, and where the money is.</p>
         </div>
+        <Link
+          className="btn btn-secondary"
+          to={agents && agents[0] ? `/agents/${agents[0].id}` : '/agents'}
+        >
+          Try a cart
+        </Link>
       </motion.header>
 
       <motion.div className="stats" variants={m.riseIn}>
@@ -91,7 +98,9 @@ export function Overview({ me }: { me: Me }) {
         <motion.section className="card" variants={m.riseIn}>
           <header className="card-head">
             <h2>Agents</h2>
-            <span className="card-note mono">{agentCount} active</span>
+            <Link className="text-link mono" to="/agents">
+              manage →
+            </Link>
           </header>
 
           {error ? <p className="inline-error">{error}</p> : null}

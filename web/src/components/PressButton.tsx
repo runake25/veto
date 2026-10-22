@@ -67,3 +67,22 @@ export function Spinner({ label = 'working' }: { label?: string }) {
     </span>
   )
 }
+
+/** The check mark drawn on completion (pathLength 0→1), shared by every "saved" state. */
+export function Check({ size = 14 }: { size?: number }) {
+  return (
+    <svg className="check" viewBox="0 0 16 16" width={size} height={size} aria-hidden="true">
+      <motion.path
+        d="M3 8.4l3.2 3.2L13 4.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 0.24, ease: 'easeOut' }}
+      />
+    </svg>
+  )
+}
