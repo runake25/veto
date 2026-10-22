@@ -181,6 +181,15 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(candidates[0]["source"], "local")
         self.assertIn("toilet paper", candidates[0]["line"]["title"].lower())
 
+    def test_single_word_queries_match_a_title(self) -> None:
+        from veto.channel3 import relevant
+
+        self.assertTrue(relevant("keyboard", {"title": "Logitech K400 Plus Wireless Keyboard"}))
+        self.assertTrue(relevant("chips", {"title": "Sunflower Chips"}))
+        self.assertFalse(relevant("keyboard", {"title": "Wireless Mouse"}))
+        # a multi-word request keeps the stricter rule
+        self.assertFalse(relevant("vertuo intenso capsules", {"title": "Vertuo Coffee Machine"}))
+
     def test_local_catalogue_when_channel3_unavailable(self) -> None:
         fake = FakeChannel3(available=False)
         with mock.patch.object(pipeline, "Channel3", return_value=fake):
@@ -304,6 +313,31 @@ class SimulateTests(unittest.TestCase):
         self.assertEqual(reason["rule"], "catalogue")
         self.assertIn("toilet paper", reason["message"])
         self.assertEqual(result["source"], "local")
+
+    def test_simulate_prefers_an_offer_inside_the_charter(self) -> None:
+        outside = line(category="stationery", title="Doritos pencil case", unit_cents=999)
+        inside = line(category="pantry", title="Sunflower chips", unit_cents=1_200)
+
+        def search(agent_dict, query, qty):
+            return [{"line": dict(outside), "source": "channel3"},
+                    {"line": dict(inside), "source": "channel3"}]
+
+        result = self.run_simulate(
+            text="chips", items=[{"name": "chips", "qty": 1}], search=search)
+        self.assertEqual(result["lines"][0]["title"], "Sunflower chips")
+        self.assertEqual(result["lines"][0]["category"], "pantry")
+
+    def test_simulate_keeps_the_near_miss_when_nothing_fits(self) -> None:
+        outside = line(category="general", title="Doritos socks", unit_cents=999)
+
+        def search(agent_dict, query, qty):
+            return [{"line": dict(outside), "source": "channel3"}]
+
+        result = self.run_simulate(
+            text="doritos", items=[{"name": "doritos", "qty": 1}], search=search)
+        self.assertEqual(result["lines"][0]["title"], "Doritos socks")
+        self.assertEqual(result["decision"]["outcome"], "block")
+        self.assertEqual(result["decision"]["reasons"][0]["rule"], "category_allowlist")
 
     def test_quantities_flow_into_lines_and_total(self) -> None:
         search = fake_search({"a": line(title="A", unit_cents=1_000),

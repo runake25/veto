@@ -380,13 +380,20 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None) -> dict
         if not candidates:
             unresolved.append(item["name"])
             continue
-        chosen = candidates[0]
-        if isinstance(chosen, dict) and isinstance(chosen.get("line"), dict):
-            line = chosen["line"]
-            source = _text(chosen.get("source")) or "local"
-        else:  # tolerate a search_fn that returns bare lines
-            line = dict(chosen)
-            source = _text(line.get("source")) or "local"
+        normalised: list[tuple[dict, str]] = []
+        for candidate in candidates:
+            if isinstance(candidate, dict) and isinstance(candidate.get("line"), dict):
+                found = candidate["line"]
+                found_source = _text(candidate.get("source")) or "local"
+            else:  # tolerate a search_fn that returns bare lines
+                found = dict(candidate)
+                found_source = _text(found.get("source")) or "local"
+            normalised.append((found, found_source))
+        # an agent takes the best offer it is allowed to take; if every offer is
+        # outside its charter the first one still goes to the policy engine, which
+        # names the rule that refused it instead of hiding the near miss.
+        allowed = [pair for pair in normalised if _category_allowed(agent, pair[0])]
+        line, source = (allowed or normalised)[0]
         line["source"] = source
         lines.append(line)
         sources.add(source)

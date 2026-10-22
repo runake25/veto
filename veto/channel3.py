@@ -101,9 +101,12 @@ def relevant(query: str, product: dict) -> bool:
     title = set(re.findall(r"[a-z]+", str(product.get("title") or "").lower()))
     shared = words & title
     # the most specific word must be there, and most of the request must be answered:
-    # "vertuo intenso coffee capsules" must not resolve to a Vertuo coffee machine
+    # "vertuo intenso coffee capsules" must not resolve to a Vertuo coffee machine.
+    # A one-word request ("keyboard") has only one word to share, so the "two words
+    # in common" test scales down instead of refusing every single-word item.
     must = max(words, key=len)
-    return must in title and len(shared) >= 2 and len(shared) / len(words) >= 0.6
+    needed = min(2, len(words))
+    return must in title and len(shared) >= needed and len(shared) / len(words) >= 0.6
 
 
 def to_line(product: dict, qty: int = 1) -> dict | None:

@@ -22,8 +22,8 @@ const RULE_WORD: Record<string, string> = {
   category_allowlist: 'category',
   vendor_allowlist: 'merchant',
   monthly_cap: 'monthly cap',
-  per_order_cap: 'order cap',
-  per_unit_cap: 'item cap',
+  per_order_cap: 'per-order cap',
+  per_unit_cap: 'per-item cap',
   approval_threshold: 'signature',
 }
 
@@ -251,6 +251,9 @@ function DryRun({ agent }: { agent: Agent }) {
                   <li key={`${line.sku ?? line.title}-${line.qty}`}>
                     <span className="cart-qty mono">{line.qty}×</span>
                     <span className="cart-title">{line.title}</span>
+                    {line.category ? (
+                      <span className="chip chip-quiet cart-cat">{line.category}</span>
+                    ) : null}
                     <span className="cart-vendor mono">{line.vendor ?? 'unknown'}</span>
                     <span className="cart-money">{money(line.line_cents)}</span>
                   </li>
@@ -288,17 +291,23 @@ function DryRun({ agent }: { agent: Agent }) {
   )
 }
 
+const FIT_LABELS = {
+  category: 'category blocked',
+  per_unit: 'over per-item cap',
+  per_order: 'over per-order cap',
+} as const
+
 function FitFlags({ item }: { item: ScopedSearch['results'][number] }) {
-  const flags: string[] = []
-  if (!item.fits.category) flags.push('category blocked')
-  if (!item.fits.per_unit) flags.push('over per-item cap')
-  if (!item.fits.per_order) flags.push('over per-order cap')
+  const flags: { key: keyof typeof FIT_LABELS; soft: boolean }[] = []
+  if (!item.fits.category) flags.push({ key: 'category', soft: false })
+  if (!item.fits.per_order) flags.push({ key: 'per_order', soft: false })
+  if (!item.fits.per_unit) flags.push({ key: 'per_unit', soft: true })
   if (!flags.length) return null
   return (
     <span className="fit-flags">
       {flags.map((flag) => (
-        <span className="fit-bad" key={flag}>
-          {flag}
+        <span className={flag.soft ? 'fit-soon' : 'fit-bad'} key={flag.key}>
+          {FIT_LABELS[flag.key]}
         </span>
       ))}
     </span>
@@ -306,11 +315,16 @@ function FitFlags({ item }: { item: ScopedSearch['results'][number] }) {
 }
 
 /** A search result's own verdict — not an approval, so it does not borrow the
-    consent language ("fits", not "auto-approved"). */
+    consent language ("fits", not "auto-approved"). Only the category and
+    per-order caps are hard blocks; a per-item cap or the signature threshold
+    still lets a human say yes. */
 function FitPill({ item }: { item: ScopedSearch['results'][number] }) {
-  const blocked = !item.fits.category || !item.fits.per_unit || !item.fits.per_order
-  if (blocked) return <span className="pill is-neg">Blocked</span>
-  if (!item.fits.threshold) return <span className="pill is-wait">Needs signature</span>
+  if (!item.fits.category || !item.fits.per_order) {
+    return <span className="pill is-neg">Blocked</span>
+  }
+  if (!item.fits.per_unit || !item.fits.threshold) {
+    return <span className="pill is-wait">Needs signature</span>
+  }
   return <span className="pill is-pos">Fits</span>
 }
 

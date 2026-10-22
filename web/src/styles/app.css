@@ -1505,7 +1505,7 @@
 
 .cart-lines li {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto auto;
+  grid-template-columns: 26px minmax(0, 1fr) auto auto auto;
   gap: 8px;
   align-items: baseline;
   padding: 6px 0;
@@ -1532,6 +1532,10 @@
 
 .cart-vendor {
   color: var(--faint);
+}
+
+.cart-cat {
+  align-self: center;
 }
 
 .cart-money {
@@ -1710,6 +1714,11 @@
 .fit-bad {
   background: var(--negative-soft);
   color: var(--negative-ink);
+}
+
+.fit-soon {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
 }
 
 .result-right {
