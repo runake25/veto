@@ -24,6 +24,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from veto.engine import ApprovalPending, Engine, VaultRequired  # noqa: E402
+from veto.store import Store  # noqa: E402
+from veto import auth as veto_auth  # noqa: E402
+from veto.seed import seed_demo  # noqa: E402
 
 ENGINE = Engine()
 PORT = int(os.environ.get("PORT", "8787"))
@@ -58,11 +61,65 @@ CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
     ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".ico": "image/x-icon",
     ".svg": "image/svg+xml",
     ".woff2": "font/woff2",
     ".woff": "font/woff",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
 }
+
+# ---------------------------------------------------------------------------
+# v2 state: SQLite store + demo seed
+# ---------------------------------------------------------------------------
+STORE = Store()
+SEEDED: dict = {}
+if os.environ.get("VETO_SEED_DEMO", "1") != "0":
+    try:
+        SEEDED = seed_demo(STORE)
+    except Exception:  # noqa: BLE001 - a seed failure must not stop the legacy demo
+        traceback.print_exc()
+
+APP_DIR = ROOT / "app"
+
+
+class ApiError(Exception):
+    """A v1 route failure with a status and a machine-readable code."""
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
+
+
+def public_user(user: dict) -> dict:
+    """The user fields the web app may see."""
+    return {
+        "id": user.get("id"),
+        "name": user.get("name") or "",
+        "email": user.get("email") or "",
+        "role": user.get("role") or "viewer",
+    }
+
+
+def public_workspace(workspace: dict) -> dict:
+    """The workspace fields the web app may see."""
+    return {
+        "id": workspace.get("id"),
+        "name": workspace.get("name") or "",
+        "currency": workspace.get("currency") or "USD",
+        "monthly_budget_cents": int(workspace.get("monthly_budget_cents") or 0),
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -78,11 +135,83 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for cookie in getattr(self, "_pending_cookies", ()):
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
 
+    def _redirect(self, location: str, code: int = 302) -> None:
+        self.send_response(code)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        for cookie in getattr(self, "_pending_cookies", ()):
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+
     def _json(self, code: int, payload: dict) -> None:
         self._send(code, json.dumps(payload).encode(), "application/json")
+
+    # -- v2 helpers -----------------------------------------------------
+    def _ok(self, data: dict | None = None, status: int = 200) -> None:
+        return self._json(status, {"ok": True, "data": data if data is not None else {}})
+
+    def _api_error(self, status: int, code: str, message: str) -> None:
+        raise ApiError(status, code, message)
+
+    def _send_api_error(self, exc: ApiError) -> None:
+        return self._json(
+            exc.status,
+            {"ok": False, "error": {"code": exc.code, "message": exc.message}},
+        )
+
+    def _queue_cookie(self, value: str) -> None:
+        if not hasattr(self, "_pending_cookies"):
+            self._pending_cookies: list[str] = []
+        self._pending_cookies.append(value)
+
+    def _secure_cookies(self) -> bool:
+        """Only mark the cookie Secure when this request is actually https.
+
+        PUBLIC_URL points at the tunnel, but the runner is also opened directly on
+        http://127.0.0.1:8787 for local work; a Secure cookie there is rejected by
+        the browser and the session would silently never stick."""
+        forwarded = (self.headers.get("X-Forwarded-Proto") or "").strip().lower()
+        if forwarded:
+            return forwarded == "https"
+        host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
+        if host in ("127.0.0.1", "localhost", "[::1]", "::1"):
+            return False
+        return PUBLIC_URL.startswith("https://")
+
+    def _set_session_cookie(self, token: str) -> None:
+        self._queue_cookie(veto_auth.session_cookie(token, secure=self._secure_cookies()))
+
+    def _clear_session_cookie(self) -> None:
+        self._queue_cookie(veto_auth.clear_cookie(secure=self._secure_cookies()))
+
+    def _cookie_token(self) -> str | None:
+        cookies = veto_auth.parse_cookies(self.headers.get("Cookie"))
+        return cookies.get(veto_auth.COOKIE_NAME)
+
+    def _session(self) -> dict | None:
+        token = self._cookie_token()
+        if not token:
+            return None
+        return veto_auth.resolve_session(STORE, token)
+
+    def _require_session(self) -> dict:
+        session = self._session()
+        if session is None:
+            self._api_error(401, "unauthorized", "Sign in to continue.")
+        return session
+
+    def _require_role(self, *roles: str) -> dict:
+        session = self._require_session()
+        try:
+            veto_auth.require_role(session["user"], *roles)
+        except PermissionError:
+            self._api_error(403, "forbidden", "You do not have access to that.")
+        return session
 
     def _file(self, rel: str) -> None:
         path = (ROOT / rel).resolve()
@@ -107,6 +236,161 @@ class Handler(BaseHTTPRequestHandler):
         """Slack posts a slash command as application/x-www-form-urlencoded."""
         raw = self._raw().decode("utf-8", "replace")
         return {k: v[0] for k, v in parse_qs(raw).items()}
+
+    # -- v2 routes ------------------------------------------------------
+    def _serve_app(self, path: str) -> None:
+        """Serve the built SPA from app/: real files straight from disk, every
+        other path falls back to app/index.html so the client router owns it."""
+        rel = path[len("/app"):].lstrip("/")
+        app_root = APP_DIR.resolve()
+        if rel:
+            candidate = (APP_DIR / rel).resolve()
+            try:
+                candidate.relative_to(app_root)
+            except ValueError:
+                self._api_error(404, "not_found", "Not found.")
+            if candidate.is_file():
+                ctype = CONTENT_TYPES.get(candidate.suffix, "application/octet-stream")
+                return self._send(200, candidate.read_bytes(), ctype)
+        index = APP_DIR / "index.html"
+        if not index.is_file():
+            self._api_error(
+                503,
+                "app_not_built",
+                "The web app is not built yet. Run `npm run build` in web/.",
+            )
+        return self._send(200, index.read_bytes(), "text/html; charset=utf-8")
+
+    def _v2_get(self, path: str) -> bool:
+        """Handle /app, /login and every GET /api/v1/* route. True = handled."""
+        if path == "/login":
+            self._redirect("/app/#/login")
+            return True
+        if path == "/app" or path.startswith("/app/"):
+            self._serve_app(path)
+            return True
+        if not path.startswith("/api/v1/"):
+            return False
+        if path == "/api/v1/me":
+            session = self._require_session()
+            user, workspace = session["user"], session["workspace"]
+            wallet = STORE.wallet(workspace["id"]) or {"status": "disconnected"}
+            wallet_public: dict = {"status": wallet.get("status") or "disconnected"}
+            if wallet.get("vault_id"):
+                wallet_public["vault_id"] = wallet["vault_id"]
+            self._ok({
+                "user": public_user(user),
+                "workspace": public_workspace(workspace),
+                "agent_count": STORE.count_agents(workspace["id"]),
+                "wallet": wallet_public,
+            })
+            return True
+        if path == "/api/v1/agents":
+            session = self._require_session()
+            self._ok({"agents": STORE.list_agents(session["workspace"]["id"])})
+            return True
+        self._api_error(404, "not_found", "Unknown route.")
+        return True
+
+    def _v2_post(self, path: str) -> bool:
+        """Handle every POST /api/v1/* route. True = handled."""
+        if not path.startswith("/api/v1/"):
+            return False
+        if path == "/api/v1/signup":
+            self._v1_signup()
+            return True
+        if path == "/api/v1/login":
+            self._v1_login()
+            return True
+        if path == "/api/v1/logout":
+            self._v1_logout()
+            return True
+        if path == "/api/v1/demo-session":
+            self._v1_demo_session()
+            return True
+        self._api_error(404, "not_found", "Unknown route.")
+        return True
+
+    def _v1_signup(self) -> None:
+        body = self._body()
+        workspace_name = str(body.get("workspace_name") or "").strip()
+        name = str(body.get("name") or "").strip()
+        email = str(body.get("email") or "").strip().lower()
+        password = str(body.get("password") or "")
+
+        if not workspace_name:
+            self._api_error(400, "workspace_required", "Workspace name is required.")
+        if "@" not in email or email.startswith("@") or email.endswith("@"):
+            self._api_error(400, "invalid_email", "Enter a valid email address.")
+        if len(password) < 8:
+            self._api_error(400, "weak_password", "Password must be at least 8 characters.")
+        if STORE.user_by_email(email) is not None:
+            self._api_error(409, "email_taken", "An account with that email already exists.")
+
+        password_hash = veto_auth.hash_password(password)
+        try:
+            with STORE.transaction():
+                workspace = STORE.create_workspace(workspace_name)
+                user = STORE.create_user(
+                    workspace["id"],
+                    email,
+                    name=name or email.split("@")[0],
+                    password_hash=password_hash,
+                    role="admin",
+                )
+        except Exception as exc:  # noqa: BLE001 - SQLite UNIQUE races
+            if STORE.user_by_email(email) is not None:
+                self._api_error(409, "email_taken", "An account with that email already exists.")
+            if "workspaces.name" in str(exc):
+                self._api_error(409, "workspace_taken", "That workspace name is already taken.")
+            raise
+
+        token = veto_auth.issue_session(STORE, user)
+        self._set_session_cookie(token)
+        return self._ok({
+            "user": public_user(user),
+            "workspace": public_workspace(workspace),
+        }, status=201)
+
+    def _v1_login(self) -> None:
+        body = self._body()
+        email = str(body.get("email") or "").strip().lower()
+        password = str(body.get("password") or "")
+        user = STORE.user_by_email(email) if email else None
+        if user is None or not veto_auth.verify_password(user.get("password_hash") or "", password):
+            self._api_error(401, "bad_credentials", "Email or password is incorrect.")
+        workspace = STORE.workspace(user["workspace_id"])
+        if workspace is None:
+            self._api_error(401, "bad_credentials", "Email or password is incorrect.")
+        token = veto_auth.issue_session(STORE, user)
+        self._set_session_cookie(token)
+        return self._ok({
+            "user": public_user(user),
+            "workspace": public_workspace(workspace),
+        })
+
+    def _v1_logout(self) -> None:
+        self._body()  # consume any JSON body so the socket closes cleanly
+        token = self._cookie_token()
+        if token:
+            veto_auth.revoke_session(STORE, token)
+        self._clear_session_cookie()
+        return self._ok({})
+
+    def _v1_demo_session(self) -> None:
+        self._body()  # the UI posts an empty JSON object; read it and ignore it
+        if not SEEDED:
+            self._api_error(404, "demo_unavailable", "The demo workspace is not seeded.")
+        approver = STORE.user((SEEDED.get("approver") or {}).get("id") or "")
+        workspace = STORE.workspace(approver["workspace_id"]) if approver else None
+        if approver is None or workspace is None:
+            self._api_error(404, "demo_unavailable", "The demo workspace is not seeded.")
+        token = veto_auth.issue_session(STORE, approver)
+        self._set_session_cookie(token)
+        return self._ok({
+            "user": public_user(approver),
+            "workspace": public_workspace(workspace),
+        })
 
     # -- routes ---------------------------------------------------------
     def _verify_slack(self, raw: bytes) -> bool:
@@ -314,6 +598,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        # v2 routes first, with their own JSON error envelope. Legacy routes
+        # below keep exactly the behaviour they had before.
+        try:
+            if self._v2_get(path):
+                return
+        except ApiError as exc:
+            return self._send_api_error(exc)
+        except Exception:  # noqa: BLE001 - a v2 failure must not break the legacy demo
+            traceback.print_exc()
+            return self._send_api_error(
+                ApiError(500, "server_error", "Something went wrong.")
+            )
         if path == "/api/slack/veto" and urlparse(self.path).query.startswith("ssl_check"):
             return self._json(200, {"ok": True})
         if path == "/":
@@ -329,6 +625,21 @@ class Handler(BaseHTTPRequestHandler):
             bot = bool((os.environ.get("SLACK_BOT_TOKEN") or "").strip())
             saved = {**ENGINE._env_vault(), **ENGINE._read_vault_state()}
             vault = ENGINE.vault_id or saved.get("vault_id")
+            try:
+                db_ok = STORE.one("SELECT 1 AS ok") is not None
+                db_stats = {
+                    "db": "ok" if db_ok else "error",
+                    "seeded": bool(SEEDED),
+                    "workspaces": STORE.count_workspaces(),
+                    "users": STORE.count_users(),
+                    "agents": STORE.count_agents(),
+                }
+            except Exception:  # noqa: BLE001 - health must answer even if the db is down
+                traceback.print_exc()
+                db_stats = {
+                    "db": "error", "seeded": bool(SEEDED),
+                    "workspaces": 0, "users": 0, "agents": 0,
+                }
             return self._json(200, {
                 "ok": True, "paypal": ENGINE.paypal_mode, "llm": ENGINE.llm_mode,
                 "catalog": ENGINE.catalog_mode, "vault": bool(vault),
@@ -337,11 +648,23 @@ class Handler(BaseHTTPRequestHandler):
                 "public_url": PUBLIC_URL or None,
                 "slack": {"signing_secret": signed, "bot_token": bot,
                           "app_ready": signed and bot},
+                **db_stats,
             })
         return self._file(path.lstrip("/"))
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        # v2 routes first; Slack stays on its own (unchanged) path below.
+        try:
+            if self._v2_post(path):
+                return
+        except ApiError as exc:
+            return self._send_api_error(exc)
+        except Exception:  # noqa: BLE001 - a v2 failure must not break Slack/legacy
+            traceback.print_exc()
+            return self._send_api_error(
+                ApiError(500, "server_error", "Something went wrong.")
+            )
         if path == "/api/slack/veto":
             return self._slack_veto()
         if path == "/api/slack/interact":

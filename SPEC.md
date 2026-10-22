@@ -1,203 +1,164 @@
-# Veto — MVP Spec (Slack-first)
+# Veto — product spec v2
 
-> An AI agent can spend company money only inside a charter, invoked from the conversation where the need appears, and unable to pay until the approval is a real, signed, single-use thing.
+> Agents spend. Humans govern. The dashboard proves it.
 
-Target: PayPal AI Hackathon, submission closes **Nov 12 2026 12:00 PT = Nov 13 04:00 HKT**.
+Target: PayPal AI Hackathon, closes **Nov 12 2026 12:00 PT = Nov 13 04:00 HKT**.
 
-The rule that governs everything below: **the spine ships first.** Additions are allowed only after the spine runs end-to-end without a human touching the terminal.
+Veto is a **spending-policy control plane** for AI agents — not a Slack app. Any agent
+asks it to buy something; the cart is priced from real products, judged by deterministic
+rules, signed by a human when it breaks policy, and settled from a pre-vaulted PayPal
+wallet. Slack, the web app and the REST API are three doors into the same engine.
+
+Primary persona: the **ops / finance person** who has to answer "what did our agents
+spend, on what, and why did nobody stop it".
+
+Stack: Python 3 standard library server (`server.py`, `veto/`) + **React 19 / Vite /
+TypeScript** app (`web/`, built into `app/` and served by the runner). Design direction
+and tokens: `DESIGN.md` (framed sheet). Motion follows the oil-ui method: press feedback,
+a moving selection indicator, first-enter stagger, shared-element transitions.
 
 ---
 
 ## 1. The one loop
 
 ```
-#office-ops
-  someone: "we're out of coffee capsules and toilet paper"
-  someone: /veto coffee capsules and toilet paper
-        │
-        ├─ 1. EXTRACT   LLM reads thread context + command → items[{name, qty}]   (structured output)
-        ├─ 2. SOURCE    Channel3 search per item → candidates{title, price, vendor, image, buy_link}
-        ├─ 3. PRICE     code picks a default candidate, computes unit price + total  (LLM never sets a price)
-        ├─ 4. JUDGE     charter rules, deterministic → decision + reasons[]
-        │
-        ├─ AUTO    under threshold  ──────────────────────────┐
-        ├─ REVIEW  over threshold   → Block Kit approval card │
-        ├─ BLOCK   hard cap / vendor / category → refusal     │
-        │             + "what would unblock it"               │
-        │                                                     │
-        ├─ APPROVER: Approve │ Veto │ reply with an amendment ─┤
-        │             amendment → re-plan → re-propose        │
-        └─ 5. CONSENT signed, single-use, 10-min expiry → PayPal AUTHORIZE → CAPTURE
-                                                            → receipt posted in thread
-                                                            → ledger entry
+an agent wants to buy something
+   │  POST /api/v1/requests   (its own API key — the agent is a fact, not a claim)
+   ▼
+1. EXTRACT   text → items[{name, qty}]            (LLM; never prices, vendors, payees)
+2. SOURCE    Channel3 per item, scoped to that agent's allowed vendors/categories
+3. PRICE     code picks the candidate, unit × qty
+4. JUDGE     deterministic rules → auto | review | block, observed vs limit
+5. CONSENT   sha256(cart) · single use · 10 minutes · named approver
+6. SETTLE    PayPal vault → order → authorization → capture
+             (block or veto = zero PayPal objects, ever)
+7. RECORD    events, agent, tag, vendor → analytics
 ```
 
-Four branches, one pipeline. Every branch is demonstrable in the 3-minute video.
+Intake surfaces: REST API (agent key, primary) · Slack `/veto` + buttons (one workspace in
+v1, callbacks already verified) · web app (dry-run and human-originated requests, marked
+as such). MCP is a stretch goal, not committed.
 
----
+## 2. Hierarchy and rule precedence
 
-## 2. Data model — six objects, no more
+```
+Workspace ── monthly budget, currency, wallet
+├── Users        admin · approver · viewer
+└── Agents       the "groups": scope + API key
+    ├── Rules           agent defaults (caps, threshold, allowlists)
+    ├── Category overrides   e.g. stationery: $50/line instead of $150
+    └── Requests
+        ├── Lines       sku · title · qty · unit · line · vendor · category · image · url
+        ├── Reasons     rule · observed · limit · message · unblock hint
+        ├── Consent     cart hash · nonce · expiry · approver
+        ├── Payment     vault · order · authorization · capture
+        └── Events      append-only audit trail
+```
 
-| Object | Fields |
-|---|---|
-| **Charter** | id, name, owner, approver_id, budget_line, currency, rules{}, paypal_connection_id, created_at |
-| **Request** | id, charter_id, slack_channel, slack_thread_ts, requester_id, raw_text, context_snippet, items[], status |
-| **Item** | name, qty, chosen_candidate{}, unit_price, candidates[] |
-| **Decision** | request_id, outcome(auto/ review/ block), reasons[]{rule_id, observed, limit, message}, decided_at |
-| **Consent** | id, request_id, cart_hash, amount, currency, approver_id, rule_snapshot, nonce, issued_at, expires_at, single_use |
-| **LedgerEntry** | id, request_id, event, paypal_order_id, paypal_capture_id, amount, at |
+Evaluation order: `catalogue_match` → `category_allowlist` → `vendor_allowlist` →
+`monthly_cap` (workspace + agent) → `per_order_cap` (cart and category subtotal) →
+`per_unit_cap` (line, category override wins) → `approval_threshold` (cart and category
+subtotal). Outcome = max severity; every reason stores cents and a sentence.
 
-`Consent` is the trust story. It binds a specific cart by hash. If the cart changes by one line the consent no longer verifies → no capture. Single-use, expiring, revocable from Slack.
+**Precedence:** category override → agent default → workspace default.
 
----
+## 3. Data (SQLite, one file)
 
-## 3. Rules v1 — exactly seven
+`workspaces`, `wallets`, `users`, `sessions`, `agents`, `agent_vendors`,
+`agent_categories`, `agent_rules`, `rule_overrides`, `api_keys`, `requests`,
+`request_lines`, `request_reasons`, `consents`, `payments`, `events`, `meta`.
 
-1. `monthly_cap`
-2. `per_order_cap`
-3. `per_unit_cap`
-4. `vendor_allowlist`
-5. `category_allowlist`
-6. `approval_threshold` — over → human, at/below → auto
-7. `expires_at`
+Integer cents, ISO-8601 UTC strings, `workspace_id` on every business row. `.state/veto.db`
+by default (`VETO_DB` overrides). Money is formatted only at the edge.
 
-Every additional rule costs a unit test, a UI control, an error message, and a demo path. Rules 8+ are v1.5. If a judge asks "can you add a rule?" the answer is a config edit, not a code change — that's the point of a pure decision function.
+## 4. API
 
-**Rule engine contract:** `decide(charter, cart, now) -> Decision`, pure, no I/O, no LLM. Fail closed on anything unparseable. This is the most-tested unit in the repo.
+Auth: `—` public · `session` cookie · `agent` bearer key · `admin` role.
+New endpoints answer `{"ok":true,"data":…}` or `{"ok":false,"error":{"code","message"}}`.
 
----
-
-## 4. Slack surface — this is the product
-
-Slack is where the work already happens, so it's the whole UX. The web app is admin + ledger.
-
-- **`/veto <text>`** — primary entry point.
-- **Message shortcut "Veto this thread"** — same pipeline, reads the thread, ~1 extra handler. Cheap, high value.
-- **Request card** — items, unit prices, vendor, total, the rule that fired, and what the agent chose *not* to buy and why.
-- **Approval card** — Approve / Veto buttons + a free-text "amend" field ("only 2 boxes", "nothing over $15").
-- **Receipt card** — order id, captured amount, approver, timestamp, running budget burn. Posted as a thread reply so the decision record lives where the conversation did.
-- **Home tab** — active charters, spend this month vs cap. Pure read, high Design value.
-
-Approval must be idempotent and expire. Two admins clicking Approve must not double-charge — keyed on the consent nonce.
-
----
-
-## 5. Web app — thin and read-mostly
-
-- Charter admin: create/edit, seven rules, connect PayPal.
-- Ledger: every request, decision, consent, order, capture — filterable.
-- Budget burn per charter.
-
-**Not** an order management ERP. No POs, no invoices, no tax, no vendor onboarding, no approvals matrix. The moment this becomes a CRUD treadmill, the Design score drops and the demo stops mattering.
-
----
-
-## 6. PayPal — the four calls that matter
-
-| Step | What |
-|---|---|
-| Vault once | `POST /v3/vault/setup-tokens` → approve once → `POST /v3/vault/payment-tokens` → store `vault_id`. The "connect company wallet" moment. |
-| Create order | `intent: AUTHORIZE`, `payment_source.paypal.vault_id`, header `PayPal-Request-Id: <consent nonce>` |
-| Move money | authorize → capture on approval; void on veto, on expiry, or on failed cart-hash check |
-| Reconcile | webhook receiver → verify signature → match order id → ledger entry |
-
-Verify exact field names against the Orders v2 reference on day 1 — they shift. Hard requirements either way:
-
-- **`PayPal-Request-Id`** on every POST, derived from the consent nonce. A retried capture must not double-charge.
-- **Void path written before the approve path.** A veto that leaves a dangling authorisation is the only failure a judge will actually catch.
-- **`UNKNOWN` is a real state.** On timeout, don't guess. Re-query, then converge: captured → ledger; voided → release the hold.
-
----
-
-## 7. Day-1 capability gate (before any UI)
-
-The entire premise is *the agent pays while nobody is at a checkout.* Prove it in one day, in this order, and record which one works:
-
-- **A** — vaulted PayPal wallet → create order with `vault_id` → authorize → capture.
-- **B** — vaulted card in the sandbox → same orders flow.
-- **C** — payer-approval redirect. **Only acceptable to establish the vault, never for the agent's spend.** If this is the only path that works, the concept is a wrapper around checkout and the pitch must change.
-
-This gate matters because a public entrant in this hackathon documented that their sandbox merchant couldn't take card payments at all and they had to fall back to Payouts. Discovering that on day 18 is fatal. Test it on day 1 with a 40-line script and a hardcoded sandbox buyer.
-
----
-
-## 8. Cut list
-
-| Cut | Why | Do instead |
+| Method + path | Auth | Status |
 |---|---|---|
-| Payslip / HRIS import | Different product, different buyer (HR), days of parsing work | A 3-row CSV of budget lines. Same demo value, 30 minutes. |
-| Traffic / food subsidies, reimbursements | Needs Payouts — a second rail, a second risk, and it's *post*-purchase. Off-thesis. | One line in "what's next". |
-| "Categorise hard-to-categorise expenses" | That's expense management, post-purchase, and full of funded competitors | Drop entirely. Your thesis is *before* the spend. |
-| Jira integration | Jira isn't chat — `/veto` has no home there. Adds OAuth + ticket schema + webhook for zero demo seconds | Optional: on capture, file one Jira issue. ~2h, after v1. |
-| Confluence | A wiki. No transaction surface. | Nothing. |
-| Desktop app | Packaging cost, no demo value, no judge cares | Web app. |
-| LLM browsing real stores | Browser agents break on camera; Channel3 already returns valid buy links | Channel3 API or MCP. |
-| Multi-currency, tax, invoices, PO matching | ERP scope | Drop. |
-| RBAC / org roles | Single approver from config is sufficient | Config value. |
-| Agent-to-agent negotiation, marketplace | Great v3, brutal v1 | Roadmap. |
+| `POST /api/v1/signup` `{workspace_name,name,email,password}` | — | **M1 done** |
+| `POST /api/v1/login` `{email,password}` | — | **M1 done** |
+| `POST /api/v1/logout` | session | **M1 done** |
+| `POST /api/v1/demo-session` | — | **M1 done** |
+| `GET /api/v1/me` | session | **M1 done** |
+| `GET /api/v1/agents` | session | **M1 done** |
+| `POST /api/v1/agents` · `PATCH /api/v1/agents/{id}` | admin | M2 |
+| `GET /api/v1/agents/{id}/search?q=` | session | M2 — scoped product search |
+| `POST /api/v1/simulate` | session | M2 — dry-run, persists nothing |
+| `GET /api/v1/overview` | session | M2 |
+| `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | M3 |
+| `POST /api/v1/requests` | agent / session | M3 |
+| `POST /api/v1/requests/{id}/decision` · `/void` | approver / admin | M3 |
+| `POST /api/v1/agents/{id}/keys` · `DELETE …/keys/{kid}` | admin | M3 |
+| `GET /api/v1/analytics?from&to&group=` | session | M4 |
+| `GET /api/v1/integrations` | session | M5 |
+| `POST /api/slack/veto` · `POST /api/slack/interact` | Slack signature | kept from v1 |
+| `GET /api/health` | — | extended (db, seeded, counts) |
 
-**Rename the product internally.** "Order management tool" is the phrase that dragged the ERP scope in. It's a **charter + ledger** app. That single rename will keep you honest for three weeks.
+Legacy v1 endpoints (`/api/request`, `/api/decide`, `/api/state`, `/api/connect*`) remain
+until M3 rewires the pipeline; `/` still serves the old console until M4 flips it to the app.
 
----
+## 5. Screens and data ownership
 
-## 9. "Can I add more ideas?" — yes, under one rule
+Five screens, all live from the same store. Each fact has exactly one owner; other
+surfaces may show a count or a link.
 
-Capacity is not your constraint. **Demo reliability is.** Every surface you add multiplies the ways a live demo dies.
-
-> A new idea is allowed only if it is a new **entry point** into the same `Request → Decision → Consent → Order` pipeline — never a new pipeline.
-
-| Cheap (do after the spine runs) | Costly (roadmap slide) |
+| Screen | Owns |
 |---|---|
-| "Veto this thread" message shortcut | Payouts / reimbursements |
-| Weekly restock cron → same pipeline | Jira + Confluence |
-| Slack Home tab dashboard | Browser automation |
-| 2-of-3 approval for large orders | Multi-currency, tax |
-| "Why did you veto that?" explainer | Agent marketplace |
-| Conditional veto ("only 2 boxes") | Real vendor onboarding |
+| **Overview** | needs-me count · committed-unsigned · settled this month · agent activity · top-3 pending as links · where the money went |
+| **Inbox** | the only request list; filters live in the URL |
+| **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void |
+| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, **scoped search**, test-a-cart |
+| **Analytics** | aggregates by agent / tag / vendor / category / rule, drill-down links into Inbox |
+| **Integrations** | Slack, API keys, web, wallet |
 
-Anything in the right column is a *different product*. The left column is the same product, more of it.
+Guided rule setup (option A): one form with template defaults, an optional category
+override, and a read-only "advanced" panel showing the rule rows. Not a raw editor.
 
----
+## 6. Auth and tenancy
 
-## 10. Build order
+Email + password (scrypt), opaque sessions (sha256 stored, HttpOnly cookie, SameSite=Lax,
+7-day expiry, `Secure` only on https requests). Roles: admin, approver, viewer. Sign-up
+creates a workspace and its first admin. The seeded demo workspace is reachable in one
+click so a judge can interact without sign-up. Agent API keys are `vkey_…`, shown once,
+stored hashed.
 
-| Days | Work |
-|---|---|
-| 1 | **Capability gate** (§7). Sandbox merchant + vault + authorize + capture, script only. Record which path works. |
-| 2–3 | Rule engine + tests. Pure `decide()`, fail-closed, seven rules. |
-| 4–5 | Channel3 client + cart builder + price normalisation. Handle "no candidate found" gracefully. |
-| 6–7 | PayPal client: create/authorize/capture/void, Request-Id idempotency, webhook receiver, `UNKNOWN` reconciliation. |
-| 8–11 | Slack app: OAuth, `/veto`, Block Kit cards, interactions endpoint, threaded receipts. |
-| 12–13 | Amend → re-plan loop. The differentiator. Protect this time. |
-| 14–15 | Web app: charter admin + ledger + burn. Read-only where possible. |
-| 16–17 | Hardening: retries, timeouts, void-on-veto, double-click, expired consent, empty search. |
-| 18 | Hosted demo + README + one-command run + seed data. **Feature freeze.** |
-| 19–21 | Video script → record → cut to <3:00. |
-| 22 | Submission form: tools list, license in About, video link. |
-| 23 | Buffer. Submit early — never on deadline day. |
+## 7. Motion and design rules
 
----
+Keep the framed-sheet direction: tinted stone desk, white sheet, one accent hue, IBM Plex,
+no shadows at rest. Motion budget: (1) press feedback on every control (0.97 scale, 80ms),
+(2) one moving selection indicator per view, (3) a single first-enter stagger, (4) view
+transitions that preserve provenance (list row → record). Loading states are real: the
+pipeline reports steps as they finish. `prefers-reduced-motion` collapses everything to
+the end state.
 
-## 11. Demo script (3:00)
+## 8. Milestones
 
-| Time | Beat |
-|---|---|
-| 0:00–0:15 | Cold open: an agent tries to spend $412 on coffee. Card: **"Vetoed. $0 moved."** |
-| 0:15–0:40 | The problem: agents can pay now; companies can't let them. One sentence on who this is for. |
-| 0:40–1:05 | Create the charter in 20s: caps, allowed vendors, approver. |
-| 1:05–1:35 | Slack: `/veto` → real products appear → priced cart → **auto-approved within policy**. |
-| 1:35–2:05 | The veto: over unit cap → card says which rule and what would unblock → approver replies *"only 2 boxes"* → re-shop → re-propose. |
-| 2:05–2:30 | Approve → money actually moves → receipt in thread with order id → ledger updates. |
-| 2:30–2:50 | The failure branch: try a non-allowlisted vendor → blocked, zero calls to PayPal. |
-| 2:50–3:00 | Close: every dollar has a named human and a receipt. If you use Channel3, say so here. |
+| # | Ship | Status |
+|---|---|---|
+| M0 | this spec, branch `v2` | **done** |
+| M1 | SQLite store, auth, seeded demo, session API, React shell + auth screen | **done (2026-10-22)** |
+| M2 | policy engine, agents/rules CRUD, scoped search, dry-run, Overview live | next |
+| M3 | requests/consent/payments/void/events, Slack rewired, API keys | |
+| M4 | Inbox, Record, Agents, Analytics screens; delete the old console; `/` flips to the app | |
+| M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | |
+| M6 | README/SPEC/PRODUCT, deploy, video, Devpost text | |
 
----
+## 9. Running it
 
-## 12. Submission non-negotiables
+```bash
+python3 server.py            # http://127.0.0.1:8787/app/
+cd web && npm install && npm run build   # rebuild app/ after frontend changes
+cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
+python3 -m unittest discover -s tests    # backend tests
+```
 
-- Public repo, **license visible in the About section** (detectable, not just a LICENSE file).
-- Hosted demo URL *or* complete run instructions + seed data. A mockup fails the requirement outright.
-- YouTube link, public, under 3:00, showing it running.
-- "Tools used" section naming the model and every service.
-- English throughout. Sandbox only. No third-party logos or music you don't have rights to.
-- If you use Channel3, actually call it — projects that only reference it don't qualify.
+`PAYPAL_LIVE=0` runs the whole loop against the in-process PayPal simulator with no keys.
+Hosted deploys pass the approved `PAYPAL_VAULT_ID` through the environment.
+
+## 10. Non-goals (v1)
+
+Multi-workspace Slack OAuth · email intake · MCP server · Postgres · SSO · multi-currency ·
+refunds beyond voiding an uncaptured authorization · a framework migration of the runner.
