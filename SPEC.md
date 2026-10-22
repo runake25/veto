@@ -26,14 +26,41 @@ an agent wants to buy something
    │  POST /api/v1/requests   (its own API key — the agent is a fact, not a claim)
    ▼
 1. EXTRACT   text → items[{name, qty}]            (LLM; never prices, vendors, payees)
-2. SOURCE    Channel3 per item, scoped to that agent's allowed vendors/categories
-3. PRICE     code picks the candidate, unit × qty
-4. JUDGE     deterministic rules → auto | review | block, observed vs limit
-5. CONSENT   sha256(cart) · single use · 10 minutes · named approver
-6. SETTLE    PayPal vault → order → authorization → capture
+2. SOURCE    Channel3 per item, scoped to that agent's merchants, categories and
+             per-order ceiling; normalized through the local catalogue when offline
+3. CHOOSE    per item, pick the one offer that IS the requested product
+             (LLM pick constrained to the sourced candidates; never sees money)
+4. PRICE     unit × qty for the chosen offers; the cart total is the sum of its lines
+5. JUDGE     deterministic rules → auto | review | block, observed vs limit
+6. CONSENT   sha256(cart) · single use · 10 minutes · named approver
+7. SETTLE    PayPal vault → order → authorization → capture
              (block or veto = zero PayPal objects, ever)
-7. RECORD    events, agent, tag, vendor → analytics
+8. RECORD    events, agent, tag, vendor → analytics
 ```
+
+**Why CHOOSE is its own step.** A lexical catalogue hit is not a product decision:
+"coffee" returns coffee pots, a "milk" query returns milk bottles, "chips" returns poker
+chips and bird food. The LLM picks only from the offers SOURCE already scoped, and it can
+refuse every offer; it sees titles, categories and vendors but never prices, caps or
+payees. If it is unavailable the deterministic fallback picks the first offer inside the
+agent's categories, so the loop still runs offline.
+
+**Failure taxonomy — what a refusal can mean (all are blocks, never silent):**
+
+| Reason | Fired when | Reported as |
+|---|---|---|
+| `catalogue` | no offer is the requested product (nothing sourced, or every offer refused) | "no product for: X" + the closest offers it did find |
+| `category_allowlist` | the chosen product's category is outside the agent's charter | e.g. "stationery is not an approved category" |
+| `vendor_allowlist` | the offer's merchant is not on the agent's list | "X is not an approved merchant" |
+| `monthly_cap` / `per_order_cap` | the cart would exceed a hard cap | observed vs limit + the unblock |
+| `per_unit_cap` / `approval_threshold` | over a review rule | outcome `review`, a human can sign |
+
+**Catalogue scope is a product truth, not mock data.** The catalogue is Channel3's
+general-merchandise index: household consumables, office supplies, equipment, home goods.
+It does not stock groceries, so a request for Pringles, Doritos or coffee resolves to a
+catalogue refusal ("closest offers: a Pringles t-shirt …") rather than buying merchandise.
+The demo's happy paths are toilet paper, paper towels, dish soap, sponges, trash bags,
+keyboards, monitors, printer paper, pens, envelopes and mats.
 
 Intake surfaces: REST API (agent key, primary) · Slack `/veto` + buttons (one workspace in
 v1, callbacks already verified) · web app (dry-run and human-originated requests, marked
@@ -55,10 +82,12 @@ Workspace ── monthly budget, currency, wallet
         └── Events      append-only audit trail
 ```
 
-Evaluation order: `catalogue_match` → `category_allowlist` → `vendor_allowlist` →
-`monthly_cap` (workspace + agent) → `per_order_cap` (cart and category subtotal) →
-`per_unit_cap` (line, category override wins) → `approval_threshold` (cart and category
-subtotal). Outcome = max severity; every reason stores cents and a sentence.
+Evaluation order: a catalogue refusal short-circuits pricing → `category_allowlist` →
+`vendor_allowlist` → `monthly_cap` (workspace + agent) → `per_order_cap` (cart and
+category subtotal) → `per_unit_cap` (line, category override wins) → `approval_threshold`
+(cart and category subtotal). Outcome = max severity; every reason stores cents and a
+sentence. In the dry run the result also carries `near_misses` (the offers CHOOSE
+refused), so a refusal can show what the catalogue had instead.
 
 **Precedence:** category override → agent default → workspace default.
 
@@ -110,12 +139,14 @@ surfaces may show a count or a link.
 | **Overview** | needs-me count · committed-unsigned · settled this month · agent activity · top-3 pending as links · where the money went |
 | **Inbox** | the only request list; filters live in the URL |
 | **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void |
-| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, **scoped search**, test-a-cart |
+| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, **test a request** (the decision: extract → choose → price → judge) and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
 | **Analytics** | aggregates by agent / tag / vendor / category / rule, drill-down links into Inbox |
 | **Integrations** | Slack, API keys, web, wallet |
 
-Guided rule setup (option A): one form with template defaults, an optional category
-override, and a read-only "advanced" panel showing the rule rows. Not a raw editor.
+Guided rule setup (option A): one form with template defaults and an optional category
+override. The agent screen renders the charter back as a guardrail band — monthly figure
+and track, per-order / per-item / signature figures, then categories, merchants and
+exceptions — not as a table of rule names. Not a raw editor.
 
 ## 6. Auth and tenancy
 

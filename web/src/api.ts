@@ -69,6 +69,19 @@ export interface PricedLine {
   source?: string | null
 }
 
+/** Offers that matched the words but were not the requested product. */
+export interface NearMissOffer {
+  title: string
+  category: string
+  vendor: string | null
+  unit_cents: number
+}
+
+export interface NearMiss {
+  item: string
+  offers: NearMissOffer[]
+}
+
 export interface SimulateResult {
   agent: Agent
   items: { name: string; qty: number }[]
@@ -77,6 +90,7 @@ export interface SimulateResult {
   currency: string
   decision: Decision
   events: { kind: string; label: string; detail?: string | null }[]
+  near_misses?: NearMiss[]
   source: string
   elapsed_ms: number
   dry_run: boolean

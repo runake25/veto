@@ -262,9 +262,83 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(result["results"], [])
 
 
+class ChooserTests(unittest.TestCase):
+    def offers(self) -> list[dict]:
+        return [
+            line(category="home-garden", title="Silver Coffee Pot", unit_cents=3_525),
+            line(category="appliance", title="10 Cup Coffee Maker", unit_cents=4_998),
+        ]
+
+    def test_model_pick_wins(self) -> None:
+        with mock.patch.object(pipeline.legacy_engine, "deepseek",
+                               return_value={"pick": 1, "reason": "maker"}):
+            chosen = pipeline.choose_offer(agent(), {"name": "coffee", "qty": 1}, self.offers())
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["title"], "10 Cup Coffee Maker")
+
+    def test_model_can_refuse_every_offer(self) -> None:
+        with mock.patch.object(pipeline.legacy_engine, "deepseek",
+                               return_value={"pick": None, "reason": "no coffee"}):
+            chosen = pipeline.choose_offer(agent(), {"name": "coffee", "qty": 1}, self.offers())
+        self.assertIsNone(chosen)
+
+    def test_an_out_of_range_pick_is_a_refusal_not_a_crash(self) -> None:
+        with mock.patch.object(pipeline.legacy_engine, "deepseek",
+                               return_value={"pick": 9}):
+            chosen = pipeline.choose_offer(agent(), {"name": "coffee", "qty": 1}, self.offers())
+        self.assertIsNone(chosen)
+
+    def test_offline_fallback_takes_the_first_offer_inside_the_charter(self) -> None:
+        offers = [line(category="general", title="Pringles socks", unit_cents=499),
+                  line(category="pantry", title="Paper Towels", unit_cents=1_000)]
+        with mock.patch.object(pipeline.legacy_engine, "deepseek",
+                               side_effect=RuntimeError("offline")):
+            chosen = pipeline.choose_offer(agent(), {"name": "paper towels", "qty": 1}, offers)
+        self.assertEqual(chosen["title"], "Paper Towels")
+
+    def test_no_offers_is_not_a_choice(self) -> None:
+        self.assertIsNone(pipeline.choose_offer(agent(), {"name": "coffee", "qty": 1}, []))
+
+
+class MapCategoryTests(unittest.TestCase):
+    def check(self, slug: str, path: list[str], want: str) -> None:
+        from veto.channel3 import map_category
+
+        product = {"category": {"slug": slug, "title": slug,
+                                "path": [{"slug": part} for part in path]}}
+        self.assertEqual(map_category(product), want, slug)
+
+    def test_equipment(self) -> None:
+        self.check("keyboards", ["electronics"], "equipment")
+        self.check("webcams", ["cameras-optics"], "equipment")
+        self.check("desk-lamps", ["home-garden", "lighting"], "equipment")
+        self.check("laptop-stands", ["electronics", "computer-accessories"], "equipment")
+        # office-supplies holds both paper and furniture; the leaf decides
+        self.check("anti-fatigue-mats",
+                   ["office-supplies", "office-chair-mats", "anti-fatigue-mats"], "equipment")
+        self.check("label-makers", ["office-supplies", "office-equipment", "label-makers"],
+                   "equipment")
+
+    def test_stationery(self) -> None:
+        self.check("printer-copier-paper", ["office-supplies"], "stationery")
+        self.check("envelopes", ["office-supplies"], "stationery")
+        self.check("invisible-tape", ["office-supplies", "office-tape"], "stationery")
+
+    def test_pantry_household_paper(self) -> None:
+        self.check("toilet-paper", ["home-garden"], "pantry")
+        self.check("paper-towels", ["home-garden"], "pantry")
+        self.check("dish-detergent-soap", ["home-garden"], "pantry")
+        self.check("sponges", ["home-garden"], "pantry")
+
+    def test_accessories_do_not_become_the_food(self) -> None:
+        self.check("percolators", ["home-garden", "kitchen-appliances"], "general")
+        self.check("food-storage-containers", ["home-garden", "kitchen-dining"], "general")
+        self.check("bird-food", ["animals-pet-supplies"], "general")
+
+
 class SimulateTests(unittest.TestCase):
     def run_simulate(self, text="toilet paper", agent_dict=None, items=None,
-                     lines_by_query=None, search=None) -> dict:
+                     lines_by_query=None, search=None, choose=None) -> dict:
         if search is None:
             mapping = {"toilet paper": line()} if lines_by_query is None else lines_by_query
             search = fake_search(mapping)
@@ -273,6 +347,7 @@ class SimulateTests(unittest.TestCase):
             text,
             extract_fn=fake_extract(items or [{"name": "toilet paper", "qty": 1}]),
             search_fn=search,
+            choose_fn=choose or (lambda agent_dict, item, lines: lines[0] if lines else None),
         )
 
     def test_auto_dry_run_shape(self) -> None:
@@ -314,7 +389,7 @@ class SimulateTests(unittest.TestCase):
         self.assertIn("toilet paper", reason["message"])
         self.assertEqual(result["source"], "local")
 
-    def test_simulate_prefers_an_offer_inside_the_charter(self) -> None:
+    def test_simulate_prices_the_offer_the_chooser_picked(self) -> None:
         outside = line(category="stationery", title="Doritos pencil case", unit_cents=999)
         inside = line(category="pantry", title="Sunflower chips", unit_cents=1_200)
 
@@ -323,21 +398,24 @@ class SimulateTests(unittest.TestCase):
                     {"line": dict(inside), "source": "channel3"}]
 
         result = self.run_simulate(
-            text="chips", items=[{"name": "chips", "qty": 1}], search=search)
+            text="chips", items=[{"name": "chips", "qty": 1}], search=search,
+            choose=lambda agent_dict, item, lines: lines[1])
         self.assertEqual(result["lines"][0]["title"], "Sunflower chips")
         self.assertEqual(result["lines"][0]["category"], "pantry")
 
-    def test_simulate_keeps_the_near_miss_when_nothing_fits(self) -> None:
+    def test_simulate_reports_a_near_miss_as_a_catalogue_block(self) -> None:
         outside = line(category="general", title="Doritos socks", unit_cents=999)
 
         def search(agent_dict, query, qty):
             return [{"line": dict(outside), "source": "channel3"}]
 
         result = self.run_simulate(
-            text="doritos", items=[{"name": "doritos", "qty": 1}], search=search)
-        self.assertEqual(result["lines"][0]["title"], "Doritos socks")
-        self.assertEqual(result["decision"]["outcome"], "block")
-        self.assertEqual(result["decision"]["reasons"][0]["rule"], "category_allowlist")
+            text="doritos", items=[{"name": "doritos", "qty": 1}], search=search,
+            choose=lambda agent_dict, item, lines: None)
+        self.assertEqual(result["lines"], [])
+        self.assertEqual(result["decision"]["reasons"][0]["rule"], "catalogue")
+        self.assertEqual(result["near_misses"][0]["item"], "doritos")
+        self.assertEqual(result["near_misses"][0]["offers"][0]["title"], "Doritos socks")
 
     def test_quantities_flow_into_lines_and_total(self) -> None:
         search = fake_search({"a": line(title="A", unit_cents=1_000),

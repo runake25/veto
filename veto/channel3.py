@@ -18,18 +18,82 @@ import urllib.request
 
 BASE = os.environ.get("CHANNEL3_BASE", "https://api.trychannel3.com")
 
-# Channel3's taxonomy -> the charters' categories. A product that maps to no
-# known category comes back as "general", which the category rule refuses.
-CATEGORY_HINTS = [
-    ("equipment", ("keyboard", "mouses", "mouse", "monitor", "desk", "chair", "stand",
-                   "mat", "dock", "ergonomic", "laptop", "computer", "electronic",
-                   "furniture", "headphone", "printer")),
-    ("pantry", ("toilet", "tissue", "household-paper", "paper-towel", "coffee", "tea",
-                "food", "snack", "beverage", "clean", "soap", "dish", "pantry",
-                "grocery", "household-supplies")),
-    ("stationery", ("pen", "pencil", "marker", "notebook", "stationery", "office-supplies",
-                    "writing", "copy-paper", "printer-paper", "sticky", "envelope")),
-]
+# Channel3's taxonomy -> the charters' categories. The mapping reads the category
+# slug and its full path, because a bare word in a title is not a category: a
+# coffee pot, a glass milk bottle and a flour keeper all contain the food's name
+# and none of them is food. Anything that does not map to a known category comes
+# back as "general", which every charter refuses.
+HOUSEHOLD_SLUGS = (
+    "household-paper", "paper-towels", "toilet-paper", "toilet-tissue",
+    "dish-detergent-soap", "dish-soap", "sponges", "garbage-bags", "trash-bags",
+    "cleaning-supplies", "laundry-detergent", "household-supplies",
+)
+STATIONERY_SLUGS = (
+    "office-supplies", "printer-copier-paper", "paper-products", "envelopes",
+    "pens", "pencils", "notebooks", "markers", "staplers", "tape",
+    "folders", "binders", "sticky-notes", "office-paper",
+)
+EQUIPMENT_SLUGS = (
+    "keyboards", "mice-trackballs", "computer-monitors", "monitor-stands",
+    "computer-monitor-stands-risers", "laptop-stands", "laptops", "webcams",
+    "headphones", "headsets", "desk-lamps", "desks", "office-chairs", "chairs",
+    "anti-fatigue-mats", "chair-mats", "floor-mats", "docking-stations",
+    "label-makers", "printers", "scanners", "projectors",
+)
+FOOD_SLUGS = (
+    "grocery", "groceries", "snacks", "cereal", "cereals", "beverages",
+    "canned-goods", "pasta", "rice", "coffee", "tea", "baking", "meat", "seafood",
+)
+EQUIPMENT_ROOTS = ("electronics", "electronics-accessories", "cameras-optics",
+                   "furniture", "computers", "office-equipment")
+FOOD_ROOTS = ("food-beverages-tobacco", "food-items", "grocery", "pantry")
+
+
+def _category_parts(product: dict) -> tuple[str, list[str]]:
+    """(slug, path slugs) for a Channel3 product, lower-cased."""
+    category = product.get("category") or {}
+    slug = str(category.get("slug") or "").lower()
+    path = [str(part.get("slug") or "").lower()
+            for part in (category.get("path") or []) if isinstance(part, dict)]
+    return slug, path
+
+
+def _slug_matches(slug: str, hints: tuple[str, ...]) -> bool:
+    return any(slug == hint or slug.startswith(hint + "-") or slug.endswith("-" + hint)
+               for hint in hints)
+
+
+def map_category(product: dict) -> str:
+    """Which of the charters' categories a Channel3 product belongs to.
+
+    The office-supplies root holds both paper and office furniture, so a root alone
+    is not enough: mats and label makers are equipment even though they sit under it.
+    """
+    slug, path = _category_parts(product)
+    in_path = set(path)
+
+    # household consumables, matched on the specific leaf slug: "paper-towels" is
+    # a pantry staple, "paint-sponges" is not
+    for hint in HOUSEHOLD_SLUGS:
+        if slug == hint or slug.startswith(hint + "-"):
+            return "pantry"
+
+    # actual food lives under the food root, never under home/kitchen/appliances
+    if in_path & set(FOOD_ROOTS) or slug in FOOD_SLUGS:
+        return "pantry"
+
+    # office and computer equipment before the office-supplies root is decided
+    if _slug_matches(slug, EQUIPMENT_SLUGS) or in_path & set(EQUIPMENT_ROOTS):
+        return "equipment"
+
+    # everything left under office supplies is writing, paper or filing
+    if "office-supplies" in in_path:
+        return "stationery"
+
+    if _slug_matches(slug, STATIONERY_SLUGS):
+        return "stationery"
+
+    return "general"
 
 
 class Channel3Error(RuntimeError):
@@ -41,21 +105,6 @@ def _cents(value) -> int:
         return int(round(float(value) * 100))
     except (TypeError, ValueError):
         return 0
-
-
-def map_category(product: dict) -> str:
-    """Which of the charters' categories a Channel3 product belongs to."""
-    cat = product.get("category") or {}
-    hay = " ".join([str(cat.get("slug") or ""), str(cat.get("title") or "")]
-                   + [str(p.get("slug") or "") for p in (cat.get("path") or [])]).lower()
-    slug = str(cat.get("slug") or "").lower()
-    for name, hints in CATEGORY_HINTS:
-        if any(h in slug for h in hints):
-            return name
-    for name, hints in CATEGORY_HINTS:
-        if any(h in hay for h in hints):
-            return name
-    return "general"
 
 
 def best_offer(product: dict) -> dict | None:

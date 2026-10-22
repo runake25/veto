@@ -7,13 +7,14 @@ request, authorising and capturing are M3.
 """
 from __future__ import annotations
 
+import json
 import re
 import time
 
 from veto import engine as legacy_engine
 from veto import policy
 from veto.channel3 import Channel3, Channel3Error, rank, relevant, to_line
-from veto.prompts import SYSTEM
+from veto.prompts import CHOOSE_SYSTEM, SYSTEM
 
 SEARCH_LIMIT = 8
 # The channel search is bounded by the agent's per-order cap, and never above
@@ -250,6 +251,87 @@ def _candidate_pool(agent: dict, query: str, qty: int, limit: int = SEARCH_LIMIT
     return candidates, filtered
 
 
+def _offer_value(line: dict) -> dict:
+    """The fields the chooser sees. Price is a tie-break between equal products; it
+    still never sees caps, totals, budgets or payee rules."""
+    unit = _int(line.get("unit_cents"), 0) or 0
+    return {
+        "title": _text(line.get("title")),
+        "category": _text(line.get("category")) or "general",
+        "vendor": _text(line.get("vendor")),
+        "unit_price_usd": round(unit / 100, 2),
+    }
+
+
+def _fallback_choice(agent: dict, lines: list[dict]) -> dict | None:
+    """No model: take the first offer inside the charter, else the first offer.
+
+    Deterministic and offline-safe. It cannot tell coffee from a coffee pot, which
+    is exactly why the model is the default.
+    """
+    allowed = [line for line in lines if _category_allowed(agent, line)]
+    if allowed:
+        return allowed[0]
+    return lines[0] if lines else None
+
+
+def choose_offer(agent: dict, item: dict, lines: list[dict]) -> dict | None:
+    """Pick the offer that is the requested product, or None when none is.
+
+    The agent may choose WHAT to buy, so this is a model call, but it never sees
+    prices or rules. If the model is unavailable the deterministic fallback keeps
+    the dry run working; if the model says nothing matches, the item is left
+    unresolved and the user is told what the catalogue did offer instead.
+    """
+    if not lines:
+        return None
+    prompt = CHOOSE_SYSTEM
+    payload = json.dumps({
+        "request": {"item": _text(item.get("name")), "qty": max(1, _int(item.get("qty"), 1) or 1)},
+        "agent_categories": [_text(cat).lower() for cat in (agent.get("categories") or [])],
+        "offers": [_offer_value(line) | {"index": index} for index, line in enumerate(lines)],
+    })
+    try:
+        parsed = legacy_engine.deepseek(prompt, payload)
+    except Exception:  # noqa: BLE001 - offline, bad JSON, timeout -> deterministic
+        return _fallback_choice(agent, lines)
+    if not isinstance(parsed, dict) or "pick" not in parsed:
+        return _fallback_choice(agent, lines)
+    pick = parsed.get("pick")
+    if pick is None:  # the model looked and found nothing that is the product
+        return None
+    if isinstance(pick, bool) or not isinstance(pick, int):
+        return None
+    if 0 <= pick < len(lines):
+        return lines[pick]
+    return None
+
+
+def _normalise_candidates(candidates: list) -> list[tuple[dict, str]]:
+    """Tolerate both ``{line, source}`` and bare lines from an injectable search."""
+    found: list[tuple[dict, str]] = []
+    for candidate in candidates or []:
+        if isinstance(candidate, dict) and isinstance(candidate.get("line"), dict):
+            line = candidate["line"]
+            source = _text(candidate.get("source")) or "local"
+        elif isinstance(candidate, dict):
+            line = dict(candidate)
+            source = _text(line.get("source")) or "local"
+        else:
+            continue
+        found.append((line, source))
+    return found
+
+
+def _near_miss(line: dict) -> dict:
+    return {
+        "title": _text(line.get("title")),
+        "category": _text(line.get("category")) or "general",
+        "vendor": _text(line.get("vendor")),
+        "unit_cents": _int(line.get("unit_cents"), 0) or 0,
+    }
+
+
 def search_candidates(agent: dict, query: str, qty: int = 1,
                       limit: int = SEARCH_LIMIT) -> list[dict]:
     """Relevant catalogue candidates for one item, each ``{line, source}``."""
@@ -341,11 +423,13 @@ def _line_total(line: dict) -> int:
     return (_int(line.get("unit_cents"), 0) or 0) * max(1, _int(line.get("qty"), 1) or 1)
 
 
-def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None) -> dict:
+def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
+             choose_fn=None) -> dict:
     """Run the whole loop in memory and return what would have happened.
 
-    ``extract_fn`` / ``search_fn`` are injectable so tests (and the offline demo)
-    never touch the network. Nothing is persisted; no PayPal call is possible.
+    ``extract_fn`` / ``search_fn`` / ``choose_fn`` are injectable so tests (and the
+    offline demo) never touch the network. Nothing is persisted; no PayPal call is
+    possible.
     """
     started = time.perf_counter()
     raw = _text(text)
@@ -370,32 +454,38 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None) -> dict
 
     lines: list[dict] = []
     unresolved: list[str] = []
+    near_misses: list[dict] = []
     sources: set[str] = set()
+    choose = choose_fn or choose_offer
     for item in items:
         qty = max(1, _int(item.get("qty"), 1) or 1)
         try:
             candidates = search(agent, item["name"], qty) or []
         except Exception:  # noqa: BLE001 - a catalogue failure means "unresolved"
             candidates = []
-        if not candidates:
+        normalised = _normalise_candidates(candidates)
+        if not normalised:
             unresolved.append(item["name"])
             continue
-        normalised: list[tuple[dict, str]] = []
-        for candidate in candidates:
-            if isinstance(candidate, dict) and isinstance(candidate.get("line"), dict):
-                found = candidate["line"]
-                found_source = _text(candidate.get("source")) or "local"
-            else:  # tolerate a search_fn that returns bare lines
-                found = dict(candidate)
-                found_source = _text(found.get("source")) or "local"
-            normalised.append((found, found_source))
-        # an agent takes the best offer it is allowed to take; if every offer is
-        # outside its charter the first one still goes to the policy engine, which
-        # names the rule that refused it instead of hiding the near miss.
-        allowed = [pair for pair in normalised if _category_allowed(agent, pair[0])]
-        line, source = (allowed or normalised)[0]
-        line["source"] = source
-        lines.append(line)
+        try:
+            chosen = choose(agent, {"name": item["name"], "qty": qty},
+                            [line for line, _ in normalised])
+        except Exception:  # noqa: BLE001 - the model must not take the dry run down
+            chosen = _fallback_choice(agent, [line for line, _ in normalised])
+        if chosen is None:
+            unresolved.append(item["name"])
+            near_misses.append({
+                "item": item["name"],
+                "offers": [_near_miss(line) for line, _ in normalised[:3]],
+            })
+            continue
+        source = _text(chosen.get("source")) or "local"
+        for candidate_line, candidate_source in normalised:
+            if candidate_line is chosen:
+                source = candidate_source
+                break
+        chosen["source"] = source
+        lines.append(chosen)
         sources.add(source)
 
     merchant_hint = ", ".join(agent.get("vendors") or []) or "no merchant"
@@ -437,6 +527,7 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None) -> dict
         "currency": "USD",
         "decision": decision,
         "events": events,
+        "near_misses": near_misses,
         "source": "channel3" if "channel3" in sources else "local",
         "elapsed_ms": int(round((time.perf_counter() - started) * 1000)),
         "dry_run": True,

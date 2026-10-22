@@ -1496,6 +1496,59 @@
   color: var(--muted);
 }
 
+.dry-miss {
+  display: grid;
+  gap: 9px;
+}
+
+.near {
+  padding: 9px 11px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--wash);
+  display: grid;
+  gap: 6px;
+}
+
+.near-head {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.near-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.near-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.near-title {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.near-vendor {
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.near-price {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
 .cart-lines {
   list-style: none;
   margin: 0;

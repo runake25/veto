@@ -35,17 +35,17 @@ const OVERRIDE_WORD: Record<string, string> = {
 
 function defaultCart(agent: Agent): string {
   if (agent.categories.includes('equipment')) return '2 anti-fatigue standing mats for the studio'
-  if (agent.categories.includes('pantry')) return '2 packs of bamboo toilet paper'
+  if (agent.categories.includes('pantry')) return '2 packs of toilet paper'
   if (agent.categories.includes('meals')) return 'lunch for eight, client visit'
-  if (agent.categories.includes('stationery')) return 'whiteboard markers, 4 pack'
+  if (agent.categories.includes('stationery')) return 'a box of envelopes and 2 packs of pens'
   return 'a standing mat for the desk'
 }
 
 function defaultQuery(agent: Agent): string {
   if (agent.categories.includes('equipment')) return 'anti-fatigue standing mat'
-  if (agent.categories.includes('pantry')) return 'bamboo toilet paper'
+  if (agent.categories.includes('pantry')) return 'toilet paper'
   if (agent.categories.includes('meals')) return 'team lunch catering'
-  if (agent.categories.includes('stationery')) return 'whiteboard markers'
+  if (agent.categories.includes('stationery')) return 'envelopes'
   return 'standing mat'
 }
 
@@ -194,11 +194,12 @@ function DryRun({ agent }: { agent: Agent }) {
   return (
     <section className="card">
       <header className="card-head">
-        <h2>Try a cart</h2>
+        <h2>Test a request</h2>
         <span className="card-note">dry run</span>
       </header>
       <p className="card-lede">
-        The real pipeline, stopped before consent — nothing is ordered.
+        The agent&rsquo;s decision for this message: extract, choose a product, price it, apply
+        the rules. Nothing is ordered.
       </p>
       <form className="inline-form" onSubmit={run}>
         <input
@@ -212,7 +213,7 @@ function DryRun({ agent }: { agent: Agent }) {
         <PressButton type="submit" loading={busy}>
           {busy ? (
             <>
-              <Spinner label="pricing" /> Pricing…
+              <Spinner label="working" /> Working…
             </>
           ) : (
             'Run'
@@ -260,9 +261,31 @@ function DryRun({ agent }: { agent: Agent }) {
                 ))}
               </ul>
             ) : (
-              <p className="dry-empty">
-                No offer was found inside this agent&rsquo;s scope, so the cart never got priced.
-              </p>
+              <div className="dry-miss">
+                <p className="dry-empty">
+                  {result.near_misses?.length
+                    ? 'Nothing the catalogue returned is the item asked for, so the cart never got priced.'
+                    : 'No product was found inside this agent’s scope, so the cart never got priced.'}
+                </p>
+                {(result.near_misses ?? []).map((miss) => (
+                  <div className="near" key={miss.item}>
+                    <p className="near-head">Closest offers for “{miss.item}”</p>
+                    <ul className="near-list">
+                      {miss.offers.map((offer) => (
+                        <li key={`${offer.title}-${offer.vendor}`}>
+                          <span className="near-title">{offer.title}</span>
+                          <span className="mono near-vendor">{offer.vendor ?? 'unknown'}</span>
+                          <span className="near-price mono">{money(offer.unit_cents)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+                <p className="fineprint">
+                  This catalogue carries household, office and equipment goods — it does not
+                  stock groceries or food brands.
+                </p>
+              </div>
             )}
 
             {result.decision.reasons.length ? (
@@ -353,11 +376,12 @@ function FindProduct({ agent }: { agent: Agent }) {
   return (
     <section className="card">
       <header className="card-head">
-        <h2>Find a product</h2>
-        <span className="card-note">inside the rules</span>
+        <h2>Browse the catalogue</h2>
+        <span className="card-note">scoped to the rules</span>
       </header>
       <p className="card-lede">
-        Only what its merchants, categories and caps allow.
+        Every offer these merchants return for a search, annotated with the rules it passes or
+        fails. This is the list a decision is made from.
       </p>
       <form className="inline-form" onSubmit={run}>
         <input

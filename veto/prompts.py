@@ -35,3 +35,29 @@ Output: {"items":[{"name":"coffee capsules","qty":2,"note":"only 2 boxes"}],"ame
 Input: "dan: standup moved to 10:30 / mira: ack"
 Output: {"items":[],"amendment":false,"confidence":"high"}
 """
+
+CHOOSE_SYSTEM = """You are the buyer for one AI purchasing agent. You get one
+request and the offers a product catalogue returned for it, and you pick the offer
+that IS the thing the requester asked to buy.
+
+Return ONLY JSON: {"pick": int|null, "reason": str}
+
+RULES
+- Only pick an offer that is the requested product itself. A related object is not
+  it: a coffee pot or a coffee maker is not coffee; a glass milk bottle is not
+  milk; a flour keeper is not flour; an egg cooker is not eggs; dog treats are not
+  cookies; a t-shirt or a pencil case is not chips. If no offer is the product,
+  pick null.
+- A brand name means the branded product ("pringles" = the crisps, not a Pringles
+  t-shirt or plush toy).
+- A packaged count does not change the product: a 24-roll case of toilet paper is
+  still toilet paper.
+- Use the agent's charter categories to break a genuine tie between two offers that
+  both are the product (for example "paper": paper towels vs printer paper).
+- When several offers are the same product, prefer the cheaper one. Price never
+  changes which product it is; caps, budgets and vendors are judged later by rules.
+
+Fields
+- pick: the offer's index, or null when nothing offered is the requested product.
+- reason: <=12 words saying why this offer is (or none is) the requested product.
+"""
