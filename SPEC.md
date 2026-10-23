@@ -25,11 +25,15 @@ a moving selection indicator, first-enter stagger, shared-element transitions.
 an agent wants to buy something
    │  POST /api/v1/requests   (its own API key — the agent is a fact, not a claim)
    ▼
-1. EXTRACT   text → items[{name, qty}]            (LLM; never prices, vendors, payees)
-2. SOURCE    Channel3 per item, scoped to that agent's merchants, categories and
-             per-order ceiling; normalized through the local catalogue when offline
+1. EXTRACT   text → items[{name, qty, query, product_type, brand}]
+             (LLM; rewrites each item into a catalogue query and a bare product noun;
+             never prices, vendors, payees)
+2. SOURCE    per item, resolve the structured params against the catalogue and search
+             inside the agent's merchants + per-order ceiling; category/brand filters
+             first, then plain query variants; local catalogue when offline
 3. CHOOSE    per item, pick the one offer that IS the requested product
-             (LLM pick constrained to the sourced candidates; never sees money)
+             (LLM pick constrained to the sourced candidates; sees the catalogue's own
+             category and never sees money)
 4. PRICE     unit × qty for the chosen offers; the cart total is the sum of its lines
 5. JUDGE     deterministic rules → auto | review | block, observed vs limit
 6. CONSENT   sha256(cart) · single use · 10 minutes · named approver
@@ -38,12 +42,42 @@ an agent wants to buy something
 8. RECORD    events, agent, tag, vendor → analytics
 ```
 
+**EXTRACT now returns search params, not just a name.** Each item carries:
+
+| Field | Purpose | Example |
+|---|---|---|
+| `name` | what the thread called it | "whiteboard markers" |
+| `qty` | how many | 2 |
+| `query` | the catalogue phrase, brand-free, with meaningful qualifiers | "dry erase markers" |
+| `product_type` | the bare noun used for the category lookup | "markers" |
+| `brand` | the brand when one is named | "Logitech" |
+
+This is the bridge from EXTRACT to SOURCE: "whiteboard markers" never matches the
+catalogue lexically, but the product type "markers" resolves to Channel3's `markers`
+category, and the catalogue query "dry erase markers" returns real markers.
+
+**SOURCE builds a structured search ladder** (`_search_attempts`):
+
+1. `query` + resolved `category_ids` + resolved `brand_ids` (Channel3's own filters)
+2. `query` + `category_ids`
+3. `query` + `brand_ids`
+4. `query` alone (spelling / plural relaxed, then the thread's own words)
+
+Category ids come from `GET /v1/categories/search` and are accepted only when the
+category's own words are a subset of the product type: "toilet paper" → `toilet-paper`,
+"markers" → `markers`, but "coffee" → only coffee-makers/coffee-tables, so no category
+filter is used and the chooser refuses the accessory. Brand ids come from
+`GET /v1/brands/search` and match the brand name exactly (Channel3 keeps several ids per
+name). Every search is still scoped to the agent's merchants and per-order ceiling. A
+category-filtered attempt trusts the category; an unfiltered attempt keeps only products
+that share a word with the query.
+
 **Why CHOOSE is its own step.** A lexical catalogue hit is not a product decision:
 "coffee" returns coffee pots, a "milk" query returns milk bottles, "chips" returns poker
 chips and bird food. The LLM picks only from the offers SOURCE already scoped, and it can
-refuse every offer; it sees titles, categories and vendors but never prices, caps or
-payees. If it is unavailable the deterministic fallback picks the first offer inside the
-agent's categories, so the loop still runs offline.
+refuse every offer; it sees titles, the charter category, the catalogue's own category and
+vendors but never prices, caps or payees. If it is unavailable the deterministic fallback
+picks the first offer inside the agent's categories, so the loop still runs offline.
 
 **Failure taxonomy — what a refusal can mean (all are blocks, never silent):**
 
@@ -60,7 +94,13 @@ general-merchandise index: household consumables, office supplies, equipment, ho
 It does not stock groceries, so a request for Pringles, Doritos or coffee resolves to a
 catalogue refusal ("closest offers: a Pringles t-shirt …") rather than buying merchandise.
 The demo's happy paths are toilet paper, paper towels, dish soap, sponges, trash bags,
-keyboards, monitors, printer paper, pens, envelopes and mats.
+keyboards, monitors, printer paper, pens, envelopes, markers and mats.
+
+**Stability harness.** `tools/check_pipeline.py` runs the demo's edge cases against a
+running runner and asserts each ends in the right class (purchasable / review / refused
+with a named rule). It is the regression check for extractor, search and chooser changes:
+
+    python3 tools/check_pipeline.py --base http://127.0.0.1:8787
 
 Intake surfaces: REST API (agent key, primary) · Slack `/veto` + buttons (one workspace in
 v1, callbacks already verified) · web app (dry-run and human-originated requests, marked

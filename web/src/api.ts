@@ -82,9 +82,19 @@ export interface NearMiss {
   offers: NearMissOffer[]
 }
 
+export interface SimulateItem {
+  name: string
+  qty: number
+  /** Catalogue query the extractor derived for the item. */
+  query?: string
+  /** Bare product noun used for the category lookup. */
+  product_type?: string
+  brand?: string | null
+}
+
 export interface SimulateResult {
   agent: Agent
-  items: { name: string; qty: number }[]
+  items: SimulateItem[]
   lines: PricedLine[]
   total_cents: number
   currency: string

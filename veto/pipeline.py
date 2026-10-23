@@ -13,10 +13,12 @@ import time
 
 from veto import engine as legacy_engine
 from veto import policy
-from veto.channel3 import Channel3, Channel3Error, rank, relevant, to_line
+from veto.channel3 import Channel3, Channel3Error, to_line
 from veto.prompts import CHOOSE_SYSTEM, SYSTEM
 
-SEARCH_LIMIT = 8
+SEARCH_LIMIT = 10
+# candidates handed to the chooser; more than this only costs tokens
+CHOOSE_LIMIT = 12
 # The channel search is bounded by the agent's per-order cap, and never above
 # this ceiling, so a mis-typed cap cannot ask the catalogue for a car.
 HARD_PRICE_CEILING_CENTS = 100_000
@@ -52,7 +54,13 @@ def _int(value, default: int | None = None) -> int | None:
 
 
 def _clean_items(raw) -> list[dict]:
-    """Normalise whatever the extractor returned into ``[{name, qty}]``."""
+    """Normalise the extractor's items into the loop's shape.
+
+    ``query`` / ``product_type`` / ``brand`` are the search params the extractor now
+    returns: the catalogue query, the bare noun for category lookup, and the brand
+    when one is named. Older or offline extractors omit them; the name is the
+    fallback for both.
+    """
     items: list[dict] = []
     if not isinstance(raw, list):
         return items
@@ -63,7 +71,16 @@ def _clean_items(raw) -> list[dict]:
         if not name:
             continue
         qty = max(1, _int(item.get("qty"), 1) or 1)
-        items.append({"name": name, "qty": qty})
+        query = _text(item.get("query")) or name
+        product_type = _text(item.get("product_type")) or query
+        brand = _text(item.get("brand")) or None
+        items.append({
+            "name": name,
+            "qty": qty,
+            "query": query,
+            "product_type": product_type,
+            "brand": brand,
+        })
     return items
 
 
@@ -87,7 +104,8 @@ def fallback_extract(text: str) -> list[dict]:
         phrase = _FILLER.sub("", phrase).strip().strip(".!?")
         if len(phrase) < 2 or phrase.lower() in _STOP_PHRASES:
             continue
-        items.append({"name": phrase, "qty": qty})
+        items.append({"name": phrase, "qty": qty, "query": phrase,
+                      "product_type": phrase, "brand": None})
     return items
 
 
@@ -145,6 +163,7 @@ def _channel3_line(line: dict, qty: int) -> dict:
         "line_cents": _int(line.get("line"), unit * actual_qty) or unit * actual_qty,
         "vendor": _text(line.get("vendor")),
         "category": _text(line.get("category")).lower(),
+        "catalogue_category": _text(line.get("catalogue_category")),
         "brand": _text(line.get("brand")),
         "image": _text(line.get("image")),
         "url": _text(line.get("url")),
@@ -182,38 +201,188 @@ def _search_query(query: str) -> str:
     return " ".join(kept)
 
 
-def _candidate_pool(agent: dict, query: str, qty: int, limit: int = SEARCH_LIMIT
+# -- query building ---------------------------------------------------------
+# The extractor hands over a catalogue query, a bare product type and a brand.
+# These turn that intent into a search ladder: structured filters first (the same
+# filters Channel3 itself recommends), then the plain query, then the words the
+# thread used. The chooser makes the final product decision either way.
+_STOP_WORDS = {
+    "a", "an", "the", "of", "for", "and", "from", "with", "to", "in", "on", "at",
+    "by", "or", "box", "boxes", "pack", "packs", "packet", "packets", "case",
+    "cases", "count", "ct", "roll", "rolls", "each", "unit", "units", "bag",
+    "bags", "bottle", "bottles", "jar", "jars", "can", "cans", "some", "new",
+    "our", "need", "needs", "buy", "get", "please", "kindly", "fresh", "large",
+    "small", "medium", "xl", "xxl",
+}
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokens(text) -> set[str]:
+    return {word for word in _TOKEN_RE.findall(str(text or "").lower())
+            if len(word) > 2 and word not in _STOP_WORDS}
+
+
+def _singular_word(word: str) -> str:
+    """Cheap English singular for matching a category title to a product noun."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 4 and word.endswith(("ches", "shes", "xes", "ses")):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _singular_tokens(text) -> set[str]:
+    return {_singular_word(word) for word in _tokens(text)}
+
+
+def _query_tokens(item: dict) -> set[str]:
+    joined = " ".join(_text(item.get(key)) for key in
+                      ("query", "product_type", "name", "brand"))
+    return _singular_tokens(joined)
+
+
+def _product_tokens(product: dict) -> set[str]:
+    """The words on the product itself. Category names are not used here: every
+    coffee machine sits in a category whose name contains "coffee"."""
+    hay = " ".join([
+        str(product.get("title") or ""),
+        str(product.get("brand") or ""),
+    ])
+    return _singular_tokens(hay)
+
+
+def _category_ids(client: Channel3, item: dict) -> list[str]:
+    """The catalogue category whose name is exactly the product type.
+
+    Exact matching keeps the filter honest: "toilet paper" finds toilet-paper, but
+    "coffee" matches only coffee-makers/coffee-tables and is therefore rejected
+    instead of quietly searching accessories.
+    """
+    phrase = _text(item.get("product_type")) or _text(item.get("query"))
+    want = _singular_tokens(phrase)
+    if not want:
+        return []
+    try:
+        categories = client.categories(phrase, limit=8)
+    except Exception:  # noqa: BLE001 - the lookup is an optimisation, never a wall
+        return []
+    for category in categories:
+        slug = _text(category.get("slug"))
+        if not slug:
+            continue
+        have = _singular_tokens(f"{_text(category.get('title'))} {slug.replace('-', ' ')}")
+        # "dry erase markers" belongs to markers (markers ⊆ query words), while
+        # "coffee" must not resolve to coffee-makers (makers is not in the request)
+        if have and have <= want:
+            return [slug]
+    return []
+
+
+def _brand_ids(client: Channel3, item: dict) -> list[str]:
+    """Ids for a brand the thread named. Channel3 keeps several ids per name and
+    the top hit is not always the brand asked for, so match the name exactly."""
+    brand = _text(item.get("brand"))
+    if not brand:
+        return []
+    try:
+        found = client.brands(brand, limit=12)
+    except Exception:  # noqa: BLE001
+        return []
+    want = brand.lower()
+    ids = [str(entry.get("id")) for entry in found
+           if _text(entry.get("name")).strip().lower() == want]
+    return [brand_id for brand_id in ids if brand_id][:6]
+
+
+def _search_attempts(item: dict, category_ids: list[str],
+                     brand_ids: list[str]) -> list[dict]:
+    """Structured first, then progressively relaxed, then the thread's own words."""
+    query = _text(item.get("query")) or _text(item.get("name"))
+    name = _text(item.get("name")) or query
+    attempts: list[dict] = []
+    seen: set[tuple] = set()
+
+    def add(phrase: str, cats: list[str] | None = None,
+            brands: list[str] | None = None) -> None:
+        phrase = _text(phrase)
+        if not phrase:
+            return
+        key = (phrase.lower(), tuple(cats or ()), tuple(brands or ()))
+        if key in seen:
+            return
+        seen.add(key)
+        attempts.append({"query": phrase, "category_ids": list(cats or ()),
+                         "brand_ids": list(brands or ())})
+
+    if category_ids or brand_ids:
+        add(query, category_ids, brand_ids)
+    if category_ids:
+        add(query, category_ids)
+    if brand_ids:
+        add(query, brands=brand_ids)
+    add(query)
+    for variant in (_search_query(query), _singular(query), name, _singular(name)):
+        add(variant)
+    return attempts[:6]
+
+
+def _pseudo_item(query: str) -> dict:
+    """A search box query has no extracted params: treat the words as all of them."""
+    phrase = _text(query)
+    return {"name": phrase, "query": phrase, "product_type": phrase, "brand": None}
+
+
+def _local_candidates(agent: dict, item: dict, qty: int) -> list[dict]:
+    """Offline fallback: the small local catalogue, matched by the same phrases."""
+    variants: list[str] = []
+    for phrase in (item.get("query"), item.get("product_type"), item.get("name")):
+        for variant in (phrase, _singular(_text(phrase)) if phrase else ""):
+            variant = _text(variant)
+            if variant and variant not in variants:
+                variants.append(variant)
+    for phrase in variants:
+        product = legacy_engine.match_product(phrase)
+        if product:
+            return [{"line": _catalog_line(product, qty), "source": "local"}]
+    return []
+
+
+def _candidate_pool(agent: dict, item: dict, qty: int, limit: int = SEARCH_LIMIT
                     ) -> tuple[list[dict], dict]:
     """Search as this agent and return ``([{line, source}], filtered_counts)``.
 
-    Channel3 first, bounded by the agent's vendors and price ceiling; the local
-    catalogue is the offline fallback. Nothing relevant is dropped here -- the
-    scoped search annotates category misses instead.
+    Attempts run structured-first and stop at the first one that returns products.
+    A product survives an unfiltered attempt only when it shares a word with the
+    query; a category-filtered attempt is trusted as-is, because Channel3 has
+    already answered "is this the product category". Nothing relevant is dropped
+    here; a catalogue miss is decided by the chooser, not by a word list.
     """
-    query = _text(query)
     qty = max(1, _int(qty, 1) or 1)
     candidates: list[dict] = []
     filtered = {"irrelevant": 0, "category": 0}
+    query = _text(item.get("query")) or _text(item.get("name"))
     if not query:
         return candidates, filtered
 
-    # Channel3's relevance floor is lexical: try the stripped phrase, its singular,
-    # then the item exactly as written, before falling back.
-    attempts: list[str] = []
-    for base in (_search_query(query), query):
-        for variant in (base, _singular(base)):
-            if variant and variant not in attempts:
-                attempts.append(variant)
-
     client = Channel3()
+    dropped: set[str] = set()
     if client.available:
-        for attempt in attempts:
+        tokens = _query_tokens(item)
+        category_ids = _category_ids(client, item)
+        brand_ids = _brand_ids(client, item)
+        ceiling = _search_ceiling_cents(agent)
+        vendors = list(agent.get("vendors") or []) or None
+        for attempt in _search_attempts(item, category_ids, brand_ids):
             try:
                 products = client.search(
-                    attempt,
-                    limit=limit,
-                    max_price_cents=_search_ceiling_cents(agent),
-                    website_ids=(list(agent.get("vendors") or []) or None),
+                    attempt["query"],
+                    limit=max(limit, 10),
+                    max_price_cents=ceiling,
+                    website_ids=vendors,
+                    category_ids=attempt["category_ids"] or None,
+                    brand_ids=attempt["brand_ids"] or None,
                 )
             except Channel3Error:
                 products = []
@@ -221,30 +390,38 @@ def _candidate_pool(agent: dict, query: str, qty: int, limit: int = SEARCH_LIMIT
                 products = []
             if not products:
                 continue
-            for product in rank(attempt, products):
-                if not relevant(attempt, product):
-                    filtered["irrelevant"] += 1
+            kept: list[dict] = []
+            for product in products:
+                product_tokens = _product_tokens(product)
+                if not attempt["category_ids"] and tokens and not (tokens & product_tokens):
+                    dropped.add(_text(product.get("title")) or str(product.get("id")))
                     continue
                 line = to_line(product, qty)
                 if line is None:
-                    filtered["irrelevant"] += 1
+                    dropped.add(_text(product.get("title")) or str(product.get("id")))
                     continue
-                candidates.append({"line": _channel3_line(line, qty), "source": "channel3"})
-            if candidates:
-                filtered["category"] = sum(
-                    1 for candidate in candidates
-                    if not _category_allowed(agent, candidate["line"])
-                )
-                return candidates, filtered
+                kept.append({
+                    "line": _channel3_line(line, qty),
+                    "source": "channel3",
+                    "overlap": len(tokens & product_tokens),
+                })
+            if not kept:
+                continue
+            if attempt["category_ids"]:
+                kept.sort(key=lambda candidate: candidate["line"]["unit_cents"])
+            else:
+                kept.sort(key=lambda candidate: (-candidate["overlap"],
+                                                 candidate["line"]["unit_cents"]))
+            candidates = [{"line": candidate["line"], "source": candidate["source"]}
+                          for candidate in kept[:limit]]
+            filtered["irrelevant"] = len(dropped)
+            filtered["category"] = sum(
+                1 for candidate in candidates if not _category_allowed(agent, candidate["line"])
+            )
+            return candidates, filtered
 
-    # No key, a catalogue error, or no relevant Channel3 hit: local catalogue.
-    product = None
-    for attempt in attempts:
-        product = legacy_engine.match_product(attempt)
-        if product:
-            break
-    if product:
-        candidates.append({"line": _catalog_line(product, qty), "source": "local"})
+    candidates = _local_candidates(agent, item, qty)
+    filtered["irrelevant"] = len(dropped)
     filtered["category"] = sum(
         1 for candidate in candidates if not _category_allowed(agent, candidate["line"])
     )
@@ -258,6 +435,7 @@ def _offer_value(line: dict) -> dict:
     return {
         "title": _text(line.get("title")),
         "category": _text(line.get("category")) or "general",
+        "catalogue_category": _text(line.get("catalogue_category")) or None,
         "vendor": _text(line.get("vendor")),
         "unit_price_usd": round(unit / 100, 2),
     }
@@ -287,7 +465,12 @@ def choose_offer(agent: dict, item: dict, lines: list[dict]) -> dict | None:
         return None
     prompt = CHOOSE_SYSTEM
     payload = json.dumps({
-        "request": {"item": _text(item.get("name")), "qty": max(1, _int(item.get("qty"), 1) or 1)},
+        "request": {
+            "item": _text(item.get("name")),
+            "type": _text(item.get("product_type")) or None,
+            "brand": _text(item.get("brand")) or None,
+            "qty": max(1, _int(item.get("qty"), 1) or 1),
+        },
         "agent_categories": [_text(cat).lower() for cat in (agent.get("categories") or [])],
         "offers": [_offer_value(line) | {"index": index} for index, line in enumerate(lines)],
     })
@@ -334,8 +517,14 @@ def _near_miss(line: dict) -> dict:
 
 def search_candidates(agent: dict, query: str, qty: int = 1,
                       limit: int = SEARCH_LIMIT) -> list[dict]:
-    """Relevant catalogue candidates for one item, each ``{line, source}``."""
-    candidates, _ = _candidate_pool(agent, query, qty, limit)
+    """Relevant catalogue candidates for one search box query."""
+    candidates, _ = _candidate_pool(agent, _pseudo_item(query), qty, limit)
+    return candidates
+
+
+def _search_for_item(agent: dict, item: dict, qty: int) -> list[dict]:
+    """The simulated default: search using every param the extractor produced."""
+    candidates, _ = _candidate_pool(agent, item, qty)
     return candidates
 
 
@@ -390,7 +579,7 @@ def _fit(agent: dict, line: dict) -> dict:
 def scoped_search(agent: dict, query: str, qty: int = 1) -> dict:
     """Search as this agent, then annotate every relevant result with its verdict."""
     qty = max(1, _int(qty, 1) or 1)
-    candidates, filtered = _candidate_pool(agent, query, qty, SEARCH_LIMIT)
+    candidates, filtered = _candidate_pool(agent, _pseudo_item(query), qty, SEARCH_LIMIT)
     results = []
     for candidate in candidates:
         line = candidate["line"]
@@ -436,7 +625,7 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
     if not raw:
         raise ValueError("no purchase intent found")
     extract = extract_fn or extract_items
-    search = search_fn or search_candidates
+    search = search_fn or _search_for_item
 
     extracted = extract(raw)
     if not isinstance(extracted, dict):
@@ -446,10 +635,17 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
         raise ValueError("no purchase intent found")
 
     plural = "" if len(items) == 1 else "s"
+    described = []
+    for item in items:
+        piece = f"{item['name']} x{item['qty']}"
+        query = _text(item.get("query"))
+        if query and query.lower() != item["name"].lower():
+            piece += f' → search “{query}”'
+        described.append(piece)
     events = [{
         "kind": "extract",
         "label": f"{len(items)} item{plural} extracted",
-        "detail": ", ".join(f"{item['name']} x{item['qty']}" for item in items),
+        "detail": " · ".join(described),
     }]
 
     lines: list[dict] = []
@@ -460,7 +656,7 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
     for item in items:
         qty = max(1, _int(item.get("qty"), 1) or 1)
         try:
-            candidates = search(agent, item["name"], qty) or []
+            candidates = search(agent, item, qty) or []
         except Exception:  # noqa: BLE001 - a catalogue failure means "unresolved"
             candidates = []
         normalised = _normalise_candidates(candidates)
@@ -468,8 +664,7 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
             unresolved.append(item["name"])
             continue
         try:
-            chosen = choose(agent, {"name": item["name"], "qty": qty},
-                            [line for line, _ in normalised])
+            chosen = choose(agent, item, [line for line, _ in normalised])
         except Exception:  # noqa: BLE001 - the model must not take the dry run down
             chosen = _fallback_choice(agent, [line for line, _ in normalised])
         if chosen is None:

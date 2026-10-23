@@ -153,7 +153,7 @@ def evaluate(*, agent: dict, lines: list[dict], month_spent_cents: int = 0,
             if category in categories or category in seen:
                 continue
             seen.add(category)
-            label = category or "uncategorised"
+            label = "general merchandise" if category == "general" else (category or "uncategorised")
             blocks.append(_reason(
                 "category_allowlist", "block",
                 f"{label} is not an approved category for {agent_name}",

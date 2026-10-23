@@ -59,7 +59,8 @@ def fake_extract(items: list[dict], source: str = "fallback") -> callable:
 def fake_search(lines_by_query: dict) -> callable:
     calls: list[tuple[str, int]] = []
 
-    def search(agent_dict, query, qty):
+    def search(agent_dict, item, qty):
+        query = item.get("query") if isinstance(item, dict) else item
         calls.append((query, qty))
         template = lines_by_query.get(query)
         if template is None:
@@ -90,17 +91,32 @@ CHANNEL3_PRODUCT = {
 
 
 class FakeChannel3:
-    def __init__(self, available: bool = True, products: list | None = None):
+    def __init__(self, available: bool = True, products: list | None = None,
+                 categories: list | None = None, brands: list | None = None):
         self.available = available
         self.products = products or []
+        self.categories_found = categories or []
+        self.brands_found = brands or []
         self.calls: list[dict] = []
+        self.category_lookups: list[str] = []
+        self.brand_lookups: list[str] = []
 
-    def search(self, query, limit=6, max_price_cents=None, website_ids=None, user_id=None):
+    def search(self, query, limit=6, max_price_cents=None, website_ids=None,
+               category_ids=None, brand_ids=None, user_id=None):
         self.calls.append({
             "query": query, "limit": limit, "max_price_cents": max_price_cents,
-            "website_ids": website_ids,
+            "website_ids": website_ids, "category_ids": category_ids,
+            "brand_ids": brand_ids,
         })
         return self.products
+
+    def categories(self, query, limit=6):
+        self.category_lookups.append(query)
+        return self.categories_found
+
+    def brands(self, query, limit=10):
+        self.brand_lookups.append(query)
+        return self.brands_found
 
 
 class ExtractTests(unittest.TestCase):
@@ -111,7 +127,25 @@ class ExtractTests(unittest.TestCase):
         ):
             extracted = pipeline.extract_items("2 toilet paper")
         self.assertEqual(extracted["source"], "llm")
-        self.assertEqual(extracted["items"], [{"name": "toilet paper", "qty": 2}])
+        self.assertEqual(
+            [(item["name"], item["qty"]) for item in extracted["items"]],
+            [("toilet paper", 2)],
+        )
+
+    def test_clean_items_carries_search_params(self) -> None:
+        items = pipeline._clean_items([{
+            "name": "Pringles", "qty": 5, "query": "potato chips",
+            "product_type": "chips", "brand": "Pringles",
+        }])
+        self.assertEqual(items[0]["query"], "potato chips")
+        self.assertEqual(items[0]["product_type"], "chips")
+        self.assertEqual(items[0]["brand"], "Pringles")
+
+    def test_clean_items_defaults_missing_search_params(self) -> None:
+        items = pipeline._clean_items([{"name": "coffee", "qty": 1}])
+        self.assertEqual(items[0]["query"], "coffee")
+        self.assertEqual(items[0]["product_type"], "coffee")
+        self.assertIsNone(items[0]["brand"])
 
     def test_falls_back_when_llm_unavailable(self) -> None:
         with mock.patch.object(
@@ -135,7 +169,11 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual([item["name"] for item in items], ["coffee capsules", "toilet paper"])
         self.assertEqual([item["qty"] for item in items], [1, 1])
         items = pipeline.fallback_extract("we're out of toilet paper")
-        self.assertEqual(items, [{"name": "toilet paper", "qty": 1}])
+        self.assertEqual([(item["name"], item["qty"]) for item in items],
+                         [("toilet paper", 1)])
+        self.assertEqual(items[0]["query"], "toilet paper")
+        self.assertEqual(items[0]["product_type"], "toilet paper")
+        self.assertIsNone(items[0]["brand"])
         items = pipeline.fallback_extract("2 standing mats for the studio")
         self.assertEqual(items[0]["qty"], 2)
         self.assertIn("standing mats", items[0]["name"])
@@ -175,7 +213,8 @@ class SearchTests(unittest.TestCase):
         }
         fake = FakeChannel3(products=[machine])
         with mock.patch.object(pipeline, "Channel3", return_value=fake):
-            candidates, filtered = pipeline._candidate_pool(agent(), "toilet paper", 1)
+            candidates, filtered = pipeline._candidate_pool(
+                agent(), pipeline._pseudo_item("toilet paper"), 1)
         self.assertEqual(filtered["irrelevant"], 1)
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["source"], "local")
@@ -189,6 +228,67 @@ class SearchTests(unittest.TestCase):
         self.assertFalse(relevant("keyboard", {"title": "Wireless Mouse"}))
         # a multi-word request keeps the stricter rule
         self.assertFalse(relevant("vertuo intenso capsules", {"title": "Vertuo Coffee Machine"}))
+
+    def test_category_resolution_requires_an_exact_name(self) -> None:
+        fake = FakeChannel3(categories=[{"slug": "toilet-paper", "title": "Toilet Paper"}])
+        found = pipeline._category_ids(
+            fake, {"query": "bamboo toilet paper", "product_type": "toilet paper"})
+        self.assertEqual(found, ["toilet-paper"])
+
+    def test_accessory_categories_are_not_product_categories(self) -> None:
+        fake = FakeChannel3(categories=[
+            {"slug": "coffee-makers-espresso-machines",
+             "title": "Coffee Makers & Espresso Machines"},
+            {"slug": "coffee-tables-2", "title": "Coffee Tables"},
+        ])
+        found = pipeline._category_ids(fake, {"query": "ground coffee",
+                                              "product_type": "coffee"})
+        self.assertEqual(found, [])
+
+    def test_brand_resolution_uses_the_exact_name(self) -> None:
+        fake = FakeChannel3(brands=[{"id": "B1", "name": "Pringles"},
+                                    {"id": "B2", "name": "Pringles Plush"}])
+        found = pipeline._brand_ids(fake, {"brand": "pringles"})
+        self.assertEqual(found, ["B1"])
+
+    def test_structured_attempts_run_before_the_plain_query(self) -> None:
+        item = {"name": "whiteboard markers", "query": "dry erase markers",
+                "product_type": "markers", "brand": "Sharpie"}
+        attempts = pipeline._search_attempts(item, ["markers"], ["B1"])
+        self.assertEqual(attempts[0], {"query": "dry erase markers",
+                                       "category_ids": ["markers"],
+                                       "brand_ids": ["B1"]})
+        self.assertEqual(attempts[1]["category_ids"], ["markers"])
+        self.assertEqual(attempts[1]["brand_ids"], [])
+        self.assertEqual(attempts[2]["brand_ids"], ["B1"])
+        self.assertEqual(attempts[2]["category_ids"], [])
+        self.assertEqual(attempts[3]["category_ids"], [])
+        # every attempt ends by trying the words the thread actually used
+        self.assertIn("whiteboard markers",
+                      [attempt["query"] for attempt in attempts])
+
+    def test_a_category_filtered_attempt_does_not_need_word_overlap(self) -> None:
+        renamed = {**CHANNEL3_PRODUCT, "title": "Remarx 4-pack",
+                   "category": {"slug": "markers", "title": "Markers", "path": []}}
+        fake = FakeChannel3(products=[renamed],
+                            categories=[{"slug": "markers", "title": "Markers"}])
+        with mock.patch.object(pipeline, "Channel3", return_value=fake):
+            candidates = pipeline.search_candidates(agent(), "dry erase markers")
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(fake.calls[0]["category_ids"], ["markers"])
+
+    def test_brand_filter_is_used_on_the_first_attempt(self) -> None:
+        keyboard = {**CHANNEL3_PRODUCT, "title": "Logitech K400 Keyboard",
+                    "category": {"slug": "keyboards", "title": "Keyboards", "path": []}}
+        fake = FakeChannel3(products=[keyboard],
+                            brands=[{"id": "B9", "name": "Logitech"}])
+        item = {"name": "keyboard", "query": "wireless keyboard",
+                "product_type": "keyboard", "brand": "Logitech"}
+        with mock.patch.object(pipeline, "Channel3", return_value=fake):
+            candidates, _ = pipeline._candidate_pool(agent(), item, 1)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(fake.brand_lookups, ["Logitech"])
+        self.assertEqual(fake.calls[0]["brand_ids"], ["B9"])
 
     def test_local_catalogue_when_channel3_unavailable(self) -> None:
         fake = FakeChannel3(available=False)
@@ -355,7 +455,10 @@ class SimulateTests(unittest.TestCase):
         self.assertTrue(result["dry_run"])
         self.assertEqual(result["currency"], "USD")
         self.assertEqual(result["total_cents"], 1_000)
-        self.assertEqual(result["items"], [{"name": "toilet paper", "qty": 1}])
+        self.assertEqual(
+            [(item["name"], item["qty"]) for item in result["items"]],
+            [("toilet paper", 1)],
+        )
         self.assertEqual(len(result["lines"]), 1)
         self.assertEqual(result["decision"]["outcome"], "auto")
         self.assertEqual(result["decision"]["reasons"], [])
@@ -393,7 +496,7 @@ class SimulateTests(unittest.TestCase):
         outside = line(category="stationery", title="Doritos pencil case", unit_cents=999)
         inside = line(category="pantry", title="Sunflower chips", unit_cents=1_200)
 
-        def search(agent_dict, query, qty):
+        def search(agent_dict, item, qty):
             return [{"line": dict(outside), "source": "channel3"},
                     {"line": dict(inside), "source": "channel3"}]
 
@@ -406,7 +509,7 @@ class SimulateTests(unittest.TestCase):
     def test_simulate_reports_a_near_miss_as_a_catalogue_block(self) -> None:
         outside = line(category="general", title="Doritos socks", unit_cents=999)
 
-        def search(agent_dict, query, qty):
+        def search(agent_dict, item, qty):
             return [{"line": dict(outside), "source": "channel3"}]
 
         result = self.run_simulate(
@@ -431,7 +534,7 @@ class SimulateTests(unittest.TestCase):
         self.assertEqual(result["decision"]["outcome"], "auto")
 
     def test_catalogue_failure_is_unresolved_not_a_crash(self) -> None:
-        def broken_search(agent_dict, query, qty):
+        def broken_search(agent_dict, item, qty):
             raise RuntimeError("catalogue exploded")
 
         result = self.run_simulate(search=broken_search)
@@ -439,8 +542,8 @@ class SimulateTests(unittest.TestCase):
         self.assertEqual(result["decision"]["reasons"][0]["rule"], "catalogue")
 
     def test_mixed_sources_report_channel3(self) -> None:
-        def search(agent_dict, query, qty):
-            if query == "toilet paper":
+        def search(agent_dict, item, qty):
+            if item["query"] == "toilet paper":
                 return [{"line": dict(line(), source="channel3"), "source": "channel3"}]
             return [{"line": dict(line(sku="sku-2"), source="local"), "source": "local"}]
 

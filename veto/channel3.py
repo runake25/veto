@@ -9,11 +9,14 @@ The key lives in the environment (CHANNEL3_API_KEY); nothing here hardcodes it.
 """
 from __future__ import annotations
 
+from urllib.parse import urlencode
+
 import json
 import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BASE = os.environ.get("CHANNEL3_BASE", "https://api.trychannel3.com")
@@ -175,6 +178,10 @@ def to_line(product: dict, qty: int = 1) -> dict | None:
         main = next((i for i in images if i.get("is_main_image")), images[0])
         image = main.get("url") or ""
     brand = (product.get("brands") or [{}])[0].get("name") or ""
+    category = product.get("category") or {}
+    catalogue_category = str(category.get("title") or "").strip()
+    if not catalogue_category:
+        catalogue_category = str(category.get("slug") or "").replace("-", " ").strip()
     return {
         "sku": product.get("id") or "",
         "item": title,
@@ -182,6 +189,7 @@ def to_line(product: dict, qty: int = 1) -> dict | None:
         "unit": unit,
         "vendor": offer.get("domain") or "",
         "category": map_category(product),
+        "catalogue_category": catalogue_category,
         "line": unit * qty,
         "url": offer.get("url") or "",
         "image": image,
@@ -203,6 +211,22 @@ class Channel3:
     def available(self) -> bool:
         return bool(self.api_key)
 
+    _category_cache: dict[str, list[dict]] = {}
+    _brand_cache: dict[str, list[dict]] = {}
+
+    def _get(self, path: str, params: dict) -> dict:
+        url = BASE + path + "?" + urlencode(params)
+        req = urllib.request.Request(
+            url, headers={"x-api-key": self.api_key, "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as res:
+                return json.loads(res.read().decode() or "{}")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:200]
+            raise Channel3Error(f"Channel3 {exc.code}: {detail}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise Channel3Error(f"Channel3 unreachable: {exc}") from exc
+
     def _post(self, path: str, payload: dict) -> dict:
         req = urllib.request.Request(
             BASE + path,
@@ -221,10 +245,14 @@ class Channel3:
             raise Channel3Error(f"Channel3 unreachable: {exc}") from exc
 
     def search(self, query: str, limit: int = 6, max_price_cents: int | None = None,
-               website_ids: list[str] | None = None, user_id: str | None = None) -> list[dict]:
+               website_ids: list[str] | None = None, category_ids: list[str] | None = None,
+               brand_ids: list[str] | None = None,
+               user_id: str | None = None) -> list[dict]:
         """Search the catalogue. `max_price_cents` is the agent's hard ceiling, so
-        the rule set bounds the search itself rather than only judging the result."""
-        key = (query.strip().lower(), limit, max_price_cents, tuple(website_ids or ()))
+        the rule set bounds the search itself rather than only judging the result.
+        Category and brand filters come from the categories/brands lookups below."""
+        key = (query.strip().lower(), limit, max_price_cents, tuple(website_ids or ()),
+               tuple(category_ids or ()), tuple(brand_ids or ()))
         if key in self._cache:
             return self._cache[key]
         payload: dict = {
@@ -237,6 +265,10 @@ class Channel3:
             filters["price"] = {"max_price": round(max_price_cents / 100, 2)}
         if website_ids:
             filters["website_ids"] = list(website_ids)
+        if category_ids:
+            filters["category_ids"] = list(category_ids)
+        if brand_ids:
+            filters["brand_ids"] = list(brand_ids)
         if filters:
             payload["filters"] = filters
         if user_id:
@@ -245,6 +277,34 @@ class Channel3:
         products = data.get("products") or data.get("data") or []
         self._cache[key] = products
         return products
+
+    def categories(self, query: str, limit: int = 6) -> list[dict]:
+        """Catalogue categories matching a product noun. Slugs are stable; unknown
+        slugs are silently dropped by search, so never guess one."""
+        phrase = query.strip().lower()
+        if not phrase:
+            return []
+        if phrase in self._category_cache:
+            return self._category_cache[phrase]
+        data = self._get("/v1/categories/search",
+                         {"query": query, "limit": max(1, min(20, limit))})
+        found = data.get("categories") or data.get("data") or []
+        self._category_cache[phrase] = found
+        return found
+
+    def brands(self, query: str, limit: int = 10) -> list[dict]:
+        """Brands matching a named brand. Channel3 keeps several ids per brand name,
+        so callers must match on the name before filtering."""
+        phrase = query.strip().lower()
+        if not phrase:
+            return []
+        if phrase in self._brand_cache:
+            return self._brand_cache[phrase]
+        data = self._get("/v1/brands/search",
+                         {"query": query, "limit": max(1, min(20, limit))})
+        found = data.get("brands") or data.get("data") or []
+        self._brand_cache[phrase] = found
+        return found
 
 
 def timed(fn, *args, **kwargs):
