@@ -32,6 +32,39 @@ export interface Me {
   wallet: Wallet
 }
 
+/** One request as the list endpoints return it. Full records add lines/events. */
+export interface RequestSummary {
+  id: string
+  seq: number
+  title: string
+  status: 'blocked' | 'awaiting' | 'approved' | 'captured' | 'vetoed' | 'voided'
+  decision: 'auto' | 'review' | 'block' | null
+  total_cents: number
+  currency: string
+  channel: string | null
+  requester: string | null
+  origin: string | null
+  line_count: number
+  created_at: string
+  decided_at: string | null
+  agent: { id: string; name: string; tag: string }
+}
+
+export interface OverviewCounts {
+  needs_you: number
+  committed_cents: number
+  settled_month_cents: number
+  agent_count: number
+  request_count: number
+}
+
+export interface OverviewData {
+  counts: OverviewCounts
+  pending: RequestSummary[]
+  wallet: { status: string; mode: string }
+  month: string
+}
+
 
 export type RuleKind =
   | 'monthly_cap'
@@ -230,6 +263,10 @@ export interface SessionData {
 
 export const api = {
   me: () => request<Me>('/api/v1/me'),
+  overview: () => request<OverviewData>('/api/v1/overview'),
+  requests: (query = '') => request<{ requests: RequestSummary[]; total: number }>(
+    `/api/v1/requests${query ? `?${query}` : ''}`,
+  ),
   agents: () => request<{ agents: Agent[] }>('/api/v1/agents').then((d) => d.agents),
   agent: (id: string) => request<{ agent: Agent }>(`/api/v1/agents/${id}`).then((d) => d.agent),
   createAgent: (input: AgentInput) =>

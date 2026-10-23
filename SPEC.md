@@ -156,18 +156,39 @@ New endpoints answer `{"ok":true,"data":…}` or `{"ok":false,"error":{"code","m
 | `POST /api/v1/agents` · `PATCH /api/v1/agents/{id}` | admin/approver | **M2 done** |
 | `GET /api/v1/agents/{id}/search?q=` | session | **M2 done** — scoped product search |
 | `POST /api/v1/simulate` | session | **M2 done** — dry-run, persists nothing |
-| `GET /api/v1/overview` | session | M3 (the screen uses `/agents` for now) |
-| `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | M3 |
-| `POST /api/v1/requests` | agent / session | M3 |
-| `POST /api/v1/requests/{id}/decision` · `/void` | approver / admin | M3 |
-| `POST /api/v1/agents/{id}/keys` · `DELETE …/keys/{kid}` | admin | M3 |
+| `GET /api/v1/overview` | session | **M3 done** — needs you, committed, settled this month, agents |
+| `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | **M3 done** — summaries and the full record |
+| `POST /api/v1/requests` | agent key / session | **M3 done** — persist, judge, consent, capture |
+| `POST /api/v1/requests/{id}/decision` · `/void` | approver / admin | **M3 done** — approve captures, veto/void move no money |
+| `GET/POST /api/v1/agents/{id}/keys` · `DELETE …/keys/{kid}` | admin | **M3 done** — `vkey_…`, shown once, stored hashed |
 | `GET /api/v1/analytics?from&to&group=` | session | M4 |
 | `GET /api/v1/integrations` | session | M5 |
 | `POST /api/slack/veto` · `POST /api/slack/interact` | Slack signature | kept from v1 |
 | `GET /api/health` | — | extended (db, seeded, counts) |
 
-Legacy v1 endpoints (`/api/request`, `/api/decide`, `/api/state`, `/api/connect*`) remain
-until M3 rewires the pipeline; `/` still serves the old console until M4 flips it to the app.
+The request board is now the store, not the old in-memory engine:
+
+```
+POST /requests ─→ pipeline (extract → source → choose → price → judge)
+                    ├─ auto   → consent → PayPal order → authorization → capture → captured
+                    ├─ review → consent (10 min, single use) → awaiting ──┬─ approve → captured
+                    └─ block  → blocked                                  └─ veto    → vetoed
+                                                                        └─ void    → voided
+```
+
+Statuses: `blocked` · `awaiting` · `approved` (green-lit, capture owed) · `captured` (the
+only state counted as spend) · `vetoed` · `voided`. A consent is one sha256 of the cart,
+single use, ten minutes; approve after it expires answers `409 consent_expired`. Block and
+veto write **zero PayPal objects**; void only applies before capture. The consent nonce is
+the PayPal idempotency key, so a retried approval replays the same order instead of charging
+twice. Every step is appended to `events`; `GET /requests/{id}` returns lines, reasons,
+consent, payment ids, events and the agent.
+
+Slack `/veto` and its buttons now write the same store: the agent is the one whose
+`channel` matches the Slack channel, else the workspace default agent; the message is built
+from the stored record and the audit event names the Slack user who pressed the button.
+Legacy v1 endpoints (`/api/request`, `/api/decide`, `/api/state`, `/api/connect*`) still
+serve the old console until M4 removes them; `/` still serves that console until M4.
 
 ## 5. Screens and data ownership
 
@@ -212,8 +233,8 @@ the end state.
 | M0 | this spec, branch `v2` | **done** |
 | M1 | SQLite store, auth, seeded demo, session API, React shell + auth screen | **done (2026-10-22)** |
 | M2 | policy engine, guided agent rules, scoped search, dry-run | **done (2026-10-22)** |
-| M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | next |
-| M4 | Inbox, Record, Agents, Analytics screens; delete the old console; `/` flips to the app | |
+| M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | **done (2026-10-23)** |
+| M4 | Inbox, Record, Agents, Analytics screens; delete the old console; `/` flips to the app | next |
 | M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | |
 | M6 | README/SPEC/PRODUCT, deploy, video, Devpost text | |
 
@@ -223,7 +244,7 @@ the end state.
 python3 server.py            # http://127.0.0.1:8787/app/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (114)
+python3 -m unittest discover -s tests    # backend tests (155)
 ```
 
 M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
@@ -231,6 +252,17 @@ extraction → catalogue → rules path and stops before consent; `GET
 /api/v1/agents/{id}/search` returns products annotated with `fits` against that
 agent's caps and verdicts. Channel3 is queried with the agent's merchants and a
 price ceiling, so the agent can only find what it may buy.
+
+M3 makes the requests real. `POST /api/v1/requests` (session or agent key) writes
+the record, issues the consent and captures through PayPal when the rules allow;
+`/decision` and `/void` move it from there. The M3 regression harness exercises
+the whole board over HTTP:
+
+    python3 tools/check_m3.py                          # against :8787
+    python3 tools/check_m3.py --base http://127.0.0.1:8788
+
+It takes ~40s because it runs the real pipeline; a run leaves genuine request
+history in the demo workspace, which is what Overview and Inbox read.
 
 `PAYPAL_LIVE=0` runs the whole loop against the in-process PayPal simulator with no keys.
 Hosted deploys pass the approved `PAYPAL_VAULT_ID` through the environment.

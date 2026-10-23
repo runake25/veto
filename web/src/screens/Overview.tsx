@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { Link } from 'react-router-dom'
-import { api, money, type Agent, type Me } from '../api'
+import { api, money, type Agent, type Me, type OverviewData } from '../api'
 import { motionSet } from '../components/motion'
 
 interface StatProps {
@@ -36,7 +36,9 @@ function capsLine(agent: Agent): string {
  */
 export function Overview({ me }: { me: Me }) {
   const [agents, setAgents] = useState<Agent[] | null>(null)
+  const [overview, setOverview] = useState<OverviewData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [overviewError, setOverviewError] = useState<string | null>(null)
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
@@ -50,12 +52,22 @@ export function Overview({ me }: { me: Me }) {
       .catch(() => {
         if (live) setError('The agent list did not load.')
       })
+    api
+      .overview()
+      .then((data) => {
+        if (live) setOverview(data)
+      })
+      .catch(() => {
+        if (live) setOverviewError('The live figures did not load.')
+      })
     return () => {
       live = false
     }
   }, [])
 
-  const agentCount = agents?.length ?? me.agent_count
+  const counts = overview?.counts
+  const agentCount = counts?.agent_count ?? agents?.length ?? me.agent_count
+  const pending = overview?.pending ?? []
 
   return (
     <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
@@ -72,11 +84,30 @@ export function Overview({ me }: { me: Me }) {
         </Link>
       </motion.header>
 
+      {overviewError ? <p className="inline-error">{overviewError}</p> : null}
+
       <motion.div className="stats" variants={m.riseIn}>
-        <Stat label="Needs you" value="0" note="requests waiting for a signature" />
-        <Stat label="Committed, unsigned" value={money(0)} note="held by the rules, not moving" />
-        <Stat label="Settled this month" value={money(0)} note="captured through PayPal" />
-        <Stat label="Agents" value={String(agentCount)} note="each with its own rule set" tone="accent" />
+        <Stat
+          label="Needs you"
+          value={counts ? String(counts.needs_you) : '—'}
+          note="requests waiting for a signature"
+        />
+        <Stat
+          label="Committed, unsigned"
+          value={counts ? money(counts.committed_cents) : '—'}
+          note="held by the rules, not moving"
+        />
+        <Stat
+          label="Settled this month"
+          value={counts ? money(counts.settled_month_cents) : '—'}
+          note="captured through PayPal"
+        />
+        <Stat
+          label="Agents"
+          value={String(agentCount)}
+          note="each with its own rule set"
+          tone="accent"
+        />
       </motion.div>
 
       <div className="cols">
@@ -85,14 +116,32 @@ export function Overview({ me }: { me: Me }) {
             <h2>Needs you</h2>
             <span className="card-note mono">oldest first</span>
           </header>
-          <div className="empty">
-            <span className="empty-mark" aria-hidden="true" />
-            <p className="empty-title">Nothing is waiting.</p>
-            <p className="empty-note">
-              A request lands here when a cart crosses the agent&rsquo;s approval threshold or
-              its per-line cap. Inside the rules, no one is asked.
-            </p>
-          </div>
+          {pending.length ? (
+            <ul className="rows rows-pending">
+              {pending.map((request) => (
+                <li className="row" key={request.id}>
+                  <div className="agent-line">
+                    <b>{request.title}</b>
+                    <span className="chip chip-quiet">{request.agent.tag}</span>
+                    <span className="mono agent-channel">{request.id}</span>
+                  </div>
+                  <p className="agent-caps mono">
+                    {money(request.total_cents)} · {request.agent.name} ·{' '}
+                    {request.line_count} {request.line_count === 1 ? 'line' : 'lines'}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="empty">
+              <span className="empty-mark" aria-hidden="true" />
+              <p className="empty-title">Nothing is waiting.</p>
+              <p className="empty-note">
+                A request lands here when a cart crosses the agent&rsquo;s approval threshold or
+                its per-line cap. Inside the rules, no one is asked.
+              </p>
+            </div>
+          )}
         </motion.section>
 
         <motion.section className="card" variants={m.riseIn}>
@@ -154,12 +203,13 @@ export function Overview({ me }: { me: Me }) {
             <Tick /> Seeded demo workspace with four agents and their rule sets
           </li>
           <li className={walletTone(me)}>
-            <Tick pending /> Wallet — {me.wallet.status === 'connected' ? 'connected' : 'not connected yet'}
+            {me.wallet.status === 'connected' ? <Tick /> : <Tick pending />} Wallet —{' '}
+            {me.wallet.status === 'connected' ? 'connected' : 'not connected yet'}
           </li>
         </ul>
         <p className="fineprint">
-          Inbox, Agents, Analytics and Integrations arrive with the next milestones. This screen
-          is already reading the live engine, not a mock.
+          Requests, consent and capture are stored now: Inbox, Analytics and Integrations arrive
+          with the next milestone. These figures read the same store the engine writes.
         </p>
       </motion.section>
     </motion.div>

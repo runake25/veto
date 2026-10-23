@@ -76,6 +76,14 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def month_start_iso(moment: datetime | None = None) -> str:
+    """The first instant of the current UTC month — one boundary for every screen."""
+    moment = moment or datetime.now(timezone.utc)
+    return moment.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    ).isoformat(timespec="seconds")
+
+
 def parse_iso(value: str | None) -> datetime | None:
     """Parse a stored timestamp; return None for empty / unparseable values."""
     if not value:
@@ -849,8 +857,400 @@ class Store:
             "UPDATE api_keys SET last_used_at = ? WHERE id = ?", (now_iso(), key_id)
         )
 
-    def list_api_keys(self, workspace_id: str) -> list[dict]:
+    def list_api_keys(self, workspace_id: str, agent_id: str | None = None) -> list[dict]:
+        if agent_id is None:
+            return self.query(
+                "SELECT * FROM api_keys WHERE workspace_id = ? ORDER BY created_at, rowid",
+                (workspace_id,),
+            )
         return self.query(
-            "SELECT * FROM api_keys WHERE workspace_id = ? ORDER BY created_at, rowid",
+            "SELECT * FROM api_keys WHERE workspace_id = ? AND agent_id = ? "
+            "ORDER BY created_at, rowid",
+            (workspace_id, agent_id),
+        )
+
+    def revoke_api_key(self, workspace_id: str, key_id: str) -> bool:
+        """Soft-revoke: the row stays for the audit trail, the key stops resolving."""
+        row = self.one(
+            "SELECT id FROM api_keys WHERE workspace_id = ? AND id = ?",
+            (workspace_id, key_id),
+        )
+        if row is None:
+            return False
+        self.execute(
+            "UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?",
+            (now_iso(), key_id),
+        )
+        return True
+
+    # -- requests: the record ------------------------------------------
+    # Request ids keep the old console's shape (REQ-1041) so a demo thread and
+    # an inbox row read as the same object. The counter lives in `meta`, inside
+    # the same transaction as the insert, so two threads cannot mint one seq.
+    REQUEST_SEQ_START = 1040
+
+    def _next_request_seq(self) -> int:
+        row = self.one("SELECT value FROM meta WHERE key = 'request_seq'")
+        seq = int(row["value"]) + 1 if row else self.REQUEST_SEQ_START + 1
+        self.execute(
+            "INSERT INTO meta (key, value) VALUES ('request_seq', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(seq),),
+        )
+        return seq
+
+    def create_request(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        *,
+        origin: str,
+        status: str,
+        title: str = "",
+        text: str = "",
+        channel: str | None = None,
+        requester: str | None = None,
+        decision_outcome: str | None = None,
+        subtotal_cents: int = 0,
+        total_cents: int = 0,
+        currency: str = "USD",
+        initiator_user_id: str | None = None,
+        lines: list[dict] | None = None,
+        reasons: list[dict] | None = None,
+        events: list[dict] | None = None,
+        consent: dict | None = None,
+    ) -> dict:
+        """Write one request and everything it owns. Returns the assembled record."""
+        created = now_iso()
+        with self.transaction():
+            seq = self._next_request_seq()
+            request_id = f"REQ-{seq}"
+            self.execute(
+                "INSERT INTO requests (id, seq, workspace_id, agent_id, origin, channel, "
+                "requester, text, title, status, decision_outcome, subtotal_cents, "
+                "total_cents, currency, initiator_user_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    request_id,
+                    seq,
+                    workspace_id,
+                    agent_id,
+                    origin,
+                    channel,
+                    requester,
+                    text,
+                    title,
+                    status,
+                    decision_outcome,
+                    int(subtotal_cents),
+                    int(total_cents),
+                    currency,
+                    initiator_user_id,
+                    created,
+                ),
+            )
+            for idx, line in enumerate(lines or []):
+                self.execute(
+                    "INSERT INTO request_lines (id, request_id, idx, sku, title, qty, "
+                    "unit_cents, line_cents, vendor, category, brand, product_url, "
+                    "image_url, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        new_id("ln_", 4),
+                        request_id,
+                        idx,
+                        line.get("sku"),
+                        line.get("title") or "",
+                        max(1, int(line.get("qty") or 1)),
+                        int(line.get("unit_cents") or 0),
+                        int(line.get("line_cents") or 0),
+                        line.get("vendor"),
+                        line.get("category"),
+                        line.get("brand"),
+                        line.get("url") or line.get("product_url"),
+                        line.get("image") or line.get("image_url"),
+                        line.get("source"),
+                    ),
+                )
+            for reason in reasons or []:
+                self.execute(
+                    "INSERT INTO request_reasons (id, request_id, rule, severity, message, "
+                    "observed_cents, limit_cents, unblock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        new_id("rsn_", 4),
+                        request_id,
+                        reason.get("rule") or "unknown",
+                        reason.get("severity") or "block",
+                        reason.get("message") or "",
+                        reason.get("observed_cents"),
+                        reason.get("limit_cents"),
+                        reason.get("unblock"),
+                    ),
+                )
+            if consent:
+                self.execute(
+                    "INSERT INTO consents (id, request_id, cart_hash, nonce, issued_at, "
+                    "expires_at, used_at, approver_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        new_id("cns_", 4),
+                        request_id,
+                        consent.get("cart_hash") or "",
+                        consent.get("nonce") or "",
+                        consent.get("issued_at") or created,
+                        consent.get("expires_at"),
+                        consent.get("used_at"),
+                        consent.get("approver_user_id"),
+                    ),
+                )
+            for event in events or []:
+                self.add_event(
+                    request_id,
+                    event.get("kind") or "event",
+                    event.get("label") or "",
+                    detail=event.get("detail"),
+                    href=event.get("href"),
+                    at=created,
+                )
+        return self.request(workspace_id, request_id) or {}
+
+    def request(self, workspace_id: str, request_id: str) -> dict | None:
+        """One request with its lines, reasons, consents, payments, events and agent."""
+        row = self.one(
+            "SELECT * FROM requests WHERE workspace_id = ? AND id = ?",
+            (workspace_id, request_id),
+        )
+        if row is None:
+            return None
+        row["lines"] = self.query(
+            "SELECT * FROM request_lines WHERE request_id = ? ORDER BY idx", (request_id,)
+        )
+        row["reasons"] = self.query(
+            "SELECT * FROM request_reasons WHERE request_id = ? ORDER BY rowid", (request_id,)
+        )
+        row["consents"] = self.query(
+            "SELECT * FROM consents WHERE request_id = ? ORDER BY issued_at, rowid",
+            (request_id,),
+        )
+        row["payments"] = self.query(
+            "SELECT * FROM payments WHERE request_id = ? ORDER BY created_at, rowid",
+            (request_id,),
+        )
+        row["events"] = self.query(
+            "SELECT * FROM events WHERE request_id = ? ORDER BY seq", (request_id,)
+        )
+        row["agent"] = self.agent(workspace_id, row["agent_id"])
+        return row
+
+    def list_requests(
+        self,
+        workspace_id: str,
+        *,
+        status: str | None = None,
+        agent_id: str | None = None,
+        before: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        oldest_first: bool = False,
+    ) -> list[dict]:
+        """Request summaries, newest first, with the agent's name and tag joined in."""
+        sql = (
+            "SELECT r.id, r.seq, r.title, r.status, r.decision_outcome, r.total_cents, "
+            "r.currency, r.channel, r.requester, r.origin, r.created_at, r.decided_at, "
+            "r.agent_id, a.name AS agent_name, a.tag AS agent_tag, "
+            "(SELECT COUNT(*) FROM request_lines l WHERE l.request_id = r.id) AS line_count "
+            "FROM requests r LEFT JOIN agents a ON a.id = r.agent_id "
+            "WHERE r.workspace_id = ?"
+        )
+        params: list[Any] = [workspace_id]
+        if status:
+            sql += " AND r.status = ?"
+            params.append(status)
+        if agent_id:
+            sql += " AND r.agent_id = ?"
+            params.append(agent_id)
+        if before:
+            sql += " AND r.created_at < ?"
+            params.append(before)
+        order = "ASC" if oldest_first else "DESC"
+        sql += f" ORDER BY r.created_at {order}, r.seq {order} LIMIT ? OFFSET ?"
+        params.extend([max(1, min(200, int(limit))), max(0, int(offset))])
+        return self.query(sql, params)
+
+    def count_requests(self, workspace_id: str, status: str | None = None) -> int:
+        if status is None:
+            row = self.one(
+                "SELECT COUNT(*) AS n FROM requests WHERE workspace_id = ?", (workspace_id,)
+            )
+        else:
+            row = self.one(
+                "SELECT COUNT(*) AS n FROM requests WHERE workspace_id = ? AND status = ?",
+                (workspace_id, status),
+            )
+        return int(row["n"]) if row else 0
+
+    def spent_cents(
+        self,
+        workspace_id: str,
+        *,
+        agent_id: str | None = None,
+        since: str | None = None,
+    ) -> int:
+        """Settled money (captured), optionally for one agent and after a timestamp."""
+        sql = (
+            "SELECT COALESCE(SUM(total_cents), 0) AS n FROM requests "
+            "WHERE workspace_id = ? AND status = 'captured'"
+        )
+        params: list[Any] = [workspace_id]
+        if agent_id:
+            sql += " AND agent_id = ?"
+            params.append(agent_id)
+        if since:
+            sql += " AND created_at >= ?"
+            params.append(since)
+        row = self.one(sql, params)
+        return int(row["n"]) if row else 0
+
+    def committed_cents(self, workspace_id: str) -> int:
+        """Money held by the rules: awaiting a human signature, not moving yet."""
+        row = self.one(
+            "SELECT COALESCE(SUM(total_cents), 0) AS n FROM requests "
+            "WHERE workspace_id = ? AND status = 'awaiting'",
             (workspace_id,),
         )
+        return int(row["n"]) if row else 0
+
+    def overview_counts(self, workspace_id: str, *, month_start: str | None = None) -> dict:
+        """The four Overview figures, computed from the one table that owns requests."""
+        needs_you = self.count_requests(workspace_id, status="awaiting")
+        return {
+            "needs_you": needs_you,
+            "committed_cents": self.committed_cents(workspace_id),
+            "settled_month_cents": self.spent_cents(
+                workspace_id, since=month_start or month_start_iso()
+            ),
+            "agent_count": self.count_agents(workspace_id),
+            "request_count": self.count_requests(workspace_id),
+        }
+
+    def update_request(
+        self,
+        workspace_id: str,
+        request_id: str,
+        *,
+        status: str | None = None,
+        decision_outcome: str | None = None,
+        approver_user_id: str | None = None,
+        decided_at: str | None = None,
+        total_cents: int | None = None,
+    ) -> bool:
+        updates: dict[str, Any] = {}
+        if status is not None:
+            updates["status"] = status
+        if decision_outcome is not None:
+            updates["decision_outcome"] = decision_outcome
+        if approver_user_id is not None:
+            updates["approver_user_id"] = approver_user_id
+        if decided_at is not None:
+            updates["decided_at"] = decided_at
+        if total_cents is not None:
+            updates["total_cents"] = int(total_cents)
+        if not updates:
+            return False
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        cur = self.execute(
+            f"UPDATE requests SET {assignments} WHERE workspace_id = ? AND id = ?",
+            list(updates.values()) + [workspace_id, request_id],
+        )
+        return cur.rowcount > 0
+
+    def add_event(
+        self,
+        request_id: str,
+        kind: str,
+        label: str,
+        *,
+        detail: str | None = None,
+        href: str | None = None,
+        at: str | None = None,
+    ) -> dict:
+        """Append one audit step; seq is per request so the trail always sorts."""
+        row = self.one(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM events WHERE request_id = ?",
+            (request_id,),
+        )
+        seq = int(row["seq"]) if row else 1
+        stamp = at or now_iso()
+        self.execute(
+            "INSERT INTO events (request_id, seq, kind, label, detail, href, at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (request_id, seq, kind, label, detail, href, stamp),
+        )
+        return {
+            "request_id": request_id,
+            "seq": seq,
+            "kind": kind,
+            "label": label,
+            "detail": detail,
+            "href": href,
+            "at": stamp,
+        }
+
+    # -- payments + consent --------------------------------------------
+    def create_payment(
+        self,
+        request_id: str,
+        *,
+        mode: str,
+        amount_cents: int,
+        vault_id: str | None = None,
+        status: str = "creating",
+    ) -> dict:
+        payment_id = new_id("pay_", 4)
+        stamp = now_iso()
+        self.execute(
+            "INSERT INTO payments (id, request_id, mode, vault_id, status, amount_cents, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (payment_id, request_id, mode, vault_id, status, int(amount_cents), stamp, stamp),
+        )
+        return self.one("SELECT * FROM payments WHERE id = ?", (payment_id,)) or {}
+
+    def update_payment(
+        self,
+        payment_id: str,
+        *,
+        status: str | None = None,
+        vault_id: str | None = None,
+        order_id: str | None = None,
+        authorization_id: str | None = None,
+        capture_id: str | None = None,
+    ) -> dict | None:
+        updates: dict[str, Any] = {}
+        for key, value in (
+            ("status", status),
+            ("vault_id", vault_id),
+            ("order_id", order_id),
+            ("authorization_id", authorization_id),
+            ("capture_id", capture_id),
+        ):
+            if value is not None:
+                updates[key] = value
+        if updates:
+            assignments = ", ".join(f"{key} = ?" for key in updates)
+            self.execute(
+                f"UPDATE payments SET {assignments}, updated_at = ? WHERE id = ?",
+                list(updates.values()) + [now_iso(), payment_id],
+            )
+        return self.one("SELECT * FROM payments WHERE id = ?", (payment_id,))
+
+    def mark_consent_used(
+        self,
+        consent_id: str,
+        *,
+        approver_user_id: str | None = None,
+        used_at: str | None = None,
+    ) -> dict | None:
+        self.execute(
+            "UPDATE consents SET used_at = ?, approver_user_id = COALESCE(?, approver_user_id) "
+            "WHERE id = ?",
+            (used_at or now_iso(), approver_user_id, consent_id),
+        )
+        return self.one("SELECT * FROM consents WHERE id = ?", (consent_id,))

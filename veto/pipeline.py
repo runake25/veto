@@ -613,12 +613,15 @@ def _line_total(line: dict) -> int:
 
 
 def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
-             choose_fn=None) -> dict:
+             choose_fn=None, month_spent_cents: int = 0,
+             workspace_monthly_budget_cents: int | None = None) -> dict:
     """Run the whole loop in memory and return what would have happened.
 
     ``extract_fn`` / ``search_fn`` / ``choose_fn`` are injectable so tests (and the
     offline demo) never touch the network. Nothing is persisted; no PayPal call is
-    possible.
+    possible. ``month_spent_cents`` is how much this agent has already captured
+    this month, so the monthly cap is judged against the same history the store
+    would use when the request is written.
     """
     started = time.perf_counter()
     raw = _text(text)
@@ -704,8 +707,8 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
     decision = policy.evaluate(
         agent=agent,
         lines=lines,
-        month_spent_cents=0,
-        workspace_monthly_budget_cents=None,
+        month_spent_cents=month_spent_cents,
+        workspace_monthly_budget_cents=workspace_monthly_budget_cents,
         unresolved=unresolved,
     )
     events.append({
