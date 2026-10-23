@@ -332,6 +332,7 @@
   font-size: 13px;
   font-weight: 500;
   letter-spacing: -0.005em;
+  text-decoration: none;
   transition:
     background 160ms var(--ease-click),
     border-color 160ms var(--ease-click),
@@ -1097,10 +1098,6 @@
   color: var(--text);
 }
 
-.card-soft {
-  background: var(--wash);
-}
-
 .card-lede {
   margin: 0;
   font-size: 12.5px;
@@ -1109,53 +1106,286 @@
   max-width: 62ch;
 }
 
-.cols-wide-left {
-  grid-template-columns: 1.15fr 0.85fr;
+/* one agent = one plate. No shared table, no repeated column header: each
+   instance carries its identity, its four charter numbers and its scope. */
+
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
 }
 
-.rows-agent li {
-  border-top: 1px solid var(--rule);
+.agent-slot {
+  display: grid;
+  min-width: 0;
 }
 
-.rows-agent li:first-child {
-  border-top: 0;
-}
-
-.agent-link {
-  display: block;
-  margin: 0 -8px;
-  padding: 11px 8px;
-  border-radius: var(--radius-control);
+.agent-plate {
+  container-type: inline-size;
+  display: grid;
+  align-content: start;
+  gap: 17px;
+  height: 100%;
+  padding: 16px 18px 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
   color: inherit;
   text-decoration: none;
-  transition: background 160ms var(--ease-click);
+  transition:
+    border-color 160ms var(--ease-click),
+    background-color 160ms var(--ease-click);
 }
 
-.agent-link:hover {
-  background: var(--wash);
+.agent-plate:hover {
+  border-color: var(--control);
+  background: var(--raised);
 }
 
-.agent-link-top {
+.agent-plate:active {
+  background: var(--active);
+}
+
+.agent-plate:focus-visible {
+  border-radius: var(--radius-card);
+}
+
+/* the machine label: this instance's serial and its current state */
+.agent-plate-tag {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.agent-plate-tag .agent-state {
+  font-size: 10.5px;
+}
+
+.agent-state.is-blocked {
+  color: var(--negative-ink);
+}
+
+.agent-state.is-blocked .agent-dot {
+  background: var(--negative);
+}
+
+.agent-plate-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   flex-wrap: wrap;
 }
 
-.agent-link-top b {
-  font-size: 13px;
+.agent-plate-head h2 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.028em;
+}
+
+/* the charter readout: the monthly budget leads the three caps. Labels share one
+   row and values share the next, so every figure in the row sits on one baseline
+   even when the lead figure and the "No cap" fallbacks are different sizes. */
+.agent-plate-rules {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 5px;
+  align-items: baseline;
+}
+
+.agent-plate-rule {
+  display: contents;
+}
+
+.agent-plate-rule > * {
+  min-width: 0;
+}
+
+.agent-plate-rule:nth-child(1) > * {
+  grid-column: 1;
+}
+
+.agent-plate-rule:nth-child(2) > * {
+  grid-column: 2;
+}
+
+.agent-plate-rule:nth-child(3) > * {
+  grid-column: 3;
+}
+
+.agent-plate-rule:nth-child(4) > * {
+  grid-column: 4;
+}
+
+.agent-plate-rule > .agent-plate-label {
+  grid-row: 1;
+}
+
+.agent-plate-rule > .agent-plate-value {
+  grid-row: 2;
+}
+
+.agent-plate-label {
+  font-size: 10.5px;
+  line-height: 1.2;
   font-weight: 500;
-}
-
-.agent-arrow {
-  margin-left: auto;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
   color: var(--faint);
-  transition: transform 160ms var(--ease-click), color 160ms var(--ease-click);
+  white-space: nowrap;
 }
 
-.agent-link:hover .agent-arrow {
-  transform: translateX(2px);
+.agent-plate-value {
+  font-size: 18px;
+  /* one line box for every value, so a plate whose lead is "No cap" keeps the
+     same readout height as its neighbours and the foot rule stays aligned */
+  line-height: 25px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-plate-value.is-lead {
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+
+.agent-plate-value.is-void {
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--faint);
+}
+
+.agent-plate-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.agent-plate-scope {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.agent-plate-rest::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--control);
+}
+
+.agent-plate-scope .is-cold {
+  color: var(--faint);
+}
+
+.agent-plate-arrow {
+  flex: none;
+  font-size: 12px;
+  color: var(--faint);
+  transition:
+    transform 160ms var(--ease-click),
+    color 160ms var(--ease-click);
+}
+
+.agent-plate:hover .agent-plate-arrow {
+  transform: translateX(3px);
   color: var(--accent-ink);
+}
+
+.head-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.head-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+
+.agents-note {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+  text-wrap: balance;
+}
+
+.agent-plate-skel {
+  pointer-events: none;
+}
+
+.agent-plate-skel-rules {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+/* when the plate itself is narrow the readout folds to a 2×2 of label/value rows */
+@container (max-width: 370px) {
+  .agent-plate-rules {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto minmax(27px, auto) auto minmax(27px, auto);
+  }
+
+  .agent-plate-rule:nth-child(3) > * {
+    grid-column: 1;
+  }
+
+  .agent-plate-rule:nth-child(4) > * {
+    grid-column: 2;
+  }
+
+  .agent-plate-rule:nth-child(1) > .agent-plate-label,
+  .agent-plate-rule:nth-child(2) > .agent-plate-label {
+    grid-row: 1;
+  }
+
+  .agent-plate-rule:nth-child(3) > .agent-plate-label,
+  .agent-plate-rule:nth-child(4) > .agent-plate-label {
+    grid-row: 3;
+    padding-top: 9px;
+  }
+
+  .agent-plate-rule:nth-child(1) > .agent-plate-value,
+  .agent-plate-rule:nth-child(2) > .agent-plate-value {
+    grid-row: 2;
+  }
+
+  .agent-plate-rule:nth-child(3) > .agent-plate-value,
+  .agent-plate-rule:nth-child(4) > .agent-plate-value {
+    grid-row: 4;
+  }
+}
+
+.agent-plate-empty {
+  gap: 6px;
+  padding: 22px 20px;
+  cursor: default;
+}
+
+.agent-plate-empty .empty-mark {
+  margin: 0 0 6px;
 }
 
 .checklist.quiet li {
@@ -1794,10 +2024,6 @@
 }
 
 @media (max-width: 980px) {
-  .cols-wide-left {
-    grid-template-columns: 1fr;
-  }
-
   .spec-band {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px 20px;
@@ -1852,6 +2078,38 @@
   .result-right {
     grid-column: 2;
     justify-items: start;
+  }
+}
+
+@media (max-width: 560px) {
+  .head-count {
+    display: none;
+  }
+
+  .head-actions {
+    gap: 10px;
+  }
+}
+
+/* the scope stacks when the plate itself is narrow, not when the window is */
+@container (max-width: 370px) {
+  .agent-plate-scope {
+    display: grid;
+    gap: 2px;
+  }
+
+  .agent-plate-rest::before {
+    content: none;
+  }
+
+  .agent-plate-foot {
+    align-items: end;
+  }
+}
+
+@media (max-width: 640px) {
+  .agent-grid {
+    grid-template-columns: 1fr;
   }
 }
 

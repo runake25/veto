@@ -15,6 +15,7 @@
    --wait   selector to wait for after load / after --eval
    --eval   JS expression run once the page is ready (awaited)
    --settle extra milliseconds before the shot (default 220)
+   --hover  selector to move the pointer over before the shot (CSS :hover)
    --full   capture the whole scroll height instead of the viewport
    --w --h  viewport (default 1440 x 900)
    --scale  device pixel ratio (default 2)
@@ -52,6 +53,7 @@ const H = Number(arg("h", "900"));
 const SCALE = Number(arg("scale", "2"));
 const CHECK = has("check");
 const ECHO = arg("echo", "");
+const HOVER = arg("hover", "");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -185,6 +187,16 @@ try {
     await cdp.eval(EVAL);
     if (WAIT) await waitFor(cdp, WAIT);
   }
+  if (HOVER) {
+    await waitFor(cdp, HOVER);
+    const point = await cdp.eval(
+      `(() => { const el = document.querySelector(${JSON.stringify(HOVER)}); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`
+    );
+    if (!point) throw new Error(`hover target not found: ${HOVER}`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+    await sleep(240);
+  }
+
   await sleep(SETTLE);
 
   if (ECHO) {

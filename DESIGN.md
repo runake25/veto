@@ -43,11 +43,16 @@ The only filled primary is near-black. Red is a refusal signal, one mark per obj
 ## Type
 
 IBM Plex Sans 400/500/600, IBM Plex Mono 400 for identifiers and keys only.
-The scale: 24 title (600) · 26 lead figure (500) · 19 secondary figure (500) ·
-16 card title (600) · 13 body (400, 1.5) · 11.5 labels and meta (500). Sentence
-case throughout, no tracked capitals, tabular figures on every number. A card
-title is always heavier than the body text under it, and a figure is always
-larger than its label.
+The scale: 24 title (600) · 26 lead figure (500) · 19 plate title (600) · 19
+secondary figure (500) · 18 plate readout (500) · 16 card title (600) · 13 body
+(400, 1.5) · 11.5 labels and meta (500) · 10.5 machine keys (500, 0.07em,
+capitals). On the agent plate the monthly figure leads at 24 (500) over the three
+18px caps, and all four values — including the 13px "No cap" fallbacks — sit on
+one shared baseline. Sentence case throughout except the instance plate's four
+readout keys: those are machine labels on a number, not headers, and they are
+the only tracked capitals in the product. Tabular figures on every number. A
+card title is always heavier than the body text under it, a lead figure is
+larger than the caps beside it, and a figure is always larger than its label.
 
 ## Screens
 
@@ -75,6 +80,19 @@ charters.
   is signed yet.
 - **Palette**: 640px, 8px radius, real shadow (it floats), grouped results, `↵` on
   every row, a footer naming the keys.
+- **Agent plate**: the agent list is not a shared table; each agent is its own
+  plate in a two-up grid. A machine label row carries the agent's serial in mono
+  and its state; the name sits at 19px with its tag chip inline (the channel lives
+  on the agent's own screen, where the integration matters, so the list does not
+  repeat it); then the charter readout — the monthly budget leads at 24px, the
+  three caps sit at 18px, and all four values (with "No cap" fallbacks at 13px)
+  share one baseline row; then a hairline and the scope (categories, merchants,
+  category exceptions) in 11.5px. A state that cannot buy (no approved merchant or
+  no allowed category) says so in the state slot instead of reading "active". The
+  whole plate is the link; hover takes the raised tone and a darker edge, and the
+  arrow steps right. A plate folds its readout to a 2×2 (fixed-height value rows,
+  so the band stays equal) and stacks its scope when the plate itself is narrow
+  (container query), not when the window is.
 - **Guardrail band**: the agent screen's charter in one card. A lead monthly figure at
   26px with the charter track under it, three secondary figures (per order, per item,
   signature above) at 19px across a hairline row, then the scope as definition rows
@@ -101,8 +119,9 @@ two-line rows, and the KPI row to two columns; nothing scrolls sideways.
 
 One left edge and one right edge on every block. Cards in a row end on the same
 line. No shadow at rest. No gradient. No icon in a tinted box. No uppercase tracked
-headers. No zebra. No left-aligned numbers. Numbers reconcile: the three KPI
-figures sum to the table total, and the cart total is the sum of its lines.
+headers (the plate readout keys are data labels, not headers). No zebra. No
+left-aligned numbers. Numbers reconcile: the three KPI figures sum to the table
+total, and the cart total is the sum of its lines.
 
 ## Motion
 
