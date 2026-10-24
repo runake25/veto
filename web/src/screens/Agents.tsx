@@ -45,7 +45,7 @@ function Plate({ agent }: { agent: Agent }) {
     { label: 'Monthly', value: figure(rules.monthly), fallback: 'No cap', lead: true },
     { label: 'Per order', value: figure(rules.perOrder), fallback: 'No cap', lead: false },
     { label: 'Per item', value: figure(rules.perItem), fallback: 'No cap', lead: false },
-    { label: 'Signs above', value: figure(rules.signature), fallback: 'Pays alone', lead: false },
+    { label: 'Signature above', value: figure(rules.signature), fallback: 'Pays alone', lead: false },
   ]
 
   const buys =
@@ -61,6 +61,8 @@ function Plate({ agent }: { agent: Agent }) {
         ? `${rules.merchants.length} ${rules.merchants.length === 1 ? 'merchant' : 'merchants'}`
         : 'no merchants yet'
   const exceptions = agent.overrides.length
+  const exceptionHint =
+    'A category with its own cap, overriding the agent default for that category.'
 
   return (
     <Link className="agent-plate" to={`/agents/${agent.id}`}>
@@ -104,7 +106,7 @@ function Plate({ agent }: { agent: Agent }) {
               {merchants}
             </span>
             {exceptions ? (
-              <span>
+              <span title={exceptionHint}>
                 {' '}
                 · {exceptions} category exception{exceptions === 1 ? '' : 's'}
               </span>

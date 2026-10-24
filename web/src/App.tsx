@@ -6,6 +6,10 @@ import { AgentDetail } from './screens/AgentDetail'
 import { Agents } from './screens/Agents'
 import { NewAgent } from './screens/NewAgent'
 import { Overview } from './screens/Overview'
+import { Inbox } from './screens/Inbox'
+import { Record as RequestRecord } from './screens/Record'
+import { Analytics } from './screens/Analytics'
+import { Integrations } from './screens/Integrations'
 import { Shell } from './screens/Shell'
 import { BootSheet } from './components/BootSheet'
 
@@ -71,9 +75,13 @@ export default function App() {
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route element={<Shell me={boot.me} onSignOut={() => void signOut()} />}>
         <Route index element={<Overview me={boot.me} />} />
+        <Route path="inbox" element={<Inbox />} />
+        <Route path="inbox/:id" element={<RequestRecord me={boot.me} />} />
         <Route path="agents" element={<Agents />} />
         <Route path="agents/new" element={<NewAgent />} />
         <Route path="agents/:id" element={<AgentDetail />} />
+        <Route path="analytics" element={<Analytics />} />
+        <Route path="integrations" element={<Integrations me={boot.me} />} />
         <Route path="*" element={<Overview me={boot.me} />} />
       </Route>
     </Routes>

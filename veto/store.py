@@ -19,13 +19,29 @@ import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = ROOT / ".state" / "veto.db"
 SCHEMA_VERSION = "1"
+
+# One analytics call renders one series point per day; refuse to build an
+# unbounded series from an accidental 20-year range.
+MAX_ANALYTICS_DAYS = 366
+
+# The exact aggregate fields of the analytics read model. Kept here so the
+# shape lives in one place and every SQL row is projected through them.
+_ANALYTICS_TOTALS = (
+    "requests", "captured", "awaiting", "approved", "blocked", "vetoed", "voided",
+    "captured_cents", "pending_cents", "blocked_cents",
+    "auto", "review", "block",
+)
+_ANALYTICS_AGENT_KEYS = (
+    "requests", "captured", "captured_cents", "pending", "pending_cents",
+    "blocked", "vetoed",
+)
 
 # Role names mirror auth.VALID_ROLES. The CHECK constraints below are the
 # final authority; this tuple gives callers a readable error before SQLite does.
@@ -104,6 +120,26 @@ def new_id(prefix: str, nbytes: int = 6) -> str:
 
 def _is_memory_path(path: str) -> bool:
     return path in _MEMORY_PATHS
+
+
+def _analytics_days(start_dt: datetime, end_dt: datetime) -> list[date]:
+    """Every UTC calendar day touched by ``[start_dt, end_dt)``, ascending.
+
+    A window that ends exactly at UTC midnight does not include the new day, so
+    the series has no trailing empty point. Raises ``ValueError`` when the span
+    is wider than ``MAX_ANALYTICS_DAYS``.
+    """
+    start_day = start_dt.astimezone(timezone.utc).date()
+    end_day = end_dt.astimezone(timezone.utc).date()
+    end_utc = end_dt.astimezone(timezone.utc)
+    if end_utc == datetime.combine(end_day, time.min, tzinfo=timezone.utc):
+        last_day = end_day - timedelta(days=1)
+    else:
+        last_day = end_day
+    count = (last_day - start_day).days + 1
+    if count > MAX_ANALYTICS_DAYS:
+        raise ValueError(f"range must cover {MAX_ANALYTICS_DAYS} days or fewer")
+    return [start_day + timedelta(days=offset) for offset in range(count)]
 
 
 # ---------------------------------------------------------------------------
@@ -1129,6 +1165,231 @@ class Store:
             ),
             "agent_count": self.count_agents(workspace_id),
             "request_count": self.count_requests(workspace_id),
+        }
+
+    def analytics(self, workspace_id: str, start: str, end: str) -> dict:
+        """The M4 Analytics read model for one workspace over ``[start, end)``.
+
+        Requests are selected by ``created_at``. Only the daily ``series``
+        attributes a request to the UTC calendar day it was *decided* on, via
+        ``COALESCE(decided_at, created_at)``: a cart created at 23:55 and
+        captured at 00:05 counts on the capture day. Every amount is integer
+        cents; every key/label/message is a string.
+
+        Raises ``ValueError`` when either bound is not an ISO-8601 timestamp,
+        when ``start >= end``, or when the window spans more than
+        ``MAX_ANALYTICS_DAYS`` days. The HTTP layer should map that to a 400.
+        """
+        start_dt = parse_iso(start)
+        end_dt = parse_iso(end)
+        if start_dt is None or end_dt is None:
+            raise ValueError("start and end must be ISO-8601 timestamps")
+        if start_dt >= end_dt:
+            raise ValueError("start must be before end")
+
+        days = _analytics_days(start_dt, end_dt)
+        # Stored timestamps are always UTC, so normalise the bounds to UTC too
+        # and the range check stays a correct lexicographic comparison.
+        bounds = (
+            workspace_id,
+            start_dt.astimezone(timezone.utc).isoformat(timespec="seconds"),
+            end_dt.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        )
+
+        totals_row = self.one(
+            "SELECT COUNT(*) AS requests, "
+            "COUNT(CASE WHEN status = 'captured' THEN 1 END) AS captured, "
+            "COUNT(CASE WHEN status = 'awaiting' THEN 1 END) AS awaiting, "
+            "COUNT(CASE WHEN status = 'approved' THEN 1 END) AS approved, "
+            "COUNT(CASE WHEN status = 'blocked' THEN 1 END) AS blocked, "
+            "COUNT(CASE WHEN status = 'vetoed' THEN 1 END) AS vetoed, "
+            "COUNT(CASE WHEN status = 'voided' THEN 1 END) AS voided, "
+            "COALESCE(SUM(CASE WHEN status = 'captured' THEN total_cents ELSE 0 END), 0) "
+            "  AS captured_cents, "
+            "COALESCE(SUM(CASE WHEN status IN ('awaiting', 'approved') "
+            "  THEN total_cents ELSE 0 END), 0) AS pending_cents, "
+            "COALESCE(SUM(CASE WHEN status IN ('blocked', 'vetoed') "
+            "  THEN total_cents ELSE 0 END), 0) AS blocked_cents, "
+            "COUNT(CASE WHEN decision_outcome = 'auto' THEN 1 END) AS auto, "
+            "COUNT(CASE WHEN decision_outcome = 'review' THEN 1 END) AS review, "
+            "COUNT(CASE WHEN decision_outcome = 'block' THEN 1 END) AS block "
+            "FROM requests "
+            "WHERE workspace_id = ? AND created_at >= ? AND created_at < ?",
+            bounds,
+        )
+        totals = {
+            key: int((totals_row or {}).get(key) or 0) for key in _ANALYTICS_TOTALS
+        }
+
+        agent_rows = self.query(
+            "SELECT r.agent_id AS key, "
+            "       COALESCE(a.name, r.agent_id) AS label, "
+            "       COALESCE(a.tag, '') AS tag, "
+            "       COUNT(*) AS requests, "
+            "       COUNT(CASE WHEN r.status = 'captured' THEN 1 END) AS captured, "
+            "       COALESCE(SUM(CASE WHEN r.status = 'captured' "
+            "         THEN r.total_cents ELSE 0 END), 0) AS captured_cents, "
+            "       COUNT(CASE WHEN r.status IN ('awaiting', 'approved') THEN 1 END) "
+            "         AS pending, "
+            "       COALESCE(SUM(CASE WHEN r.status IN ('awaiting', 'approved') "
+            "         THEN r.total_cents ELSE 0 END), 0) AS pending_cents, "
+            "       COUNT(CASE WHEN r.status = 'blocked' THEN 1 END) AS blocked, "
+            "       COUNT(CASE WHEN r.status = 'vetoed' THEN 1 END) AS vetoed "
+            "FROM requests r "
+            "LEFT JOIN agents a "
+            "  ON a.id = r.agent_id AND a.workspace_id = r.workspace_id "
+            "WHERE r.workspace_id = ? AND r.created_at >= ? AND r.created_at < ? "
+            "GROUP BY r.agent_id, a.name, a.tag",
+            bounds,
+        )
+        by_agent = [
+            {
+                "key": str(row["key"]),
+                "label": str(row["label"] or row["key"]),
+                "tag": str(row["tag"] or ""),
+                **{key: int(row[key] or 0) for key in _ANALYTICS_AGENT_KEYS},
+            }
+            for row in agent_rows
+        ]
+        by_agent.sort(
+            key=lambda row: (-row["captured_cents"], -row["requests"], row["label"])
+        )
+
+        tag_rows = self.query(
+            "SELECT COALESCE(a.tag, '') AS key, "
+            "       COUNT(*) AS requests, "
+            "       COUNT(CASE WHEN r.status = 'captured' THEN 1 END) AS captured, "
+            "       COALESCE(SUM(CASE WHEN r.status = 'captured' "
+            "         THEN r.total_cents ELSE 0 END), 0) AS captured_cents, "
+            "       COUNT(CASE WHEN r.status IN ('awaiting', 'approved') THEN 1 END) "
+            "         AS pending, "
+            "       COALESCE(SUM(CASE WHEN r.status IN ('awaiting', 'approved') "
+            "         THEN r.total_cents ELSE 0 END), 0) AS pending_cents, "
+            "       COUNT(CASE WHEN r.status = 'blocked' THEN 1 END) AS blocked, "
+            "       COUNT(CASE WHEN r.status = 'vetoed' THEN 1 END) AS vetoed "
+            "FROM requests r "
+            "LEFT JOIN agents a "
+            "  ON a.id = r.agent_id AND a.workspace_id = r.workspace_id "
+            "WHERE r.workspace_id = ? AND r.created_at >= ? AND r.created_at < ? "
+            "GROUP BY COALESCE(a.tag, '')",
+            bounds,
+        )
+        by_tag = [
+            {
+                "key": str(row["key"] or ""),
+                "label": str(row["key"] or "") or "Untagged",
+                **{key: int(row[key] or 0) for key in _ANALYTICS_AGENT_KEYS},
+            }
+            for row in tag_rows
+        ]
+        by_tag.sort(
+            key=lambda row: (-row["captured_cents"], -row["requests"], row["label"])
+        )
+
+        def line_rollup(column: str) -> list[dict]:
+            """One row per vendor/category from the request lines in range."""
+            rows = self.query(
+                f"SELECT COALESCE(l.{column}, '') AS key, "
+                "       COUNT(DISTINCT r.id) AS requests, "
+                "       COALESCE(SUM(CASE WHEN r.status = 'captured' "
+                "         THEN l.line_cents ELSE 0 END), 0) AS captured_cents, "
+                "       COUNT(*) AS lines, "
+                "       COUNT(DISTINCT CASE WHEN r.status = 'blocked' "
+                "         THEN r.id END) AS blocked, "
+                "       COUNT(DISTINCT CASE WHEN r.status = 'vetoed' "
+                "         THEN r.id END) AS vetoed "
+                "FROM request_lines l "
+                "JOIN requests r ON r.id = l.request_id "
+                "WHERE r.workspace_id = ? AND r.created_at >= ? AND r.created_at < ? "
+                f"GROUP BY COALESCE(l.{column}, '')",
+                bounds,
+            )
+            rolled = [
+                {
+                    "key": str(row["key"] or ""),
+                    "label": str(row["key"] or "") or "Unknown",
+                    "requests": int(row["requests"] or 0),
+                    "captured_cents": int(row["captured_cents"] or 0),
+                    "lines": int(row["lines"] or 0),
+                    "blocked": int(row["blocked"] or 0),
+                    "vetoed": int(row["vetoed"] or 0),
+                }
+                for row in rows
+            ]
+            rolled.sort(
+                key=lambda row: (-row["captured_cents"], -row["requests"], row["key"])
+            )
+            return rolled
+
+        by_vendor = line_rollup("vendor")
+        by_category = line_rollup("category")
+
+        rule_rows = self.query(
+            "SELECT rr.rule AS key, rr.severity AS severity, "
+            "       COUNT(*) AS count, "
+            "       COUNT(DISTINCT r.id) AS requests, "
+            "       COUNT(DISTINCT CASE WHEN r.status = 'blocked' "
+            "         THEN r.id END) AS blocked, "
+            "       COUNT(DISTINCT CASE WHEN r.status <> 'blocked' "
+            "         THEN r.id END) AS review, "
+            "       MIN(rr.message) AS example "
+            "FROM request_reasons rr "
+            "JOIN requests r ON r.id = rr.request_id "
+            "WHERE r.workspace_id = ? AND r.created_at >= ? AND r.created_at < ? "
+            "GROUP BY rr.rule, rr.severity",
+            bounds,
+        )
+        by_rule = [
+            {
+                "key": str(row["key"]),
+                "severity": str(row["severity"]),
+                "count": int(row["count"] or 0),
+                "requests": int(row["requests"] or 0),
+                "blocked": int(row["blocked"] or 0),
+                "review": int(row["review"] or 0),
+                "example": str(row["example"] or ""),
+            }
+            for row in rule_rows
+        ]
+        by_rule.sort(key=lambda row: (-row["count"], row["key"], row["severity"]))
+
+        series_rows = self.query(
+            "SELECT date(COALESCE(decided_at, created_at)) AS day, "
+            "       COUNT(*) AS requests, "
+            "       COALESCE(SUM(total_cents), 0) AS captured_cents "
+            "FROM requests "
+            "WHERE workspace_id = ? AND created_at >= ? AND created_at < ? "
+            "  AND status = 'captured' "
+            "GROUP BY day",
+            bounds,
+        )
+        captured_by_day = {
+            str(row["day"]): {
+                "requests": int(row["requests"] or 0),
+                "captured_cents": int(row["captured_cents"] or 0),
+            }
+            for row in series_rows
+        }
+        series = [
+            {
+                "date": day.isoformat(),
+                "captured_cents": captured_by_day.get(day.isoformat(), {}).get(
+                    "captured_cents", 0
+                ),
+                "requests": captured_by_day.get(day.isoformat(), {}).get("requests", 0),
+            }
+            for day in days
+        ]
+
+        return {
+            "range": {"from": start, "to": end},
+            "totals": totals,
+            "by_agent": by_agent,
+            "by_tag": by_tag,
+            "by_vendor": by_vendor,
+            "by_category": by_category,
+            "by_rule": by_rule,
+            "series": series,
         }
 
     def update_request(

@@ -16,6 +16,7 @@ import time
 import sys
 import traceback
 import urllib.request
+from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -133,6 +134,32 @@ def public_workspace(workspace: dict) -> dict:
         "currency": workspace.get("currency") or "USD",
         "monthly_budget_cents": int(workspace.get("monthly_budget_cents") or 0),
     }
+
+
+def date_range(params: dict) -> tuple[str, str]:
+    """Two ``YYYY-MM-DD`` query dates -> one ``[start, end)`` pair of UTC instants.
+
+    The UI's ``to`` day is inclusive, so the exclusive upper bound is the next
+    midnight. Defaults to the current month through today.
+    """
+    today = datetime.now(timezone.utc).date()
+    raw_from = (params.get("from") or [""])[0].strip()
+    raw_to = (params.get("to") or [""])[0].strip()
+    try:
+        start_day = date.fromisoformat(raw_from) if raw_from else today.replace(day=1)
+        end_day = date.fromisoformat(raw_to) if raw_to else today
+    except ValueError:
+        raise ApiError(400, "invalid_range", "Pass from and to as YYYY-MM-DD.") from None
+    if end_day < start_day:
+        raise ApiError(400, "invalid_range", "`from` must not be after `to`.")
+    start = datetime(start_day.year, start_day.month, start_day.day, tzinfo=timezone.utc)
+    end = datetime(end_day.year, end_day.month, end_day.day, tzinfo=timezone.utc) + timedelta(
+        days=1
+    )
+    return (
+        start.isoformat(timespec="seconds"),
+        end.isoformat(timespec="seconds"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +454,9 @@ class Handler(BaseHTTPRequestHandler):
             if candidate.is_file():
                 ctype = CONTENT_TYPES.get(candidate.suffix, "application/octet-stream")
                 return self._send(200, candidate.read_bytes(), ctype)
+        return self._send_app_index()
+
+    def _send_app_index(self) -> None:
         index = APP_DIR / "index.html"
         if not index.is_file():
             self._api_error(
@@ -440,6 +470,9 @@ class Handler(BaseHTTPRequestHandler):
         """Handle /app, /login and every GET /api/v1/* route. True = handled."""
         if path == "/login":
             self._redirect("/app/#/login")
+            return True
+        if path == "/":
+            self._send_app_index()
             return True
         if path == "/app" or path.startswith("/app/"):
             self._serve_app(path)
@@ -477,6 +510,12 @@ class Handler(BaseHTTPRequestHandler):
                 return True
         if path == "/api/v1/overview":
             self._v1_overview()
+            return True
+        if path == "/api/v1/analytics":
+            self._v1_analytics()
+            return True
+        if path == "/api/v1/integrations":
+            self._v1_integrations()
             return True
         if path == "/api/v1/requests":
             self._v1_list_requests()
@@ -728,6 +767,72 @@ class Handler(BaseHTTPRequestHandler):
                 "mode": SETTLEMENT.mode,
             },
             "month": month_start_iso(),
+        })
+
+    def _v1_analytics(self) -> None:
+        session = self._require_session()
+        start, end = date_range(parse_qs(urlparse(self.path).query))
+        try:
+            data = STORE.analytics(session["workspace"]["id"], start, end)
+        except ValueError as exc:
+            self._api_error(400, "invalid_range", str(exc))
+        self._ok(data)
+
+    def _v1_integrations(self) -> None:
+        session = self._require_session()
+        workspace = session["workspace"]
+        wallet = STORE.wallet(workspace["id"]) or {}
+        agents = STORE.list_agents(workspace["id"])
+        names = {agent["id"]: agent["name"] for agent in agents}
+        keys = []
+        for row in STORE.list_api_keys(workspace["id"]):
+            item = self._public_key(row)
+            item["agent_name"] = names.get(row["agent_id"]) or row["agent_id"]
+            keys.append(item)
+        default_id = workspace.get("default_agent_id")
+        base = public_base()
+        signing = bool((os.environ.get("SLACK_SIGNING_SECRET") or "").strip())
+        bot = bool((os.environ.get("SLACK_BOT_TOKEN") or "").strip())
+        self._ok({
+            "workspace": public_workspace(workspace),
+            "wallet": {
+                "status": wallet.get("status") or "disconnected",
+                "mode": SETTLEMENT.mode,
+                "vault_id": wallet.get("vault_id"),
+                "payer_email": wallet.get("payer_email"),
+                "connected_at": wallet.get("connected_at"),
+                "connect_url": base + "/connect",
+            },
+            "slack": {
+                "signing_secret": signing,
+                "bot_token": bot,
+                "app_ready": signing and bot,
+                "slash_command": "/veto",
+                "slash_url": base + "/api/slack/veto",
+                "interact_url": base + "/api/slack/interact",
+                "public_url": base,
+                "default_agent": {"id": default_id, "name": names[default_id]}
+                if default_id in names
+                else None,
+                "routes": [
+                    {"channel": agent["channel"], "agent_id": agent["id"],
+                     "agent_name": agent["name"]}
+                    for agent in agents
+                    if agent.get("channel")
+                ],
+            },
+            "agents": [
+                {
+                    "id": agent["id"],
+                    "name": agent["name"],
+                    "tag": agent["tag"],
+                    "status": agent["status"],
+                    "channel": agent["channel"],
+                }
+                for agent in agents
+            ],
+            "api": {"requests_path": "/api/v1/requests", "base_url": base},
+            "keys": keys,
         })
 
     def _v1_list_requests(self) -> None:
@@ -1200,14 +1305,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         if path == "/api/slack/veto" and urlparse(self.path).query.startswith("ssl_check"):
             return self._json(200, {"ok": True})
-        if path == "/":
-            return self._file("index.html")
         if path == "/connect":
             return self._file("demo/connect.html")
-        if path == "/demo":
-            return self._file("demo/demo.html")
-        if path == "/api/state":
-            return self._json(200, ENGINE.snapshot())
         if path == "/api/health":
             signed = bool((os.environ.get("SLACK_SIGNING_SECRET") or "").strip())
             bot = bool((os.environ.get("SLACK_BOT_TOKEN") or "").strip())
@@ -1267,28 +1366,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._slack_interact()
         body = self._body()
         try:
-            if path == "/api/request":
-                text = (body.get("text") or "").strip()
-                if not text:
-                    return self._json(400, {"error": "text is required"})
-                req = ENGINE.create_request(
-                    text,
-                    channel=body.get("channel") or "#office-ops",
-                    requester=body.get("requester") or "Dan Okafor",
-                )
-                return self._json(200, {"request": ENGINE._view(req)})
-
-            if path == "/api/decide":
-                rid = body.get("id") or ""
-                action = body.get("action") or ""
-                if action == "approve":
-                    req = ENGINE.approve(rid)
-                elif action == "veto":
-                    req = ENGINE.veto(rid)
-                else:
-                    return self._json(400, {"error": "action must be approve or veto"})
-                return self._json(200, {"request": ENGINE._view(req)})
-
             if path == "/api/connect":
                 if body.get("reset"):
                     ENGINE.vault_id = None
@@ -1299,13 +1376,6 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/connect/finish":
                 return self._json(200, {"vault_id": ENGINE.finish_connect()})
-
-            if path == "/api/slack/test":
-                # build, but do not send, the payload a real Slack call would get
-                return self._json(200, self._slack_veto_payload({
-                    "command": "/veto", "text": body.get("text") or "2 packs of bamboo toilet paper",
-                    "user_name": body.get("user") or "dan", "channel_name": "office-ops",
-                }))
 
             return self._json(404, {"error": "unknown route"})
 
@@ -1369,7 +1439,6 @@ def main() -> int:
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"\n  Veto runner")
     print(f"  app       http://{HOST}:{PORT}/")
-    print(f"  harness   http://127.0.0.1:{PORT}/demo")
     print(f"  wallet    http://127.0.0.1:{PORT}/connect")
     print(f"  paypal    {ENGINE.paypal_mode}   llm  {ENGINE.llm_mode}   catalog {ENGINE.catalog_mode}")
     if PUBLIC_URL:

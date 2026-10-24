@@ -1,151 +1,135 @@
 # Veto: design system
 
-The console is an **app screen**: someone works in it, fast, a few times a day. It
-follows the app-screen rules, not landing-page rules: no hero, no icon cards, no
-gradients, no colour in the chrome.
+The console is an **app screen**: someone works in it, fast, a few times a day. It follows
+app-screen rules, not landing-page rules — no hero, no icon cards, no gradients, no colour
+in the chrome. One left edge and one right edge on every block.
 
-## The direction: framed sheet
+## The direction: framed sheet, ledger tone
 
-One tinted desk holds the sidebar and the 48px top bar with no rule between them;
-the work sits on a white page inset 8px from the window's right and bottom edges,
-one 1px edge, 16px corners, no shadow. Depth is a single tone step.
+A cool graphite desk holds a dark navy rail and a 48px top bar; the work sits on a white
+sheet inset 8px from the window's right and bottom edges, one 1px edge, 12px corners, no
+shadow. Depth is a single tone step.
 
-Why: Veto's artefact is a signed page, not a dashboard. The frame is the desk, the
-sheet is the ledger, and the consent seal is the stamp on it. It also gives the
-screen an identity that survives a 100%-zoom screenshot, which a flat white
-dashboard does not.
+Why: Veto's artefact is a signed page, not a dashboard. The frame is the desk, the sheet is
+the record, and the consent is the stamp on it. The dark rail makes the chrome read as an
+instrument the user operates; the cool neutral + navy palette says institutional finance,
+not a friendly spending tracker. The whole frame fits in one 100%-zoom screenshot, which a
+flat white dashboard does not.
 
-**The face.** The frame is tinted from the product's world (a low-chroma stone,
-`#f3f2f0`), not from a category colour; the sheet is a very slightly cool white
-(`#fafafb`); and every identifier is set in IBM Plex Mono, which is how the product
-itself refers to a request, a cart hash or a PayPal object. IBM Plex Sans carries
-everything else.
+**The face.** IBM Plex Sans 400/500/600; IBM Plex Mono 400 for every identifier, hash, id
+and timestamp — it is how the product refers to a request, a cart hash or a PayPal object.
+Money is tabular everywhere.
 
-**Signature element.** The charter track: money already spent, the paler segment of
-money an agent has committed and nobody has signed for, and an overrun in the
-refusal colour past the end of the track. It is the whole product in one mark, and
-it appears on both the ledger and the request.
+**Signature elements.** The **status mark** (a 6px dot and one word — green captured, amber
+held, red refused, grey withdrawn) and the **verdict band** on a record (a 3px state rail,
+`POLICY · outcome · status` in mono, one sentence of conclusion, the rule reasons with their
+observed/limit figures, and only the actions that state allows).
 
 ## Tokens
 
 ```
-ground #f3f2f0   sheet #fafafb   surface #ffffff   raised #f2f1ef   active #e8e6e3
-border #e4e2df   rule #edebe8    control #cfcdc9   sheet-edge #dfddd8
-text #17191b     muted #5d6165   faint #6a6e72
-accent #1b6c80   accent-soft #d9e9ed   accent-ink #104453
-negative #c4242a negative-soft #fbeae9 negative-ink #7d1618   positive #1e7b4f
-radius: card 8, control 6, sheet 16   gap 24   card padding 16-20   row 48
+ground #e9ebee   surface #ffffff   wash #f7f8fa   raised #eef0f3   active #e2e6ea
+border #d8dde2   rule #e7eaed      control #b6bec6   sheet-edge #ccd3da
+text #0e141b     muted #4e5761     faint #68717c
+accent #1b3f63   accent-soft #e2e9f1   accent-ink #12304d
+positive #0f6b43 (money captured)  negative #a01f24 (refused)  hold #8a5a09 (money held)
+rail #0f1822  rail-ink #a9b4c0  rail-active #1d2c3b  rail-line #233140  rail-mark #8fb4d6
+radius: card 6, control 4, sheet 12   sheet inset 8   sidebar 228   topbar 48
+gap 20-24   card padding 15-16   row 48
 ```
 
-Colour budget: under 3%. The accent carries data and the seal, never the chrome.
-The only filled primary is near-black. Red is a refusal signal, one mark per object.
+Colour budget: under 3%. Navy carries links, focus and the one chart series; navy is never a
+surface. Green means money moved, red means money was refused, amber means money is held
+for a signature — those three never appear as decoration. The only filled primary button is
+near-black. No gradients.
 
 ## Type
 
-IBM Plex Sans 400/500/600, IBM Plex Mono 400 for identifiers and keys only.
-The scale: 24 title (600) · 26 lead figure (500) · 19 plate title (600) · 19
-secondary figure (500) · 18 plate readout (500) · 16 card title (600) · 13 body
-(400, 1.5) · 11.5 labels and meta (500) · 10.5 machine keys (500, 0.07em,
-capitals). On the agent plate the monthly figure leads at 24 (500) over the three
-18px caps, and all four values — including the 13px "No cap" fallbacks — sit on
-one shared baseline. Sentence case throughout except the instance plate's four
-readout keys: those are machine labels on a number, not headers, and they are
-the only tracked capitals in the product. Tabular figures on every number. A
-card title is always heavier than the body text under it, a lead figure is
-larger than the caps beside it, and a figure is always larger than its label.
+Scale: 30 record total · 27 record title · 24 page title (600) and plate lead (500) · 19
+card/plate title (600) and secondary figure (500) · 18 plate readout · 16 card title (600) ·
+15.5 verdict headline (500) · 13.5 table figure · 13 body (400, 1.5) · 12.5 table title ·
+11.5 labels and meta (500) · 10.5 machine keys · 10 tracked capitals. The only tracked
+capitals are machine labels (table headers, endpoint labels, the `POLICY · …` kicker and the
+agent plate readout keys). Sentence case everywhere else. Figures are always larger than
+their labels; money is right-aligned and tabular; a card title is always heavier than the
+body under it.
 
-## Screens
+## Screens (six, one store)
 
-Six, all reachable, none decorative: the ledger, the agent list, one agent (its
-guardrails as one band, then a dry run and a product search scoped by those
-guardrails), the catalogue searched as an agent, analytics by tag and agent, the
-charters.
+- **Overview** — KPI row (needs you, committed-unsigned, settled this month, agents) + the
+  pending requests as links + the agent roster. No charts and no aggregates: those have a
+  owner (Analytics).
+- **Inbox** — the only request list. Status tabs and agent filter live in the URL; the six
+  columns are request, agent, source, amount, status, created. Pending first, then newest.
+  An amount is `—` when nothing was priced (a blocked request may have no cart at all).
+- **Record** — one request as a document: identity + amount + status, the verdict band with
+  its reasons and actions, the cart, the PayPal objects, the consent (hash, window, use) and
+  the append-only trail. Approve-and-capture and Veto only while awaiting; Void only while
+  pending; an expired consent disables approve and says why instead of failing silently.
+- **Agents** — one plate per instance, not a shared table: serial + state, name + tag,
+  monthly lead at 24 over three 18px caps on one baseline, scope footer. A charter that
+  cannot buy says `can't buy` in the state slot.
+- **Analytics** — one range (this month / last month / last 90 days), four totals, settled
+  per day as thin bars, then by agent, by vendor, by category and what the rules caught.
+  Only captured lines count as spend; agent rows link into the filtered Inbox.
+- **Integrations** — the three doors: Slack (endpoints + channel routing), the PayPal wallet
+  (mode, vault, connection), and agent API keys (prefix, last use, mint once, revoke
+  immediately).
 
 ## Components
 
-- **KPI row**: one panel, four columns split by hairlines, label over value. The
-  lead cell holds the money awaiting consent at 30px; the rest sit at 24px.
-- **Consent queue**: two-line rows, id in mono, the rule that fired in words, amount
-  right-aligned, `Approve` and `Veto` on the row. Rows are divided by a 1px rule and
-  take a raised fill on hover.
-- **Charter track**: label, in-flight figure, spent-of-cap, then a 7px track. A
-  legend of the marks themselves sits in the card foot.
-- **Table**: 12px sentence-case grey headers, no band, 48px rows, right-aligned
-  tabular money, one status mark per row (a pale pill only where a human is needed
-  or money was refused).
-- **Authority rail**: the record's spine. Every step from the Slack message to the
-  capture, each with its object id; a veto stops the line with a square red end-cap
-  and the steps after it stay hollow, marked "no capture".
-- **Consent well**: tinted, with the cart hash in mono, or one sentence when nothing
-  is signed yet.
-- **Palette**: 640px, 8px radius, real shadow (it floats), grouped results, `↵` on
-  every row, a footer naming the keys.
-- **Agent plate**: the agent list is not a shared table; each agent is its own
-  plate in a two-up grid. A machine label row carries the agent's serial in mono
-  and its state; the name sits at 19px with its tag chip inline (the channel lives
-  on the agent's own screen, where the integration matters, so the list does not
-  repeat it); then the charter readout — the monthly budget leads at 24px, the
-  three caps sit at 18px, and all four values (with "No cap" fallbacks at 13px)
-  share one baseline row; then a hairline and the scope (categories, merchants,
-  category exceptions) in 11.5px. A state that cannot buy (no approved merchant or
-  no allowed category) says so in the state slot instead of reading "active". The
-  whole plate is the link; hover takes the raised tone and a darker edge, and the
-  arrow steps right. A plate folds its readout to a 2×2 (fixed-height value rows,
-  so the band stays equal) and stacks its scope when the plate itself is narrow
-  (container query), not when the window is.
-- **Guardrail band**: the agent screen's charter in one card. A lead monthly figure at
-  26px with the charter track under it, three secondary figures (per order, per item,
-  signature above) at 19px across a hairline row, then the scope as definition rows
-  (categories, merchants, exceptions) in 11.5px labels and 12.5px values. It replaces
-  the read-only rule table: every rule appears exactly once, in words, at the size its
-  importance deserves.
-- **Rule switch**: 34x20, the on state in the one hue, the rule's limit written under
-  it in 12px grey. Switching it changes the catalogue count on the same screen, so the
-  control has a visible consequence.
-- **Tag chip**: 19px, hairline border, neutral fill. Tags are identity, not status, so
-  they carry no hue.
-- **Bar list**: a 6px accent bar on a raised track, the value right-aligned, the count
-  and any refused money in 11px grey under it. The accent is the accent because this is
-  the screen's main series.
+- **Status mark** — dot + word, 11.5px; tones pos/wait/neg/quiet. No pills, no coloured
+  backgrounds; status is a fact, not a badge.
+- **Verdict band** — grid: content left, actions/outcome right. A 3px rail in the state
+  colour, a tracked mono kicker, a 15.5px conclusion, rule flags with observed/limit and the
+  unblock sentence, then exactly the actions the state allows.
+- **Record rows** — definition rows 1px apart: 11.5px label left, 12px value right, ids and
+  hashes in mono with ellipsis and the full value in `title`.
+- **Trail** — numbered steps: seq in 10px mono, label + detail, time right in 10px mono.
+- **Cart table** — 10px tracked header, 12.5px item titles, vendor column, right-aligned
+  qty/unit/amount, total separated by a stronger rule; an empty cart says no cart was priced.
+- **Filter tabs / range tabs** — a 3px-padded raised track with 27px tiles; the active tile is
+  a white surface with a hairline. No animated slider.
+- **Table** — 10px tracked headers on a wash band, 1px row rules, right-aligned tabular
+  money, one status mark per row, whole row is the link, hover is a wash tone.
+- **Stats** — one panel, four cells split by hairlines, label over value over note; semantic
+  tone only when the figure is non-zero.
+- **Chart** — navy bars on a 118px plot, no gridlines, three date ticks, hover darkens the
+  bar; zeros are a 2px stub so the day still reads.
+- **Agent plate** — machine label row, name + tag, readout on one baseline, scope footer;
+  plate-wide hover tone, arrow steps right, 2×2 readout when the plate itself is narrow.
+- **Buttons** — primary near-black (38px), secondary hairline, danger outline red (veto),
+  quiet text, small 28px for row actions. Copy buttons are 20px mono chips.
+- **Empty state** — dashed circle, one title, one sentence; never an illustration.
+- **Top nav (≤900px)** — the sidebar collapses to a compact light nav in the top bar, so the
+  sections stay reachable; the phone folds rows to two lines and stats to 2×2.
 
 ## States
 
-Hover, focus-visible (2px accent, 2px offset), selected (palette row on `active`),
-disabled, empty (dashed frame with one sentence and one way out), and the record's
-stopped rail. The phone drops the sidebar to one row of icons, the table to
-two-line rows, and the KPI row to two columns; nothing scrolls sideways.
+Hover (tone step, no lift), focus-visible (2px navy, 2px offset), disabled, loading
+skeletons that match the final block, empty per filter, no wallet (428 wallet_required with
+its connect link), expired consent, blocked record (no payment, no consent, reasons shown),
+revoked key, and the read-only role state on a record. Nothing scrolls sideways at 390px.
 
 ## Rules this build enforces
 
-One left edge and one right edge on every block. Cards in a row end on the same
-line. No shadow at rest. No gradient. No icon in a tinted box. No uppercase tracked
-headers (the plate readout keys are data labels, not headers). No zebra. No
-left-aligned numbers. Numbers reconcile: the three KPI figures sum to the table
-total, and the cart total is the sum of its lines.
+One left edge and one right edge on every block. No shadow at rest. No gradient. No icon in
+a tinted box. No zebra striping. No left-aligned numbers. A number is never duplicated: the
+Overview count and the Inbox total are the same query, Analytics reconciles with both, and
+the record's total is the sum of its lines. Colour meaning is fixed: green = captured,
+amber = held, red = refused, navy = data and links. Copy is plain and honest — no milestone
+talk, no invented history, and a figure only appears when the store can stand behind it.
 
 ## Motion
 
-The world is paper and ink, so the handfeel is 咔嗒 (a plastic switch) and 砸落 (a stamp
-landing) — not float, not bounce. Motion serves three jobs, in this order:
+Paper and ink: a switch click and a stamp landing, never float or bounce.
 
-1. **The press answers.** Every control sinks 1px and returns (90ms), buttons lift 1px on
-   hover, switches squeeze under the thumb. Nothing is inert.
-2. **A change shows where it came from.** A view change lays the new page down (6px rise
-   + fade, 180ms). An approved row leaves toward the button that removed it (150ms) and
-   the rows that stay are FLIPped to their new positions (240ms). Figures are tweened
-   from their last rendered value (320ms, ease-out) instead of swapping, and charter
-   tracks grow to their new fill.
-3. **The page arrives once.** The sheet fades up 4px on first load only (200ms). No
-   re-render replays it.
+1. **The press answers.** Controls sink 1px and return; 140–160ms on background/colour.
+2. **A screen arrives once.** Blocks stagger 60ms and rise 10px in 450ms
+   `cubic-bezier(.16,1,.3,1)`; the sheet itself fades up 12px on first paint.
+3. **A change stays in place.** Approving re-renders the verdict band and the payment card
+   with the new state; nothing slides off the screen. The record's own objects are the
+   receipt.
 
-**The authored moment.** When a human approves, the consent lands as a stamp: the consent
-well scales down from 1.035 to rest in 280ms, the rail fills in behind it, the money moves
-from in flight to spent, and the receipt strip keeps the decision in place. That is the
-product's own object appearing, not decoration.
-
-Decided requests stay in the card as a receipt strip, so the queue card keeps its height
-as it empties instead of opening a hole.
-
-All of it is transform/opacity or transform/width only, everything is interruptible (CSS
-transitions restart from the current value), and `prefers-reduced-motion: reduce` sets every
-duration to 0.01ms and drops the translates, with the content unchanged.
+`prefers-reduced-motion: reduce` replaces every animation with the end state (opacity only).
+All motion is transform/opacity; layout is never animated.

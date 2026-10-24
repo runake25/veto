@@ -65,6 +65,161 @@ export interface OverviewData {
   month: string
 }
 
+export type RequestStatus = 'blocked' | 'awaiting' | 'approved' | 'captured' | 'vetoed' | 'voided'
+
+export interface RequestLine {
+  sku: string | null
+  title: string
+  qty: number
+  unit_cents: number
+  line_cents: number
+  vendor: string | null
+  category: string | null
+  brand: string | null
+  url: string | null
+  image: string | null
+  source: string | null
+}
+
+export interface Consent {
+  id: string
+  cart_hash: string
+  issued_at: string | null
+  expires_at: string | null
+  used_at: string | null
+  approver_user_id: string | null
+}
+
+export interface Payment {
+  id: string
+  mode: string
+  status: string
+  amount_cents: number
+  order_id: string | null
+  authorization_id: string | null
+  capture_id: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface RequestEvent {
+  seq: number
+  kind: string
+  label: string
+  detail: string | null
+  at: string
+}
+
+/** A request with its cart, consent, payment and trail — the Record screen. */
+export interface RequestDetail extends Omit<RequestSummary, 'status'> {
+  status: RequestStatus
+  text: string
+  agent: { id: string; name: string; tag: string; channel: string | null; status: string }
+  lines: RequestLine[]
+  reasons: Reason[]
+  consent: Consent | null
+  payment: Payment | null
+  events: RequestEvent[]
+  approver_user_id: string | null
+}
+
+export interface ApiKey {
+  id: string
+  agent_id: string
+  prefix: string
+  created_at: string | null
+  last_used_at: string | null
+  revoked_at: string | null
+}
+
+export interface WorkspaceKey extends ApiKey {
+  agent_name: string
+}
+
+export interface AnalyticsBucket {
+  key: string
+  label: string
+  tag?: string
+  requests: number
+  captured: number
+  captured_cents: number
+  pending?: number
+  pending_cents?: number
+  blocked: number
+  vetoed: number
+}
+
+export interface AnalyticsSpendRow {
+  key: string
+  label: string
+  requests: number
+  captured_cents: number
+  lines: number
+  blocked: number
+  vetoed: number
+}
+
+export interface AnalyticsRuleRow {
+  key: string
+  severity: 'block' | 'review'
+  count: number
+  requests: number
+  blocked: number
+  review: number
+  example: string | null
+}
+
+export interface Analytics {
+  range: { from: string; to: string }
+  totals: {
+    requests: number
+    captured: number
+    awaiting: number
+    approved: number
+    blocked: number
+    vetoed: number
+    voided: number
+    captured_cents: number
+    pending_cents: number
+    blocked_cents: number
+    auto: number
+    review: number
+    block: number
+  }
+  by_agent: AnalyticsBucket[]
+  by_tag: AnalyticsBucket[]
+  by_vendor: AnalyticsSpendRow[]
+  by_category: AnalyticsSpendRow[]
+  by_rule: AnalyticsRuleRow[]
+  series: { date: string; captured_cents: number; requests: number }[]
+}
+
+export interface IntegrationsData {
+  workspace: { id: string; name: string; currency: string; monthly_budget_cents: number }
+  wallet: {
+    status: string
+    mode: string
+    vault_id: string | null
+    payer_email: string | null
+    connected_at: string | null
+    connect_url: string
+  }
+  slack: {
+    signing_secret: boolean
+    bot_token: boolean
+    app_ready: boolean
+    slash_command: string
+    slash_url: string
+    interact_url: string
+    public_url: string
+    default_agent: { id: string; name: string } | null
+    routes: { channel: string; agent_id: string; agent_name: string }[]
+  }
+  agents: { id: string; name: string; tag: string; status: string; channel: string | null }[]
+  api: { requests_path: string; base_url: string }
+  keys: WorkspaceKey[]
+}
+
 
 export type RuleKind =
   | 'monthly_cap'
@@ -201,6 +356,9 @@ export interface Agent {
 export class ApiError extends Error {
   code: string
   status: number
+  /** Set when the workspace has no PayPal wallet yet (HTTP 428 wallet_required). */
+  approveUrl?: string
+  connect?: string
   constructor(code: string, message: string, status: number) {
     super(message)
     this.name = 'ApiError'
@@ -212,7 +370,7 @@ export class ApiError extends Error {
 interface Envelope<T> {
   ok: boolean
   data?: T
-  error?: { code?: string; message?: string }
+  error?: { code?: string; message?: string; approve_url?: string; connect?: string }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -237,7 +395,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok || !body?.ok) {
     const code = body?.error?.code ?? `http_${res.status}`
     const message = body?.error?.message ?? `Request failed (${res.status})`
-    throw new ApiError(code, message, res.status)
+    const err = new ApiError(code, message, res.status)
+    if (body?.error?.approve_url) err.approveUrl = body.error.approve_url
+    if (body?.error?.connect) err.connect = body.error.connect
+    throw err
   }
   return body.data as T
 }
@@ -267,6 +428,32 @@ export const api = {
   requests: (query = '') => request<{ requests: RequestSummary[]; total: number }>(
     `/api/v1/requests${query ? `?${query}` : ''}`,
   ),
+  request: (id: string) =>
+    request<{ request: RequestDetail }>(`/api/v1/requests/${encodeURIComponent(id)}`).then(
+      (d) => d.request,
+    ),
+  decide: (id: string, action: 'approve' | 'veto') =>
+    post<{ request: RequestDetail }>(`/api/v1/requests/${encodeURIComponent(id)}/decision`, {
+      action,
+    }).then((d) => d.request),
+  voidRequest: (id: string) =>
+    post<{ request: RequestDetail }>(`/api/v1/requests/${encodeURIComponent(id)}/void`).then(
+      (d) => d.request,
+    ),
+  analytics: (from: string, to: string) =>
+    request<Analytics>(
+      `/api/v1/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    ),
+  integrations: () => request<IntegrationsData>('/api/v1/integrations'),
+  mintKey: (agentId: string) =>
+    post<{ key: ApiKey; secret: string; note: string }>(
+      `/api/v1/agents/${encodeURIComponent(agentId)}/keys`,
+    ),
+  revokeKey: (agentId: string, keyId: string) =>
+    request<{ key: ApiKey }>(
+      `/api/v1/agents/${encodeURIComponent(agentId)}/keys/${encodeURIComponent(keyId)}`,
+      { method: 'DELETE' },
+    ),
   agents: () => request<{ agents: Agent[] }>('/api/v1/agents').then((d) => d.agents),
   agent: (id: string) => request<{ agent: Agent }>(`/api/v1/agents/${id}`).then((d) => d.agent),
   createAgent: (input: AgentInput) =>
@@ -296,6 +483,15 @@ export function money(cents: number | null | undefined, currency = 'USD'): strin
     currency,
     maximumFractionDigits: 2,
   }).format(cents / 100)
+}
+
+/**
+ * Money for caps, thresholds and limits: cents only when they carry information
+ * ($300, $1,200, $145.99). Records and totals always use `money`.
+ */
+export function capMoney(cents: number | null | undefined, currency = 'USD'): string {
+  if (cents === null || cents === undefined) return '—'
+  return money(cents, currency).replace(/\.00$/, '')
 }
 
 export function initials(name: string): string {

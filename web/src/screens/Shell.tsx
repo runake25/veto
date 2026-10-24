@@ -2,7 +2,13 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { initials, type Me } from '../api'
 import { Wordmark } from '../components/Logo'
 
-const LATER = [{ label: 'Inbox' }, { label: 'Analytics' }, { label: 'Integrations' }]
+const SECTIONS = [
+  { to: '/', label: 'Overview', end: true },
+  { to: '/inbox', label: 'Inbox' },
+  { to: '/agents', label: 'Agents' },
+  { to: '/analytics', label: 'Analytics' },
+  { to: '/integrations', label: 'Integrations' },
+]
 
 export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const walletOn = me.wallet.status === 'connected'
@@ -19,24 +25,15 @@ export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         <nav className="nav" aria-label="Sections">
           <div className="nav-group">
             <p className="nav-label">Control</p>
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
-            >
-              Overview
-            </NavLink>
-            <NavLink
-              to="/agents"
-              className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
-            >
-              Agents
-            </NavLink>
-            {LATER.map((item) => (
-              <span className="nav-item is-soon" key={item.label} aria-disabled="true">
-                {item.label}
-                <span className="soon mono">soon</span>
-              </span>
+            {SECTIONS.map((section) => (
+              <NavLink
+                key={section.to}
+                to={section.to}
+                end={section.end}
+                className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
+              >
+                {section.label}
+              </NavLink>
             ))}
           </div>
         </nav>
@@ -55,6 +52,18 @@ export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       <div className="frame">
         <header className="topbar">
           <span className="crumb mono">{period}</span>
+          <nav className="topnav" aria-label="Sections">
+            {SECTIONS.map((section) => (
+              <NavLink
+                key={section.to}
+                to={section.to}
+                end={section.end}
+                className={({ isActive }) => `topnav-item${isActive ? ' is-active' : ''}`}
+              >
+                {section.label}
+              </NavLink>
+            ))}
+          </nav>
           <div className="topbar-right">
             <span className="env mono">sandbox · usd</span>
             <span className="user-chip">

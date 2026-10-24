@@ -1,7 +1,9 @@
-/* Veto — design tokens, carried over from DESIGN.md ("framed sheet").
+/* Veto — design tokens, carried over from DESIGN.md ("framed sheet", "ledger" tone).
    One tinted desk holds the chrome; the work sits on a white sheet inset from the
-   window edge. Depth is a single tone step, never a shadow. The accent hue #1b6c80
-   carries data and the seal only; red is a refusal signal, one mark per object. */
+   window edge. Depth is a single tone step, never a shadow. The palette is cool and
+   institutional: graphite desk, blue-black ink, one navy hue for data and the seal;
+   green marks money that moved, red marks a refusal, amber marks money held for a
+   signature. Corners stay tight — this is a control surface, not a consumer app. */
 
 @font-face {
   font-family: "IBM Plex Sans";
@@ -33,38 +35,51 @@
 }
 
 :root {
-  /* ground / surfaces */
-  --ground: #f3f2f0;
+  /* ground / surfaces — a cool graphite desk, not warm stone */
+  --ground: #e9ebee;
   --surface: #ffffff;
-  --wash: #fafafb;
-  --raised: #f2f1ef;
-  --active: #e8e6e3;
-  --border: #e4e2df;
-  --rule: #edebe8;
-  --control: #cfcdc9;
-  --sheet-edge: #dfddd8;
+  --wash: #f7f8fa;
+  --raised: #eef0f3;
+  --active: #e2e6ea;
+  --border: #d8dde2;
+  --rule: #e7eaed;
+  --control: #b6bec6;
+  --sheet-edge: #ccd3da;
 
-  /* ink */
-  --text: #17191b;
-  --muted: #5d6165;
-  --faint: #6a6e72;
+  /* ink — blue-black, the colour of printed ledgers */
+  --text: #0e141b;
+  --text-hover: #1b2733;
+  --muted: #4e5761;
+  --faint: #68717c;
 
-  /* the one hue */
-  --accent: #1b6c80;
-  --accent-soft: #d9e9ed;
-  --accent-ink: #104453;
+  /* the one hue: institutional navy (PayPal-adjacent, not consumer teal) */
+  --accent: #1b3f63;
+  --accent-soft: #e2e9f1;
+  --accent-ink: #12304d;
 
-  /* signals */
-  --negative: #c4242a;
-  --negative-soft: #fbeae9;
-  --negative-ink: #7d1618;
-  --positive: #1e7b4f;
-  --positive-soft: #e6f2ec;
+  /* signals — deep, not candy */
+  --negative: #a01f24;
+  --negative-soft: #f8eaea;
+  --negative-ink: #6f1518;
+  --positive: #0f6b43;
+  --positive-soft: #e8f1eb;
+  --hold: #8a5a09;
+  --hold-soft: #f7f0e0;
+  --hold-ink: #5c3c05;
 
-  /* geometry */
-  --radius-card: 8px;
-  --radius-control: 6px;
-  --radius-sheet: 16px;
+  /* the rail: the one dark surface, so the chrome reads as an instrument */
+  --rail: #0f1822;
+  --rail-hover: #17232f;
+  --rail-active: #1d2c3b;
+  --rail-line: #233140;
+  --rail-ink: #a9b4c0;
+  --rail-ink-strong: #f4f7fa;
+  --rail-mark: #8fb4d6;
+
+  /* geometry — tight corners read as a control surface, not a consumer app */
+  --radius-card: 6px;
+  --radius-control: 4px;
+  --radius-sheet: 12px;
   --sheet-inset: 8px;
   --sidebar-width: 228px;
   --topbar-height: 48px;
@@ -76,7 +91,7 @@
   --font: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
 
-  /* handfeel: stone desk + paper sheet -> click for controls, stamp for conclusions */
+  /* handfeel: graphite desk + paper sheet -> click for controls, stamp for conclusions */
   --ease-click: cubic-bezier(0.2, 0.7, 0.3, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.5, 0, 0.75, 0);

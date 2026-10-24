@@ -161,8 +161,9 @@ New endpoints answer `{"ok":true,"data":…}` or `{"ok":false,"error":{"code","m
 | `POST /api/v1/requests` | agent key / session | **M3 done** — persist, judge, consent, capture |
 | `POST /api/v1/requests/{id}/decision` · `/void` | approver / admin | **M3 done** — approve captures, veto/void move no money |
 | `GET/POST /api/v1/agents/{id}/keys` · `DELETE …/keys/{kid}` | admin | **M3 done** — `vkey_…`, shown once, stored hashed |
-| `GET /api/v1/analytics?from&to&group=` | session | M4 |
-| `GET /api/v1/integrations` | session | M5 |
+| `GET /api/v1/analytics?from&to=` | session | **M4 done** — daily series and agent/tag/vendor/category/rule aggregates |
+| `GET /api/v1/integrations` | session | **M4 done** — Slack endpoints + routing, wallet, agent keys |
+| `GET /` · `GET /app/*` | — | **M4 done** — the built app; both serve the same shell |
 | `POST /api/slack/veto` · `POST /api/slack/interact` | Slack signature | kept from v1 |
 | `GET /api/health` | — | extended (db, seeded, counts) |
 
@@ -187,22 +188,24 @@ consent, payment ids, events and the agent.
 Slack `/veto` and its buttons now write the same store: the agent is the one whose
 `channel` matches the Slack channel, else the workspace default agent; the message is built
 from the stored record and the audit event names the Slack user who pressed the button.
-Legacy v1 endpoints (`/api/request`, `/api/decide`, `/api/state`, `/api/connect*`) still
-serve the old console until M4 removes them; `/` still serves that console until M4.
+The old static console (`index.html`, `ui/`) is deleted: `/` and `/app/` serve the built
+React app, and `/demo` no longer exists. `/connect` remains as the one-page wallet setup
+utility (it drives the legacy engine's PayPal vault flow); everything the product does now
+lives behind `/api/v1/*`.
 
 ## 5. Screens and data ownership
 
-Five screens, all live from the same store. Each fact has exactly one owner; other
-surfaces may show a count or a link.
+Six screens, all live from the same store. Each fact has exactly one owner; other
+surfaces may show a count or a link. `/` opens the app; a hash router owns the rest.
 
 | Screen | Owns |
 |---|---|
-| **Overview** | needs-me count · committed-unsigned · settled this month · agent activity · top-3 pending as links · where the money went |
-| **Inbox** | the only request list; filters live in the URL |
-| **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void |
-| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, **test a request** (the decision: extract → choose → price → judge) and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
-| **Analytics** | aggregates by agent / tag / vendor / category / rule, drill-down links into Inbox |
-| **Integrations** | Slack, API keys, web, wallet |
+| **Overview** | needs-me count · committed-unsigned · settled this month · agent count · top-3 pending, linked |
+| **Inbox** | the only request list; status and agent filters live in the URL |
+| **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void, expired-consent state |
+| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, **test a request** (extract → choose → price → judge) and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
+| **Analytics** | captured money by day, agent, vendor, category and rule, over one range; links into the filtered Inbox |
+| **Integrations** | Slack endpoints + channel routing, PayPal wallet, agent API keys (mint once, revoke immediately) |
 
 Guided rule setup (option A): one form with template defaults and an optional category
 override. The agent screen renders the charter back as a guardrail band — monthly figure
@@ -219,12 +222,17 @@ stored hashed.
 
 ## 7. Motion and design rules
 
-Keep the framed-sheet direction: tinted stone desk, white sheet, one accent hue, IBM Plex,
-no shadows at rest. Motion budget: (1) press feedback on every control (0.97 scale, 80ms),
-(2) one moving selection indicator per view, (3) a single first-enter stagger, (4) view
-transitions that preserve provenance (list row → record). Loading states are real: the
-pipeline reports steps as they finish. `prefers-reduced-motion` collapses everything to
-the end state.
+The framed sheet, in a ledger tone: a cool graphite desk, one dark navy rail, the work on a
+white sheet inset 8px, 1px edge, 12px corners, no shadow. One navy accent carries links,
+focus and the one series; green is only money captured, red only a refusal, amber only money
+held for a signature. Tight corners (4/6/12px), IBM Plex, tabular figures, identifiers in
+mono. Ten screens' worth of decoration would be a duplicate; every screen has one job.
+Motion budget: (1) press feedback on every control, (2) one first-enter stagger of the
+screen's blocks, (3) state changes render in place and keep provenance (Inbox row → Record;
+approve → captured, in the same band), (4) hover is a tone step, never a lift. Loading,
+empty, expired-consent and refused states are authored, not blank. Below 900px the sidebar
+becomes a top nav; below 720px rows fold to two lines and nothing scrolls sideways.
+`prefers-reduced-motion` collapses everything to the end state.
 
 ## 8. Milestones
 
@@ -234,17 +242,19 @@ the end state.
 | M1 | SQLite store, auth, seeded demo, session API, React shell + auth screen | **done (2026-10-22)** |
 | M2 | policy engine, guided agent rules, scoped search, dry-run | **done (2026-10-22)** |
 | M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | **done (2026-10-23)** |
-| M4 | Inbox, Record, Agents, Analytics screens; delete the old console; `/` flips to the app | next |
-| M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | |
+| M4 | Inbox, Record, Analytics, Integrations; Overview rewritten; palette retuned to the ledger tone; old console deleted; `/` flips to the app | **done (2026-10-24)** |
+| M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | next |
 | M6 | README/SPEC/PRODUCT, deploy, video, Devpost text | |
 
 ## 9. Running it
 
 ```bash
-python3 server.py            # http://127.0.0.1:8787/app/
+python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (155)
+python3 -m unittest discover -s tests    # backend tests (178)
+python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
+python3 tools/check_m4.py                # 29 checks: screens' data, read-only (~1s)
 ```
 
 M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
@@ -263,6 +273,15 @@ the whole board over HTTP:
 
 It takes ~40s because it runs the real pipeline; a run leaves genuine request
 history in the demo workspace, which is what Overview and Inbox read.
+
+M4 adds the read models the screens consume and a read-only harness:
+
+    python3 tools/check_m4.py                          # 29 checks, no money moved
+
+It proves Analytics reconciles with Overview (series sum = captured total = by-agent
+sum = by-vendor sum), Integrations reports Slack routing/wallet/keys, a record carries
+its cart, consent, PayPal capture id and ordered trail, a refused record carries no
+wallet object, and `/` serves the app while the old console routes are gone.
 
 `PAYPAL_LIVE=0` runs the whole loop against the in-process PayPal simulator with no keys.
 Hosted deploys pass the approved `PAYPAL_VAULT_ID` through the environment.

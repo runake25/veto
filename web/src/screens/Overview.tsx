@@ -1,21 +1,25 @@
 import { useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { Link } from 'react-router-dom'
-import { api, money, type Agent, type Me, type OverviewData } from '../api'
+import { api, capMoney, money, type Agent, type Me, type OverviewData } from '../api'
 import { motionSet } from '../components/motion'
+import { requestLabel, when } from '../components/request'
 
-interface StatProps {
+function Stat({
+  label,
+  value,
+  note,
+  tone,
+}: {
   label: string
   value: string
   note: string
-  tone?: 'accent'
-}
-
-function Stat({ label, value, note, tone }: StatProps) {
+  tone?: 'pos' | 'wait'
+}) {
   return (
     <div className="stat">
       <p className="stat-label">{label}</p>
-      <p className={`stat-value${tone === 'accent' ? ' is-accent' : ''}`}>{value}</p>
+      <p className={`stat-value${tone ? ` is-${tone}` : ''}`}>{value}</p>
       <p className="stat-note">{note}</p>
     </div>
   )
@@ -23,16 +27,18 @@ function Stat({ label, value, note, tone }: StatProps) {
 
 function capsLine(agent: Agent): string {
   const parts: string[] = []
-  if (agent.per_order_cap_cents !== null) parts.push(`${money(agent.per_order_cap_cents)} / order`)
-  if (agent.per_unit_cap_cents !== null) parts.push(`${money(agent.per_unit_cap_cents)} / line`)
+  if (agent.per_order_cap_cents !== null)
+    parts.push(`${capMoney(agent.per_order_cap_cents)} / order`)
+  if (agent.per_unit_cap_cents !== null)
+    parts.push(`${capMoney(agent.per_unit_cap_cents)} / item`)
   if (agent.approval_threshold_cents !== null)
-    parts.push(`ask above ${money(agent.approval_threshold_cents)}`)
+    parts.push(`signature above ${capMoney(agent.approval_threshold_cents)}`)
   return parts.join(' · ')
 }
 
 /**
  * Overview: what needs a human, and where the money is. No charts, no invented
- * history — only facts the engine can stand behind.
+ * history — only facts the engine can stand behind, all read from the store.
  */
 export function Overview({ me }: { me: Me }) {
   const [agents, setAgents] = useState<Agent[] | null>(null)
@@ -91,22 +97,23 @@ export function Overview({ me }: { me: Me }) {
           label="Needs you"
           value={counts ? String(counts.needs_you) : '—'}
           note="requests waiting for a signature"
+          tone={counts && counts.needs_you > 0 ? 'wait' : undefined}
         />
         <Stat
-          label="Committed, unsigned"
+          label="Held for a signature"
           value={counts ? money(counts.committed_cents) : '—'}
-          note="held by the rules, not moving"
+          note="money waiting on an approver"
         />
         <Stat
           label="Settled this month"
           value={counts ? money(counts.settled_month_cents) : '—'}
           note="captured through PayPal"
+          tone={counts && counts.settled_month_cents > 0 ? 'pos' : undefined}
         />
         <Stat
           label="Agents"
           value={String(agentCount)}
           note="each with its own rule set"
-          tone="accent"
         />
       </motion.div>
 
@@ -114,27 +121,36 @@ export function Overview({ me }: { me: Me }) {
         <motion.section className="card" variants={m.riseIn}>
           <header className="card-head">
             <h2>Needs you</h2>
-            <span className="card-note mono">oldest first</span>
+            <Link className="text-link mono" to="/inbox?status=awaiting">
+              open inbox →
+            </Link>
           </header>
           {pending.length ? (
             <ul className="rows rows-pending">
               {pending.map((request) => (
-                <li className="row" key={request.id}>
-                  <div className="agent-line">
-                    <b>{request.title}</b>
-                    <span className="chip chip-quiet">{request.agent.tag}</span>
-                    <span className="mono agent-channel">{request.id}</span>
-                  </div>
-                  <p className="agent-caps mono">
-                    {money(request.total_cents)} · {request.agent.name} ·{' '}
-                    {request.line_count} {request.line_count === 1 ? 'line' : 'lines'}
-                  </p>
+                <li key={request.id}>
+                  <Link className="pending-link" to={`/inbox/${request.id}`}>
+                    <span className="pending-main">
+                      <b>{request.title}</b>
+                      <span className="pending-agent mono">
+                        {request.agent.name} · {request.line_count}{' '}
+                        {request.line_count === 1 ? 'line' : 'lines'}
+                      </span>
+                    </span>
+                    <span className="pending-side">
+                      <span className="pending-money">
+                        {money(request.total_cents, request.currency)}
+                      </span>
+                      <span className="pending-meta mono">
+                        {requestLabel(request.seq)} · {when(request.created_at)}
+                      </span>
+                    </span>
+                  </Link>
                 </li>
               ))}
             </ul>
           ) : (
             <div className="empty">
-              <span className="empty-mark" aria-hidden="true" />
               <p className="empty-title">Nothing is waiting.</p>
               <p className="empty-note">
                 A request lands here when a cart crosses the agent&rsquo;s approval threshold or
@@ -172,11 +188,14 @@ export function Overview({ me }: { me: Me }) {
                   <div className="agent-line">
                     <b>{agent.name}</b>
                     <span className="chip chip-quiet">{agent.tag}</span>
-                    {agent.channel ? <span className="mono agent-channel">{agent.channel}</span> : null}
+                    {agent.channel ? (
+                      <span className="mono agent-channel">{agent.channel}</span>
+                    ) : null}
                   </div>
                   <p className="agent-caps mono">{capsLine(agent)}</p>
                   <p className="agent-scan">
-                    {agent.vendors.length} approved {agent.vendors.length === 1 ? 'merchant' : 'merchants'}
+                    {agent.vendors.length} approved{' '}
+                    {agent.vendors.length === 1 ? 'merchant' : 'merchants'}
                     {' · '}
                     {agent.categories.join(', ')}
                   </p>
@@ -186,54 +205,6 @@ export function Overview({ me }: { me: Me }) {
           ) : null}
         </motion.section>
       </div>
-
-      <motion.section className="card" variants={m.riseIn}>
-        <header className="card-head">
-          <h2>Foundation</h2>
-          <span className="card-note mono">this build</span>
-        </header>
-        <ul className="checklist">
-          <li>
-            <Tick /> Database — workspace, users, agents, rules in SQLite; survives a restart
-          </li>
-          <li>
-            <Tick /> Sessions — scrypt passwords, HttpOnly cookie
-          </li>
-          <li>
-            <Tick /> Seeded demo workspace with four agents and their rule sets
-          </li>
-          <li className={walletTone(me)}>
-            {me.wallet.status === 'connected' ? <Tick /> : <Tick pending />} Wallet —{' '}
-            {me.wallet.status === 'connected' ? 'connected' : 'not connected yet'}
-          </li>
-        </ul>
-        <p className="fineprint">
-          Requests, consent and capture are stored now: Inbox, Analytics and Integrations arrive
-          with the next milestone. These figures read the same store the engine writes.
-        </p>
-      </motion.section>
     </motion.div>
   )
-}
-
-function Tick({ pending = false }: { pending?: boolean }) {
-  if (pending) return <span className="tick is-pending" aria-hidden="true" />
-  return (
-    <span className="tick is-done" aria-hidden="true">
-      <svg viewBox="0 0 12 12" width="10" height="10">
-        <path
-          d="M2.4 6.3l2.3 2.3L9.6 3.8"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
-  )
-}
-
-function walletTone(me: Me): string {
-  return me.wallet.status === 'connected' ? '' : 'is-pending'
 }

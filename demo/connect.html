@@ -4,16 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Connect the wallet · Veto</title>
-<link rel="stylesheet" href="/ui/src/app.css">
 <style>
-@font-face{font-family:"IBM Plex Sans";font-style:normal;font-weight:400;font-display:block;src:url("/ui/assets/sans400.woff2") format("woff2")}
-@font-face{font-family:"IBM Plex Sans";font-style:normal;font-weight:500;font-display:block;src:url("/ui/assets/sans500.woff2") format("woff2")}
-@font-face{font-family:"IBM Plex Sans";font-style:normal;font-weight:600;font-display:block;src:url("/ui/assets/sans600.woff2") format("woff2")}
-body { overflow: auto; background: var(--ground); }
+:root {
+  --ground: #e9ebee; --surface: #fff; --wash: #f7f8fa; --raised: #eef0f3;
+  --border: #d8dde2; --rule: #e7eaed; --control: #b6bec6; --sheet-edge: #ccd3da;
+  --text: #0e141b; --muted: #4e5761; --faint: #68717c;
+  --accent: #1b3f63; --accent-ink: #12304d; --positive: #0f6b43;
+  --negative: #a01f24; --negative-ink: #6f1518;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; overflow: auto; background: var(--ground); color: var(--text);
+  font-family: var(--font); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 .wrap { min-height: 100dvh; display: grid; place-items: center; padding: 32px 20px; }
-.sheet { width: min(560px, 100%); background: var(--surface); border: 1px solid var(--sheet-edge); border-radius: 16px; padding: 28px 28px 24px; }
-h1 { font-size: 24px; line-height: 30px; letter-spacing: -.015em; margin: 0; }
-.sub { margin-top: 6px; font-size: 14px; line-height: 21px; color: var(--muted); }
+.sheet { width: min(560px, 100%); background: var(--surface); border: 1px solid var(--sheet-edge); border-radius: 12px; padding: 28px 28px 24px; }
+h1 { font-size: 24px; line-height: 30px; letter-spacing: -.015em; margin: 0; font-weight: 600; }
+.sub { margin-top: 8px; font-size: 13.5px; line-height: 1.55; color: var(--muted); }
 .steps { margin: 22px 0 0; padding: 0; list-style: none; }
 .steps li { display: flex; gap: 14px; padding: 14px 0; border-top: 1px solid var(--rule); }
 .steps li.done .n { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -21,7 +28,13 @@ h1 { font-size: 24px; line-height: 30px; letter-spacing: -.015em; margin: 0; }
 .steps b { display: block; font-size: 14px; font-weight: 500; }
 .steps span { display: block; font-size: 13px; line-height: 19px; color: var(--muted); margin-top: 2px; }
 .act { margin-top: 22px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.btn-primary { height: 38px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 38px; padding: 0 16px;
+  border: 1px solid transparent; border-radius: 4px; font: inherit; font-size: 13px; font-weight: 500;
+  text-decoration: none; cursor: pointer; color: var(--text); background: var(--surface); border-color: var(--control); }
+.btn:hover { background: var(--wash); border-color: var(--muted); }
+.btn-primary { background: var(--text); border-color: var(--text); color: #fff; }
+.btn-primary:hover { background: #1b2733; border-color: #1b2733; }
+.btn:disabled { opacity: .62; cursor: default; }
 .state { font-size: 13px; color: var(--muted); }
 .state.ok { color: var(--positive); }
 .state.err { color: var(--negative-ink); }
@@ -48,7 +61,7 @@ code { font-family: var(--mono); font-size: 12px; }
 
     <div class="act">
       <button class="btn btn-primary" id="go" type="button">Connect PayPal</button>
-      <a class="btn" id="demo" href="/demo" hidden>Open the harness</a>
+      <a class="btn" id="demo" href="/" hidden>Open the console</a>
       <span class="state" id="state"></span>
     </div>
     <p class="foot" id="foot">Nothing is charged by connecting. The wallet is only used when a signed consent tells it to capture.</p>
