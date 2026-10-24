@@ -299,6 +299,8 @@ export interface SimulateResult {
   near_misses?: NearMiss[]
   source: string
   elapsed_ms: number
+  /** How many items were resolved at once (1 when the cart was serial). */
+  parallel_items?: number
   dry_run: boolean
 }
 

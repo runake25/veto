@@ -277,8 +277,12 @@ function DryRun({ agent }: { agent: Agent }) {
                   ? result.source === 'channel3'
                     ? 'Channel3'
                     : 'local catalogue'
-                  : 'no catalogue match'}{' '}
-                · {Math.round(result.elapsed_ms)}ms
+                  : 'no catalogue match'}
+                {result.parallel_items && result.parallel_items > 1
+                  ? ` · ${result.parallel_items} items in parallel`
+                  : ''}
+                {' · '}
+                {Math.round(result.elapsed_ms)}ms
               </span>
             </div>
 

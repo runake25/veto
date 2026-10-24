@@ -40,6 +40,9 @@ review  → consent (10 min, single use) → awaiting
 block   → (no consent, no PayPal object)                        status: blocked
 ```
 
+- **Multi-item carts are resolved in parallel**: extract once, then every item is
+  searched and chosen concurrently (`VETO_PARALLEL_ITEMS`, default 4), with the cart
+  assembled in the order the request named the items.
 - **Routing** is semantic: a request that does not name an agent is read by the model and
   matched to the agent whose categories and approved merchants fit it. The channel is only
   provenance; the routing decision is the first step of the record's trail.
@@ -102,7 +105,7 @@ shots/               screenshots used as delivery evidence
 ## Verify it
 
 ```bash
-python3 -m unittest discover -s tests    # 202 backend tests
+python3 -m unittest discover -s tests    # 206 backend tests
 python3 tools/check_m3.py                # 19 checks: the request loop over HTTP (real pipeline)
 python3 tools/check_m4.py                # 32 checks: read models, read-only, no money moves
 cd web && npm run build && npx tsc --noEmit

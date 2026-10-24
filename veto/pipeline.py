@@ -8,8 +8,10 @@ request, authorising and capturing are M3.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from veto import engine as legacy_engine
 from veto import policy
@@ -17,6 +19,10 @@ from veto.channel3 import Channel3, Channel3Error, to_line
 from veto.prompts import CHOOSE_SYSTEM, SYSTEM
 
 SEARCH_LIMIT = 10
+# A cart with several items resolves them concurrently: each item is one catalogue
+# search plus one chooser call, and those are independent. Bounded, because the
+# catalogue and the model are the two things we pay for.
+PARALLEL_ITEMS = max(1, min(8, int(os.environ.get("VETO_PARALLEL_ITEMS", "4") or 4)))
 # candidates handed to the chooser; more than this only costs tokens
 CHOOSE_LIMIT = 12
 # The channel search is bounded by the agent's per-order cap, and never above
@@ -612,6 +618,51 @@ def _line_total(line: dict) -> int:
     return (_int(line.get("unit_cents"), 0) or 0) * max(1, _int(line.get("qty"), 1) or 1)
 
 
+def _resolve_item(agent: dict, item: dict, *, search, choose) -> dict:
+    """Resolve one item to a chosen line, in a worker thread when the cart is multi-item.
+
+    It touches only the catalogue and the model — never the store, a socket or a
+    shared cursor — so several items can resolve at once. Failures stay local to
+    the item: an outage means "unresolved", not a dead dry run.
+    """
+    qty = max(1, _int(item.get("qty"), 1) or 1)
+    outcome = {
+        "item": item,
+        "line": None,
+        "source": None,
+        "unresolved": False,
+        "near_miss": None,
+    }
+    try:
+        candidates = search(agent, item, qty) or []
+    except Exception:  # noqa: BLE001 - a catalogue failure means "unresolved"
+        candidates = []
+    normalised = _normalise_candidates(candidates)
+    if not normalised:
+        outcome["unresolved"] = True
+        return outcome
+    try:
+        chosen = choose(agent, item, [line for line, _ in normalised])
+    except Exception:  # noqa: BLE001 - the model must not take the dry run down
+        chosen = _fallback_choice(agent, [line for line, _ in normalised])
+    if chosen is None:
+        outcome["unresolved"] = True
+        outcome["near_miss"] = {
+            "item": item["name"],
+            "offers": [_near_miss(line) for line, _ in normalised[:3]],
+        }
+        return outcome
+    source = _text(chosen.get("source")) or "local"
+    for candidate_line, candidate_source in normalised:
+        if candidate_line is chosen:
+            source = candidate_source
+            break
+    chosen["source"] = source
+    outcome["line"] = chosen
+    outcome["source"] = source
+    return outcome
+
+
 def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
              choose_fn=None, month_spent_cents: int = 0,
              workspace_monthly_budget_cents: int | None = None) -> dict:
@@ -651,40 +702,39 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
         "detail": " · ".join(described),
     }]
 
+    choose = choose_fn or choose_offer
+    workers = min(PARALLEL_ITEMS, len(items))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="veto-item") as pool:
+            futures = [
+                pool.submit(_resolve_item, agent, item, search=search, choose=choose)
+                for item in items
+            ]
+            resolved = []
+            for item, future in zip(items, futures):
+                try:
+                    resolved.append(future.result())
+                except Exception:  # noqa: BLE001 - one item must not fail the cart
+                    resolved.append({"item": item, "line": None, "source": None,
+                                     "unresolved": True, "near_miss": None})
+    else:
+        resolved = [
+            _resolve_item(agent, item, search=search, choose=choose) for item in items
+        ]
+
+    # assemble in the order the request named the items, whatever finished first
     lines: list[dict] = []
     unresolved: list[str] = []
     near_misses: list[dict] = []
     sources: set[str] = set()
-    choose = choose_fn or choose_offer
-    for item in items:
-        qty = max(1, _int(item.get("qty"), 1) or 1)
-        try:
-            candidates = search(agent, item, qty) or []
-        except Exception:  # noqa: BLE001 - a catalogue failure means "unresolved"
-            candidates = []
-        normalised = _normalise_candidates(candidates)
-        if not normalised:
+    for item, outcome in zip(items, resolved):
+        if outcome["line"] is None:
             unresolved.append(item["name"])
+            if outcome.get("near_miss"):
+                near_misses.append(outcome["near_miss"])
             continue
-        try:
-            chosen = choose(agent, item, [line for line, _ in normalised])
-        except Exception:  # noqa: BLE001 - the model must not take the dry run down
-            chosen = _fallback_choice(agent, [line for line, _ in normalised])
-        if chosen is None:
-            unresolved.append(item["name"])
-            near_misses.append({
-                "item": item["name"],
-                "offers": [_near_miss(line) for line, _ in normalised[:3]],
-            })
-            continue
-        source = _text(chosen.get("source")) or "local"
-        for candidate_line, candidate_source in normalised:
-            if candidate_line is chosen:
-                source = candidate_source
-                break
-        chosen["source"] = source
-        lines.append(chosen)
-        sources.add(source)
+        lines.append(outcome["line"])
+        sources.add(outcome["source"] or "local")
 
     merchant_hint = ", ".join(agent.get("vendors") or []) or "no merchant"
     if lines:
@@ -728,6 +778,7 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
         "near_misses": near_misses,
         "source": "channel3" if "channel3" in sources else "local",
         "elapsed_ms": int(round((time.perf_counter() - started) * 1000)),
+        "parallel_items": len(items) if workers > 1 else 1,
         "dry_run": True,
     }
 

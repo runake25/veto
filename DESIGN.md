@@ -99,9 +99,10 @@ body under it.
 - **Guardrail track** — on the agent page: the month's captured money fills the track, the
   unsigned money sits beside it, and the legend names spent / unsigned / left against the
   monthly budget. It reads the same rows every other screen reads.
-- **Dry run** — the agent page tests a cart through the real pipeline; the result ends at
-  **Send** (a real request, logged in the Inbox), with the consequence stated for its state:
-  capture, signature, or blocked.
+- **Dry run** — the agent page tests a cart through the real pipeline (multi-item carts
+  resolve concurrently; the meta line says "N items in parallel" and the total time); the
+  result ends at **Send** (a real request, logged in the Inbox), with the consequence stated
+  for its state: capture, signature, or blocked.
 - **Agent plate** — machine label row, name + tag, readout on one baseline, scope footer;
   plate-wide hover tone, arrow steps right, 2×2 readout when the plate itself is narrow.
 - **Buttons** — primary near-black (38px), secondary hairline, danger outline red (veto),

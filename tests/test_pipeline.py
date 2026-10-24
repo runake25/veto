@@ -529,7 +529,7 @@ class SimulateTests(unittest.TestCase):
         )
         self.assertEqual([found["qty"] for found in result["lines"]], [2, 3])
         self.assertEqual(result["total_cents"], 5_000)
-        self.assertEqual(search.calls, [("a", 2), ("b", 3)])
+        self.assertEqual(sorted(search.calls), [("a", 2), ("b", 3)])
         # 5000 is exactly at the threshold, so it is not over it.
         self.assertEqual(result["decision"]["outcome"], "auto")
 
@@ -554,6 +554,58 @@ class SimulateTests(unittest.TestCase):
         )
         self.assertEqual(result["source"], "channel3")
         self.assertEqual(len(result["lines"]), 2)
+
+    def test_multi_item_cart_resolves_items_concurrently(self) -> None:
+        import threading
+
+        barrier = threading.Barrier(2, timeout=3)
+
+        def search(agent_dict, item, qty):
+            # both items have to be inside the search at the same moment; a serial
+            # cart would time out here and report both as unresolved
+            barrier.wait()
+            return [{"line": dict(line(title=item["name"], sku=item["name"])),
+                     "source": "local"}]
+
+        result = self.run_simulate(
+            items=[{"name": "a", "qty": 1}, {"name": "b", "qty": 1}], search=search
+        )
+        self.assertEqual(len(result["lines"]), 2)
+        self.assertEqual(result["parallel_items"], 2)
+
+    def test_multi_item_cart_keeps_the_requested_order(self) -> None:
+        import time
+
+        def search(agent_dict, item, qty):
+            if item["name"] == "first":
+                time.sleep(0.1)  # the slow item finishes last, not first
+            return [{"line": dict(line(title=item["name"], sku=item["name"]),
+                                  qty=qty), "source": "local"}]
+
+        result = self.run_simulate(
+            items=[{"name": "first", "qty": 1}, {"name": "second", "qty": 1}],
+            search=search,
+        )
+        self.assertEqual([found["title"] for found in result["lines"]],
+                         ["first", "second"])
+
+    def test_single_item_reports_no_parallelism(self) -> None:
+        result = self.run_simulate()
+        self.assertEqual(result["parallel_items"], 1)
+
+    def test_parallel_resolution_can_be_switched_off(self) -> None:
+        def search(agent_dict, item, qty):
+            calls.append(item["name"])
+            return [{"line": dict(line(title=item["name"], sku=item["name"]),
+                                  qty=qty), "source": "local"}]
+
+        calls: list[str] = []
+        with mock.patch.object(pipeline, "PARALLEL_ITEMS", 1):
+            result = self.run_simulate(
+                items=[{"name": "a", "qty": 1}, {"name": "b", "qty": 1}], search=search
+            )
+        self.assertEqual(result["parallel_items"], 1)
+        self.assertEqual(calls, ["a", "b"])
 
     def test_empty_text_and_empty_extraction_raise(self) -> None:
         with self.assertRaises(ValueError):
