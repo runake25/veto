@@ -12,8 +12,8 @@ features:
   slash_commands:
     - command: /veto
       url: https://REPLACE-ME.ngrok-free.app/api/slack/veto
-      description: Ask Veto to buy something
-      usage_hint: 2 packs of bamboo toilet paper from the studio budget
+      description: Order supplies through the team's spending rules.
+      usage_hint: 2 packs of bamboo toilet paper
       should_escape: false
 oauth_config:
   scopes:

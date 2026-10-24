@@ -51,8 +51,8 @@ def manifest(base: str) -> dict:
                 {
                     "command": "/veto",
                     "url": f"{base}/api/slack/veto",
-                    "description": "Ask Veto to buy something",
-                    "usage_hint": "2 packs of bamboo toilet paper from the studio budget",
+                    "description": "Order supplies through the team's spending rules.",
+                    "usage_hint": "2 packs of bamboo toilet paper",
                     "should_escape": False,
                 }
             ],
