@@ -144,6 +144,10 @@ by default (`VETO_DB` overrides). Money is formatted only at the edge.
 
 Auth: `—` public · `session` cookie · `agent` bearer key · `admin` role.
 New endpoints answer `{"ok":true,"data":…}` or `{"ok":false,"error":{"code","message"}}`.
+The expensive doors are rate limited in-process (requests, simulate, search, Slack) and answer
+`429` + `Retry-After` when a key, session or Slack user goes over its minute; limits are
+`VETO_RATE_KEY_PER_MIN` / `VETO_RATE_SESSION_PER_MIN` / `VETO_RATE_SEARCH_PER_MIN` /
+`VETO_RATE_SLACK_PER_MIN`.
 
 | Method + path | Auth | Status |
 |---|---|---|
@@ -213,7 +217,7 @@ surfaces may show a count or a link. `/` opens the app; a hash router owns the r
 | **Overview** | needs-me count · committed-unsigned · settled this month · agent count · top-3 pending, linked |
 | **Inbox** | the only request list; status and agent filters live in the URL |
 | **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void, expired-consent state |
-| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, **test a request** (extract → choose → price → judge) and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
+| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, the real month track (spent / unsigned / left), **test a request** (extract → choose → price → judge), **send it as a real request**, and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
 | **Analytics** | captured money by day, agent, vendor, category and rule, over one range; links into the filtered Inbox |
 | **Integrations** | Slack endpoints + model routing, PayPal wallet, agent API keys (mint once, revoke immediately) |
 
@@ -253,7 +257,7 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 | M2 | policy engine, guided agent rules, scoped search, dry-run | **done (2026-10-22)** |
 | M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | **done (2026-10-23)** |
 | M4 | Inbox, Record, Analytics, Integrations; Overview rewritten; palette retuned to the ledger tone; old console deleted; `/` flips to the app; model routing for Slack | **done (2026-10-24)** |
-| M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | next |
+| M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | **in progress (2026-10-24)** — rate limits, real agent budget track and send-from-dry-run done; parallel search, streamed pipeline, UI smoke test, hosting next |
 | M6 | README/SPEC/PRODUCT, deploy, video, Devpost text | |
 
 ## 9. Running it
@@ -262,9 +266,9 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (191)
+python3 -m unittest discover -s tests    # backend tests (202)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
-python3 tools/check_m4.py                # 30 checks: screens' data, read-only (~1s)
+python3 tools/check_m4.py                # 32 checks: screens' data, read-only (~1s)
 ```
 
 M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
@@ -286,7 +290,7 @@ history in the demo workspace, which is what Overview and Inbox read.
 
 M4 adds the read models the screens consume and a read-only harness:
 
-    python3 tools/check_m4.py                          # 30 checks, no money moved
+    python3 tools/check_m4.py                          # 32 checks, no money moved
 
 It proves Analytics reconciles with Overview (series sum = captured total = by-agent
 sum = by-vendor sum), Integrations reports Slack routing/wallet/keys, a record carries

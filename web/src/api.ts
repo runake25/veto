@@ -359,6 +359,10 @@ export interface Agent {
   categories: string[]
   rules: string[]
   overrides: RuleOverride[]
+  /** This month, captured. Present on the agent endpoints. */
+  spent_month_cents?: number
+  /** This month, awaiting a signature or approved with capture owed. */
+  committed_month_cents?: number
 }
 
 export class ApiError extends Error {
@@ -477,6 +481,11 @@ export const api = {
     ),
   simulate: (text: string, agentId?: string) =>
     post<SimulateResult>('/api/v1/simulate', { text, agent_id: agentId ?? null }),
+  createRequest: (text: string, agentId?: string | null) =>
+    post<{ request: RequestDetail }>('/api/v1/requests', {
+      text,
+      agent_id: agentId ?? null,
+    }).then((d) => d.request),
   login: (email: string, password: string) =>
     post<SessionData>('/api/v1/login', { email, password }),
   signup: (payload: SignupPayload) => post<SessionData>('/api/v1/signup', payload),

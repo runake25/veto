@@ -3775,3 +3775,20 @@ a.agg-row:hover .agg-name b {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* the dry run ends at a real record, not just a preview */
+.dry-send {
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+  border-top: 1px solid var(--rule);
+  padding-top: 13px;
+}
+
+.dry-send-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--faint);
+  max-width: 62ch;
+}

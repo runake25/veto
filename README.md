@@ -58,7 +58,7 @@ block   → (no consent, no PayPal object)                        status: blocke
 | **Overview** (`/`) | needs-you count, committed-unsigned, settled this month, the agent roster, the oldest pending requests as links |
 | **Inbox** (`/inbox`) | the only request list; status and agent filters live in the URL |
 | **Record** (`/inbox/REQ-1043`) | the cart, the rule reasons, the consent hash, the PayPal ids, the trail and approve / veto / void |
-| **Agents** (`/agents`) | one plate per agent: caps, scope, exceptions, channel, API key, a real dry run and a scoped catalogue search |
+| **Agents** (`/agents`) | one plate per agent; the agent page carries the real month track (spent / unsigned / left), a dry run that can be sent as a real request, and a scoped catalogue search |
 | **Analytics** (`/analytics`) | captured money by day, agent, vendor, category and rule over one range, linking into the filtered Inbox |
 | **Integrations** (`/integrations`) | Slack endpoints and model routing, the PayPal wallet, and agent API keys |
 
@@ -93,6 +93,7 @@ web/src/             React app: screens/, components/, styles/tokens.css
 app/                 the built web app (served at / and /app/)
 tools/               check_m3.py (request board, ~60s) · check_m4.py (read models, ~1s)
 veto/routing.py      model routing for requests that do not name an agent
+veto/ratelimit.py    per-door minute limit; 429 + Retry-After
 tests/               stdlib unittest suite
 slack/               Slack app manifest + link.py for a one-click install link
 shots/               screenshots used as delivery evidence
@@ -101,9 +102,9 @@ shots/               screenshots used as delivery evidence
 ## Verify it
 
 ```bash
-python3 -m unittest discover -s tests    # 191 backend tests
+python3 -m unittest discover -s tests    # 202 backend tests
 python3 tools/check_m3.py                # 19 checks: the request loop over HTTP (real pipeline)
-python3 tools/check_m4.py                # 30 checks: read models, read-only, no money moves
+python3 tools/check_m4.py                # 32 checks: read models, read-only, no money moves
 cd web && npm run build && npx tsc --noEmit
 ```
 
@@ -121,7 +122,9 @@ buttons and integration headers.
 
 ## Limits
 
-Sandbox money only. Refunds are out of scope (`void` withdraws an uncaptured request;
+Sandbox money only. Every expensive door is rate limited (defaults: 30/min per agent key,
+120/min per console session, 60/min per search, 20/min per Slack user; override with
+`VETO_RATE_*` in `.env`). Refunds are out of scope (`void` withdraws an uncaptured request;
 captured money cannot be reversed here). One workspace per runner; Slack OAuth
 distribution, multi-currency and accounting exports are future work. The free quick tunnel
 changes host on restart, so the Slack URLs must be re-pasted until the hosted deploy lands.

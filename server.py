@@ -32,6 +32,7 @@ from veto import pipeline as veto_pipeline  # noqa: E402
 from veto.policy import RULE_KINDS  # noqa: E402
 from veto import requests as veto_requests  # noqa: E402
 from veto import routing as veto_routing  # noqa: E402
+from veto.ratelimit import RateLimiter  # noqa: E402
 from veto import settlement as veto_settlement  # noqa: E402
 from veto.seed import seed_demo  # noqa: E402
 
@@ -100,6 +101,15 @@ APP_DIR = ROOT / "app"
 
 # The money mover is a singleton: one PayPal client (or one in-process simulator)
 # for the process. Live deploys may hand the approved vault in through the env.
+LIMITER = RateLimiter()
+
+# calls per minute, per door. Generous for a human clicking around; a ceiling for
+# a key, a leaked link or a loop. Override with VETO_RATE_* in .env.
+RATE_KEY_PER_MIN = int(os.environ.get("VETO_RATE_KEY_PER_MIN", "30") or 30)
+RATE_SESSION_PER_MIN = int(os.environ.get("VETO_RATE_SESSION_PER_MIN", "120") or 120)
+RATE_SEARCH_PER_MIN = int(os.environ.get("VETO_RATE_SEARCH_PER_MIN", "60") or 60)
+RATE_SLACK_PER_MIN = int(os.environ.get("VETO_RATE_SLACK_PER_MIN", "20") or 20)
+
 SETTLEMENT = veto_settlement.Settlement()
 try:
     SETTLEMENT.prepare(STORE)
@@ -115,6 +125,19 @@ class ApiError(Exception):
         self.status = status
         self.code = code
         self.message = message
+
+
+class RateLimited(ApiError):
+    """Too many calls in the window; the response carries Retry-After."""
+
+    def __init__(self, retry_after: float) -> None:
+        seconds = max(1, int(round(retry_after)))
+        super().__init__(
+            429,
+            "rate_limited",
+            f"Too many requests. Try again in {seconds}s.",
+        )
+        self.retry_after = seconds
 
 
 def public_user(user: dict) -> dict:
@@ -333,11 +356,13 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(fmt, *args)
 
     # -- helpers --------------------------------------------------------
-    def _send(self, code: int, body: bytes, ctype: str) -> None:
+    def _send(self, code: int, body: bytes, ctype: str, headers: dict | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            self.send_header(name, str(value))
         for cookie in getattr(self, "_pending_cookies", ()):
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
@@ -351,8 +376,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
 
-    def _json(self, code: int, payload: dict) -> None:
-        self._send(code, json.dumps(payload).encode(), "application/json")
+    def _json(self, code: int, payload: dict, headers: dict | None = None) -> None:
+        self._send(code, json.dumps(payload).encode(), "application/json", headers)
 
     # -- v2 helpers -----------------------------------------------------
     def _ok(self, data: dict | None = None, status: int = 200) -> None:
@@ -362,10 +387,22 @@ class Handler(BaseHTTPRequestHandler):
         raise ApiError(status, code, message)
 
     def _send_api_error(self, exc: ApiError) -> None:
+        headers = {}
+        if isinstance(exc, RateLimited):
+            headers["Retry-After"] = exc.retry_after
         return self._json(
             exc.status,
             {"ok": False, "error": {"code": exc.code, "message": exc.message}},
+            headers or None,
         )
+
+    def _limit(self, scope: str, identity: str, limit: int) -> None:
+        """One bucket per door and identity; raises a 429 with Retry-After."""
+        allowed, retry = LIMITER.allow(
+            f"{scope}:{identity}", limit=limit, per_seconds=60
+        )
+        if not allowed:
+            raise RateLimited(retry)
 
     def _queue_cookie(self, value: str) -> None:
         if not hasattr(self, "_pending_cookies"):
@@ -496,7 +533,17 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path == "/api/v1/agents":
             session = self._require_session()
-            self._ok({"agents": STORE.list_agents(session["workspace"]["id"])})
+            workspace_id = session["workspace"]["id"]
+            totals = STORE.agent_month_totals(workspace_id, since=month_start_iso())
+            agents = []
+            for agent in STORE.list_agents(workspace_id):
+                month = totals.get(agent["id"]) or {}
+                agents.append({
+                    **agent,
+                    "spent_month_cents": int(month.get("spent_cents") or 0),
+                    "committed_month_cents": int(month.get("committed_cents") or 0),
+                })
+            self._ok({"agents": agents})
             return True
         if path.startswith("/api/v1/agents/"):
             parts = [unquote(part) for part in path[len("/api/v1/agents/"):].split("/") if part]
@@ -678,12 +725,22 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     # -- M2: agents, scoped search, dry run -----------------------------
+    def _agent_month(self, workspace_id: str, agent: dict) -> dict:
+        """The stored agent plus the two figures its guardrail track draws."""
+        totals = STORE.agent_month_totals(workspace_id, since=month_start_iso())
+        month = totals.get(agent["id"]) or {}
+        return {
+            **agent,
+            "spent_month_cents": int(month.get("spent_cents") or 0),
+            "committed_month_cents": int(month.get("committed_cents") or 0),
+        }
+
     def _workspace_agent(self, agent_id: str) -> dict:
         session = self._require_session()
         agent = STORE.agent(session["workspace"]["id"], agent_id)
         if agent is None:
             self._api_error(404, "agent_not_found", "That agent does not exist.")
-        return agent
+        return self._agent_month(session["workspace"]["id"], agent)
 
     # -- M3: requests, decisions, voids, keys ---------------------------
     def _bearer_agent(self) -> dict | None:
@@ -864,6 +921,10 @@ class Handler(BaseHTTPRequestHandler):
         workspace = actor["workspace"]
         if workspace is None:
             self._api_error(401, "no_workspace", "The agent key has no workspace.")
+        if actor["agent"] is not None:
+            self._limit("requests", f"agent:{actor['agent']['id']}", RATE_KEY_PER_MIN)
+        elif actor["user"] is not None:
+            self._limit("requests", f"user:{actor['user']['id']}", RATE_SESSION_PER_MIN)
         body = self._body()
         text = str(body.get("text") or "").strip()
         if len(text) > MAX_SIMULATE_CHARS:
@@ -986,6 +1047,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _v1_agent_search(self, agent_id: str) -> None:
         agent = self._workspace_agent(agent_id)
+        session = self._require_session()
+        self._limit("search", f"user:{session['user']['id']}", RATE_SEARCH_PER_MIN)
         params = parse_qs(urlparse(self.path).query)
         query = (params.get("q") or [""])[0].strip()
         if not query:
@@ -1027,6 +1090,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _v1_simulate(self) -> None:
         session = self._require_session()
+        self._limit("simulate", f"user:{session['user']['id']}", RATE_SESSION_PER_MIN)
         body = self._body()
         text = str(body.get("text") or "").strip()
         if not text:
@@ -1220,6 +1284,17 @@ class Handler(BaseHTTPRequestHandler):
         through response_url. curl (no response_url) still gets the answer inline.
         """
         form = self._form()
+        user = (form.get("user_name") or "someone").strip() or "someone"
+        allowed, retry = LIMITER.allow(
+            f"slack:{user}", limit=RATE_SLACK_PER_MIN, per_seconds=60
+        )
+        if not allowed:
+            self._json(200, {
+                "response_type": "ephemeral",
+                "text": f"One cart at a time — too many requests. Try again in "
+                        f"{max(1, int(round(retry)))}s.",
+            })
+            return
         text = (form.get("text") or "").strip()
         command = form.get("command") or "/veto"
         response_url = form.get("response_url") or ""

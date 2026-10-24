@@ -156,6 +156,21 @@ def run_checks() -> bool:
           all(row.get("severity") in ("block", "review") and row.get("key")
               for row in analytics.get("by_rule") or []))
 
+    # --- agent money (the guardrail track) --------------------------------
+    status, payload = client.call("GET", "/api/v1/agents")
+    agent_rows = (data(payload) or {}).get("agents") or []
+    check("agents carry this month's money",
+          bool(agent_rows) and all(
+              isinstance(row.get("spent_month_cents"), int)
+              and isinstance(row.get("committed_month_cents"), int)
+              for row in agent_rows
+          ),
+          f"{len(agent_rows)} agents")
+    agent_spent = sum(row.get("spent_month_cents", 0) for row in agent_rows)
+    check("agent spend reconciles with Analytics",
+          agent_spent == totals.get("captured_cents"),
+          f"agents {agent_spent} vs analytics {totals.get('captured_cents')}")
+
     # --- integrations -----------------------------------------------------
     status, payload = client.call("GET", "/api/v1/integrations")
     integrations = data(payload) or {}

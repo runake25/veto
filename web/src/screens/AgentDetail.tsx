@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import {
   api,
   ApiError,
+  capMoney,
   money,
   type Agent,
   type AgentInput,
@@ -50,7 +51,7 @@ function defaultQuery(agent: Agent): string {
 }
 
 function Money({ cents, fallback }: { cents: number | null; fallback: string }) {
-  return cents === null ? <span className="spec-void">{fallback}</span> : <>{money(cents)}</>
+  return cents === null ? <span className="spec-void">{fallback}</span> : <>{capMoney(cents)}</>
 }
 
 /**
@@ -105,7 +106,11 @@ function Guardrails({ agent }: { agent: Agent }) {
 
       {monthly !== null ? (
         <div className="band-track">
-          <Track spentCents={0} committedCents={0} capCents={monthly} />
+          <Track
+            spentCents={agent.spent_month_cents ?? 0}
+            committedCents={agent.committed_month_cents ?? 0}
+            capCents={monthly}
+          />
         </div>
       ) : null}
 
@@ -171,11 +176,42 @@ function ReasonRow({ reason }: { reason: Reason }) {
   )
 }
 
+function sendLabel(result: SimulateResult): string {
+  if (result.decision.outcome === 'auto') return `Send · capture ${money(result.total_cents)}`
+  if (result.decision.outcome === 'review') return 'Send for a signature'
+  return 'Send · record as blocked'
+}
+
+function sendNote(result: SimulateResult): string {
+  if (result.decision.outcome === 'auto')
+    return 'Inside every rule: creating the request captures this amount through PayPal immediately.'
+  if (result.decision.outcome === 'review')
+    return 'A real request is recorded and waits for a signature in the Inbox.'
+  return 'A real request is recorded as blocked. No consent, no PayPal object, no money.'
+}
+
 function DryRun({ agent }: { agent: Agent }) {
   const [text, setText] = useState(() => defaultCart(agent))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<SimulateResult | null>(null)
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const navigate = useNavigate()
+
+  const send = async () => {
+    if (!result) return
+    setSending(true)
+    setSendError(null)
+    try {
+      const record = await api.createRequest(text, agent.id)
+      navigate(`/inbox/${record.id}`)
+    } catch (err) {
+      setSendError(err instanceof ApiError ? err.message : 'The request was not created.')
+    } finally {
+      setSending(false)
+    }
+  }
 
   const run = async (event: FormEvent) => {
     event.preventDefault()
@@ -199,7 +235,7 @@ function DryRun({ agent }: { agent: Agent }) {
       </header>
       <p className="card-lede">
         The agent&rsquo;s decision for this message: extract, choose a product, price it, apply
-        the rules. Nothing is ordered.
+        the rules. Nothing is ordered until you send the request.
       </p>
       <form className="inline-form" onSubmit={run}>
         <input
@@ -307,6 +343,19 @@ function DryRun({ agent }: { agent: Agent }) {
                 </li>
               ))}
             </ol>
+
+            <div className="dry-send">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void send()}
+                disabled={sending}
+              >
+                {sending ? 'Sending…' : sendLabel(result)}
+              </button>
+              <p className="dry-send-note">{sendNote(result)}</p>
+              {sendError ? <p className="inline-error">{sendError}</p> : null}
+            </div>
           </motion.div>
         ) : null}
       </AnimatePresence>

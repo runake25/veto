@@ -1154,6 +1154,31 @@ class Store:
         )
         return int(row["n"]) if row else 0
 
+    def agent_month_totals(self, workspace_id: str, *, since: str) -> dict[str, dict]:
+        """Per-agent money for a period: captured, and unsigned (awaiting/approved).
+
+        The guardrail track on an agent page reads this, so the bar is the real
+        month, not a placeholder. Requests are counted by the month they were
+        created in, the same boundary as every other screen.
+        """
+        rows = self.query(
+            "SELECT agent_id, "
+            "COALESCE(SUM(CASE WHEN status = 'captured' THEN total_cents END), 0) "
+            "AS spent_cents, "
+            "COALESCE(SUM(CASE WHEN status IN ('awaiting', 'approved') "
+            "THEN total_cents END), 0) AS committed_cents "
+            "FROM requests WHERE workspace_id = ? AND created_at >= ? "
+            "GROUP BY agent_id",
+            (workspace_id, since),
+        )
+        return {
+            row["agent_id"]: {
+                "spent_cents": int(row["spent_cents"] or 0),
+                "committed_cents": int(row["committed_cents"] or 0),
+            }
+            for row in rows
+        }
+
     def overview_counts(self, workspace_id: str, *, month_start: str | None = None) -> dict:
         """The four Overview figures, computed from the one table that owns requests."""
         needs_you = self.count_requests(workspace_id, status="awaiting")
