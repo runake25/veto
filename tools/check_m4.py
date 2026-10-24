@@ -169,11 +169,17 @@ def run_checks() -> bool:
           slack.get("slash_url", "").startswith(slack.get("public_url", "x"))
           and slack.get("slash_url", "").endswith("/api/slack/veto")
           and slack.get("interact_url", "").endswith("/api/slack/interact"))
-    agent_channels = {agent["channel"] for agent in integrations.get("agents") or []
-                      if agent.get("channel")}
-    route_channels = {route["channel"] for route in slack.get("routes") or []}
-    check("channel routing matches the agents' channels", agent_channels == route_channels,
-          f"agents {sorted(agent_channels)} vs routes {sorted(route_channels)}")
+    check("slack routes by model, not by channel",
+          slack.get("routing") == "model" and "routes" not in slack,
+          f"routing={slack.get('routing')}")
+    scopes = [
+        (agent.get("categories"), agent.get("merchants"))
+        for agent in integrations.get("agents") or []
+    ]
+    check("agents expose the scope the model routes on",
+          bool(scopes) and all(isinstance(cats, list) and isinstance(merchants, list)
+                               for cats, merchants in scopes),
+          f"{len(scopes)} agents with scopes")
     key_names = {key.get("agent_name") for key in integrations.get("keys") or []}
     agent_names = {agent.get("name") for agent in integrations.get("agents") or []}
     check("keys carry the agent they belong to", key_names <= agent_names,

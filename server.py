@@ -31,6 +31,7 @@ from veto import auth as veto_auth  # noqa: E402
 from veto import pipeline as veto_pipeline  # noqa: E402
 from veto.policy import RULE_KINDS  # noqa: E402
 from veto import requests as veto_requests  # noqa: E402
+from veto import routing as veto_routing  # noqa: E402
 from veto import settlement as veto_settlement  # noqa: E402
 from veto.seed import seed_demo  # noqa: E402
 
@@ -814,12 +815,7 @@ class Handler(BaseHTTPRequestHandler):
                 "default_agent": {"id": default_id, "name": names[default_id]}
                 if default_id in names
                 else None,
-                "routes": [
-                    {"channel": agent["channel"], "agent_id": agent["id"],
-                     "agent_name": agent["name"]}
-                    for agent in agents
-                    if agent.get("channel")
-                ],
+                "routing": "model",
             },
             "agents": [
                 {
@@ -828,6 +824,8 @@ class Handler(BaseHTTPRequestHandler):
                     "tag": agent["tag"],
                     "status": agent["status"],
                     "channel": agent["channel"],
+                    "categories": agent.get("categories") or [],
+                    "merchants": agent.get("vendors") or [],
                 }
                 for agent in agents
             ],
@@ -871,18 +869,26 @@ class Handler(BaseHTTPRequestHandler):
         if len(text) > MAX_SIMULATE_CHARS:
             text = text[:MAX_SIMULATE_CHARS]
         agent = actor["agent"]
+        route_note = None
         if agent is None:
             requested_id = str(body.get("agent_id") or "").strip() or None
-            try:
-                agent = veto_pipeline.resolve_agent(STORE, workspace["id"], requested_id)
-            except LookupError as exc:
-                code = str(exc) or "no_agent"
-                message = (
-                    "That agent does not exist."
-                    if code == "agent_not_found"
-                    else "This workspace has no agents yet."
-                )
-                self._api_error(404, code, message)
+            if requested_id:
+                try:
+                    agent = veto_pipeline.resolve_agent(STORE, workspace["id"], requested_id)
+                except LookupError as exc:
+                    code = str(exc) or "no_agent"
+                    message = (
+                        "That agent does not exist."
+                        if code == "agent_not_found"
+                        else "This workspace has no agents yet."
+                    )
+                    self._api_error(404, code, message)
+            else:
+                # no agent named: the model reads the request and picks one
+                agent, decision = veto_routing.route_request(STORE, workspace, text)
+                if agent is None:
+                    self._api_error(404, "no_agent", "This workspace has no agents yet.")
+                route_note = veto_routing.trail_note(decision)
         requester = str(body.get("requester") or "").strip() or None
         if requester is None:
             requester = (actor["user"] or {}).get("name") or agent.get("name")
@@ -896,6 +902,7 @@ class Handler(BaseHTTPRequestHandler):
             requester=requester,
             initiator_user_id=(actor["user"] or {}).get("id"),
             settlement=SETTLEMENT,
+            route=route_note,
         )
         self._ok({"request": veto_requests.public_request(record)}, status=201)
 
@@ -1243,19 +1250,10 @@ class Handler(BaseHTTPRequestHandler):
         workspace = self._demo_workspace()
         if workspace is None:
             return {"response_type": "ephemeral", "text": "No workspace is seeded."}
-        agents = STORE.list_agents(workspace["id"])
-        if not agents:
-            return {"response_type": "ephemeral", "text": "This workspace has no agents yet."}
-        wanted = channel.lstrip("#")
-        agent = next(
-            (item for item in agents if (item.get("channel") or "").lstrip("#") == wanted),
-            None,
-        )
+        # the channel is where it was typed; the model decides whose charter judges it
+        agent, decision = veto_routing.route_request(STORE, workspace, text)
         if agent is None:
-            default_id = workspace.get("default_agent_id")
-            agent = next(
-                (item for item in agents if item["id"] == default_id), agents[0]
-            )
+            return {"response_type": "ephemeral", "text": "This workspace has no agents yet."}
         try:
             record = veto_requests.create(
                 STORE,
@@ -1266,6 +1264,7 @@ class Handler(BaseHTTPRequestHandler):
                 channel=channel,
                 requester=requester.title(),
                 settlement=SETTLEMENT,
+                route=veto_routing.trail_note(decision),
             )
         except veto_requests.WalletRequired:
             return {

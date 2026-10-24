@@ -213,9 +213,17 @@ export interface IntegrationsData {
     interact_url: string
     public_url: string
     default_agent: { id: string; name: string } | null
-    routes: { channel: string; agent_id: string; agent_name: string }[]
+    routing: 'model'
   }
-  agents: { id: string; name: string; tag: string; status: string; channel: string | null }[]
+  agents: {
+    id: string
+    name: string
+    tag: string
+    status: string
+    channel: string | null
+    categories: string[]
+    merchants: string[]
+  }[]
   api: { requests_path: string; base_url: string }
   keys: WorkspaceKey[]
 }

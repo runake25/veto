@@ -177,6 +177,12 @@ POST /requests ─→ pipeline (extract → source → choose → price → judg
                                                                         └─ void    → voided
 ```
 
+Requests that do not name an agent (Slack `/veto`, a console session without `agent_id`) are
+routed by the model: it reads the cart against each agent's categories, approved merchants
+and tag, and returns one id from the workspace list; the channel is provenance only. An
+invalid answer or model error falls back to the workspace default agent, and the routing
+decision is the first entry in the request's trail.
+
 Statuses: `blocked` · `awaiting` · `approved` (green-lit, capture owed) · `captured` (the
 only state counted as spend) · `vetoed` · `voided`. A consent is one sha256 of the cart,
 single use, ten minutes; approve after it expires answers `409 consent_expired`. Block and
@@ -185,9 +191,13 @@ the PayPal idempotency key, so a retried approval replays the same order instead
 twice. Every step is appended to `events`; `GET /requests/{id}` returns lines, reasons,
 consent, payment ids, events and the agent.
 
-Slack `/veto` and its buttons now write the same store: the agent is the one whose
-`channel` matches the Slack channel, else the workspace default agent; the message is built
-from the stored record and the audit event names the Slack user who pressed the button.
+Slack `/veto` and its buttons now write the same store. **Routing is semantic, not by
+channel**: the model reads the request against every agent's scope (categories, approved
+merchants, tag) and returns one agent id from that workspace's list; an unknown id, a model
+error or no answer falls back to the workspace default agent. The channel is recorded as
+provenance only. The routing decision is the first entry in the request's trail
+(`Routed to …`, with the model's reason), the Slack message is built from the stored record,
+and the audit event names the Slack user who pressed the button.
 The old static console (`index.html`, `ui/`) is deleted: `/` and `/app/` serve the built
 React app, and `/demo` no longer exists. `/connect` remains as the one-page wallet setup
 utility (it drives the legacy engine's PayPal vault flow); everything the product does now
@@ -205,7 +215,7 @@ surfaces may show a count or a link. `/` opens the app; a hash router owns the r
 | **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void, expired-consent state |
 | **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, **test a request** (extract → choose → price → judge) and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
 | **Analytics** | captured money by day, agent, vendor, category and rule, over one range; links into the filtered Inbox |
-| **Integrations** | Slack endpoints + channel routing, PayPal wallet, agent API keys (mint once, revoke immediately) |
+| **Integrations** | Slack endpoints + model routing, PayPal wallet, agent API keys (mint once, revoke immediately) |
 
 Guided rule setup (option A): one form with template defaults and an optional category
 override. The agent screen renders the charter back as a guardrail band — monthly figure
@@ -242,7 +252,7 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 | M1 | SQLite store, auth, seeded demo, session API, React shell + auth screen | **done (2026-10-22)** |
 | M2 | policy engine, guided agent rules, scoped search, dry-run | **done (2026-10-22)** |
 | M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | **done (2026-10-23)** |
-| M4 | Inbox, Record, Analytics, Integrations; Overview rewritten; palette retuned to the ledger tone; old console deleted; `/` flips to the app | **done (2026-10-24)** |
+| M4 | Inbox, Record, Analytics, Integrations; Overview rewritten; palette retuned to the ledger tone; old console deleted; `/` flips to the app; model routing for Slack | **done (2026-10-24)** |
 | M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | next |
 | M6 | README/SPEC/PRODUCT, deploy, video, Devpost text | |
 
@@ -252,9 +262,9 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (178)
+python3 -m unittest discover -s tests    # backend tests (191)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
-python3 tools/check_m4.py                # 29 checks: screens' data, read-only (~1s)
+python3 tools/check_m4.py                # 30 checks: screens' data, read-only (~1s)
 ```
 
 M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
@@ -276,7 +286,7 @@ history in the demo workspace, which is what Overview and Inbox read.
 
 M4 adds the read models the screens consume and a read-only harness:
 
-    python3 tools/check_m4.py                          # 29 checks, no money moved
+    python3 tools/check_m4.py                          # 30 checks, no money moved
 
 It proves Analytics reconciles with Overview (series sum = captured total = by-agent
 sum = by-vendor sum), Integrations reports Slack routing/wallet/keys, a record carries

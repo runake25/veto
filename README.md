@@ -40,6 +40,9 @@ review  → consent (10 min, single use) → awaiting
 block   → (no consent, no PayPal object)                        status: blocked
 ```
 
+- **Routing** is semantic: a request that does not name an agent is read by the model and
+  matched to the agent whose categories and approved merchants fit it. The channel is only
+  provenance; the routing decision is the first step of the record's trail.
 - **Consent** is one sha256 of the cart, single use, ten minutes, and its nonce is the
   PayPal idempotency key — a retried approval replays the order instead of charging twice.
 - **Captured** is the only status counted as spend. Block, veto and void create zero PayPal
@@ -57,14 +60,15 @@ block   → (no consent, no PayPal object)                        status: blocke
 | **Record** (`/inbox/REQ-1043`) | the cart, the rule reasons, the consent hash, the PayPal ids, the trail and approve / veto / void |
 | **Agents** (`/agents`) | one plate per agent: caps, scope, exceptions, channel, API key, a real dry run and a scoped catalogue search |
 | **Analytics** (`/analytics`) | captured money by day, agent, vendor, category and rule over one range, linking into the filtered Inbox |
-| **Integrations** (`/integrations`) | Slack endpoints and channel routing, the PayPal wallet, and agent API keys |
+| **Integrations** (`/integrations`) | Slack endpoints and model routing, the PayPal wallet, and agent API keys |
 
 ## Slack
 
-`/veto <what to buy>` in an agent's channel creates the request; the agent that answers is
-the one whose `channel` matches, falling back to the workspace default. The reply carries
-the decision and, when a signature is needed, **Approve** and **Veto** buttons that write the
-same store. Requests are signed with `SLACK_SIGNING_SECRET`; configure the slash command and
+`/veto <what to buy>` creates the request. The model reads the cart against every agent's
+scope (categories, approved merchants, tag) and routes it to the agent whose charter should
+judge it — the channel only records where it was typed. A model error or an unknown agent
+falls back to the workspace default. The reply carries the decision and, when a signature is
+needed, **Approve** and **Veto** buttons that write the same store. Requests are signed with `SLACK_SIGNING_SECRET`; configure the slash command and
 interactivity URLs from *Integrations*.
 
 ## Agent API keys
@@ -88,6 +92,7 @@ veto/                store.py · auth.py · seed.py · policy.py · pipeline.py
 web/src/             React app: screens/, components/, styles/tokens.css
 app/                 the built web app (served at / and /app/)
 tools/               check_m3.py (request board, ~60s) · check_m4.py (read models, ~1s)
+veto/routing.py      model routing for requests that do not name an agent
 tests/               stdlib unittest suite
 slack/               Slack app manifest + link.py for a one-click install link
 shots/               screenshots used as delivery evidence
@@ -96,9 +101,9 @@ shots/               screenshots used as delivery evidence
 ## Verify it
 
 ```bash
-python3 -m unittest discover -s tests    # 178 backend tests
+python3 -m unittest discover -s tests    # 191 backend tests
 python3 tools/check_m3.py                # 19 checks: the request loop over HTTP (real pipeline)
-python3 tools/check_m4.py                # 29 checks: read models, read-only, no money moves
+python3 tools/check_m4.py                # 30 checks: read models, read-only, no money moves
 cd web && npm run build && npx tsc --noEmit
 ```
 

@@ -139,7 +139,7 @@ export function AgentForm({
         </label>
         <label className="field">
           <span className="field-label">
-            Channel <span className="field-hint mono">optional</span>
+            Home channel <span className="field-hint mono">a label, not routing</span>
           </span>
           <input
             className="input mono"

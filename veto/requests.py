@@ -134,6 +134,7 @@ def create(
     requester: str | None = None,
     initiator_user_id: str | None = None,
     settlement: Settlement | None = None,
+    route: dict | None = None,
     extract_fn=None,
     search_fn=None,
     choose_fn=None,
@@ -168,6 +169,9 @@ def create(
     status = _OUTCOME_STATUS.get(outcome, STATUS_BLOCKED)
 
     events = list(result.get("events") or [])
+    if route:
+        # the routing decision happened before extraction; the trail keeps that order
+        events.insert(0, route)
     consent = None
     if outcome != "block":
         issued = datetime.now(timezone.utc)

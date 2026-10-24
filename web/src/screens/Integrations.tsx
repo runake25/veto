@@ -23,10 +23,6 @@ function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }
   )
 }
 
-function channelLabel(channel: string): string {
-  return channel.startsWith('#') ? channel : `#${channel}`
-}
-
 function maskId(value: string | null): string {
   if (!value) return '—'
   if (value.length <= 10) return value
@@ -46,8 +42,9 @@ function SlackCard({ data }: { data: IntegrationsData }) {
         </span>
       </header>
       <p className="card-lede">
-        <span className="mono">/veto</span> takes a cart in plain words. The agent that answers is
-        the one whose channel matches, so the same workspace can run several agents side by side.
+        <span className="mono">/veto</span> takes a cart in plain words. The model reads the
+        request and routes it to the agent whose charter fits it — the channel only records
+        where it was typed.
       </p>
 
       <div className="endpoints">
@@ -75,27 +72,37 @@ function SlackCard({ data }: { data: IntegrationsData }) {
       </div>
 
       <div className="route-block">
-        <p className="route-title">Channel routing</p>
-        {slack.routes.length ? (
+        <p className="route-title">Model routing</p>
+        <p className="route-explain">
+          Each request is matched by what is being bought, so a cart typed in
+          <span className="mono"> #ops</span> can still be judged by the pantry agent.
+        </p>
+        {data.agents.length ? (
           <ul className="route-list">
-            {slack.routes.map((route) => (
-              <li key={route.agent_id}>
-                <span className="mono route-channel">{channelLabel(route.channel)}</span>
-                <span className="route-arrow" aria-hidden="true">
-                  →
+            {data.agents.map((agent) => (
+              <li key={agent.id}>
+                <span className="route-agent-line">
+                  <Link className="route-agent" to={`/agents/${agent.id}`}>
+                    {agent.name}
+                  </Link>
+                  <span className="route-scope mono">
+                    {agent.categories.length
+                      ? agent.categories.join(', ')
+                      : 'any category'}
+                    {agent.merchants.length
+                      ? ` · ${agent.merchants.length} merchants`
+                      : ' · no merchants'}
+                  </span>
                 </span>
-                <Link className="route-agent" to={`/agents/${route.agent_id}`}>
-                  {route.agent_name}
-                </Link>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="record-none">No agent has a channel yet.</p>
+          <p className="record-none">No agents yet.</p>
         )}
         {slack.default_agent ? (
           <p className="card-footnote">
-            A channel with no match falls back to {slack.default_agent.name}.
+            If the model finds no fit, {slack.default_agent.name} judges the request.
           </p>
         ) : null}
       </div>

@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Prove the Slack app is wired correctly.
+"""Prove the Slack app is wired correctly — and print the two URLs to paste.
 
-    python3 slack/verify.py
+    python3 slack/verify.py            # safe: no purchases, no new requests
+    python3 slack/verify.py --live     # also posts a real /veto (spends sandbox money)
 
 Checks, in order:
   1. a signing secret and bot token are present in .env
   2. the bot token is real (auth.test) and says which workspace it belongs to
   3. the runner is reachable at the public URL Slack has to call
-  4. both request URLs answer the way Slack expects (ssl_check, and a signed POST)
-  5. optionally posts a hello message so you can see the bot in the channel
+  4. that URL is the one the Slack app must be configured with, printed in full
+  5. both request URLs answer the way Slack expects (ssl_check, and a signed POST)
 
-Nothing here changes Veto state beyond one optional message.
+The URL checks are the safe signed call with an empty text — Veto answers
+"needs something to buy" and writes nothing. --live sends the real cart and does
+create one request (sandbox money only).
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -59,6 +63,7 @@ def slack_api(method: str, token: str, payload: dict | None = None) -> dict:
 
 
 def main() -> int:
+    live = '--live' in sys.argv[1:]
     env = dotenv()
     secret = (env.get("SLACK_SIGNING_SECRET") or os.environ.get("SLACK_SIGNING_SECRET") or "").strip()
     token = (env.get("SLACK_BOT_TOKEN") or os.environ.get("SLACK_BOT_TOKEN") or "").strip()
@@ -97,7 +102,12 @@ def main() -> int:
             print(f"   UNREACHABLE: {exc}")
             problems.append("public URL does not answer")
 
-        print("\n4. Slack request checks")
+        print("\n4. what the Slack app must be pointed at")
+        print(f"   slash command  : {base}/api/slack/veto")
+        print(f"   interactivity  : {base}/api/slack/interact")
+        print("   (paste these into api.slack.com/apps after every runner restart)")
+
+        print("\n5. Slack request checks")
         try:
             with urllib.request.urlopen(base + "/api/slack/veto?ssl_check=1", timeout=15) as res:
                 body = json.loads(res.read())
@@ -110,8 +120,10 @@ def main() -> int:
 
         # a signed slash-command call, exactly the shape Slack posts
         form = urllib.parse.urlencode({
-            "command": "/veto", "text": "2 packs of bamboo toilet paper",
+            "command": "/veto",
+            "text": "2 packs of bamboo toilet paper" if live else "",
             "user_name": "dan", "channel_name": "office-ops",
+            "response_url": "https://hooks.slack.com/commands/verify",  # Slack always sends one
         }).encode()
         ts = str(int(time.time()))
         sig = "v0=" + hmac.new(secret.encode(), b"v0:" + ts.encode() + b":" + form,
@@ -127,9 +139,12 @@ def main() -> int:
         try:
             with urllib.request.urlopen(req, timeout=60) as res:
                 reply = json.loads(res.read())
-            print(f"   signed /veto   : {res.status} · {(reply.get('text') or '')[:60]}")
+            label = "signed /veto (live)" if live else "signed /veto (safe)"
+            print(f"   {label:<16}: {res.status} · {(reply.get('text') or '')[:60]}")
             if res.status != 200:
                 problems.append("signed slash command did not return 200")
+            if not live and (reply.get("text") or "").startswith("Checking"):
+                problems.append("safe signed call unexpectedly started a purchase")
         except urllib.error.HTTPError as exc:
             print(f"   signed /veto   : HTTP {exc.code} · {exc.read()[:120].decode(errors='replace')}")
             problems.append(f"signed slash command returned {exc.code}")
@@ -149,6 +164,7 @@ def main() -> int:
             print("  -", p)
         return 1
     print("READY. The workspace can call Veto, and the signatures match.")
+    print("If Slack still fails, compare the two URLs above with the Slack app settings.")
     return 0
 
 

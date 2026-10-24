@@ -72,9 +72,9 @@ body under it.
 - **Analytics** — one range (this month / last month / last 90 days), four totals, settled
   per day as thin bars, then by agent, by vendor, by category and what the rules caught.
   Only captured lines count as spend; agent rows link into the filtered Inbox.
-- **Integrations** — the three doors: Slack (endpoints + channel routing), the PayPal wallet
-  (mode, vault, connection), and agent API keys (prefix, last use, mint once, revoke
-  immediately).
+- **Integrations** — the doors in and the rail out: Slack (endpoints, then the agents the
+  model may route to and the scope it decides on), the PayPal wallet (mode, vault,
+  connection), and agent API keys (prefix, last use, mint once, revoke immediately).
 
 ## Components
 
