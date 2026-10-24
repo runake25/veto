@@ -281,7 +281,10 @@ export function Record({ me }: { me: Me }) {
     record?.consent?.expires_at && new Date(record.consent.expires_at) <= new Date(),
   )
   const canDecide = canAct && record?.status === 'awaiting' && !consentExpired
-  const canVoid = canAct && (record?.status === 'awaiting' || record?.status === 'approved')
+  // Void is housekeeping, not a decision: it is offered only when it adds something —
+  // a stale (expired) consent, or an approval whose capture is still owed.
+  const canVoid =
+    canAct && (record?.status === 'approved' || (record?.status === 'awaiting' && consentExpired))
   const tone = record ? (STATUS[record.status]?.tone ?? 'quiet') : 'quiet'
 
   return (
@@ -383,6 +386,7 @@ export function Record({ me }: { me: Me }) {
                     className="btn btn-danger"
                     onClick={() => void act('veto')}
                     disabled={busy !== null}
+                    title="Refuse this request — the trail records a veto"
                   >
                     {busy === 'veto' ? 'Vetoing…' : 'Veto'}
                   </button>
@@ -393,13 +397,17 @@ export function Record({ me }: { me: Me }) {
                     className="btn btn-quiet"
                     onClick={() => void act('void')}
                     disabled={busy !== null}
+                    title="Withdraw this request before capture — not a refusal"
                   >
                     {busy === 'void' ? 'Voiding…' : 'Void'}
                   </button>
                 ) : null}
                 <p className="verdict-legend">
-                  Approve captures the cart from the workspace wallet. Veto refuses it. Void
-                  withdraws it before either happens.
+                  {canDecide
+                    ? `Approve captures ${money(record.total_cents, record.currency)} from the workspace wallet. Veto refuses the request.`
+                    : record.status === 'approved'
+                      ? 'The capture is owed. Void cancels it before any money moves.'
+                      : 'The consent expired, so approve is closed. Veto records a refusal; Void withdraws the stale request.'}
                 </p>
               </div>
             ) : expiredNote(record) ? (
