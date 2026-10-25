@@ -334,6 +334,51 @@ CREATE TABLE IF NOT EXISTS events (
     href       TEXT,
     at         TEXT NOT NULL
 );
+
+-- An agent's standing job: what it buys, how often, and the envelope it may
+-- spend inside. One routine per agent: the agent is the role, the routine is
+-- the recurring work. Each due run becomes a request through the same pipeline.
+CREATE TABLE IF NOT EXISTS routines (
+    id             TEXT PRIMARY KEY,
+    workspace_id   TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    agent_id       TEXT NOT NULL UNIQUE REFERENCES agents(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    instruction    TEXT NOT NULL,
+    cadence        TEXT NOT NULL DEFAULT 'weekly'
+                   CHECK (cadence IN ('daily', 'weekly', 'monthly')),
+    envelope_cents INTEGER NOT NULL DEFAULT 0,
+    dedupe_days    INTEGER NOT NULL DEFAULT 0,
+    status         TEXT NOT NULL DEFAULT 'active'
+                   CHECK (status IN ('active', 'paused')),
+    next_run_at    TEXT NOT NULL,
+    last_run_at    TEXT,
+    created_by     TEXT,
+    approved_by    TEXT,
+    created_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_routines_due
+    ON routines (status, next_run_at);
+
+CREATE TABLE IF NOT EXISTS routine_runs (
+    id           TEXT PRIMARY KEY,
+    routine_id   TEXT NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL,
+    due_at       TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    finished_at  TEXT,
+    outcome      TEXT NOT NULL
+                 CHECK (outcome IN ('captured', 'awaiting', 'approved',
+                                    'blocked', 'skipped', 'failed')),
+    request_id   TEXT,
+    amount_cents INTEGER NOT NULL DEFAULT 0,
+    note         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_routine_runs_routine
+    ON routine_runs (routine_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_routine_runs_ws
+    ON routine_runs (workspace_id, started_at DESC);
 """
 
 
@@ -1074,6 +1119,26 @@ class Store:
             "SELECT * FROM events WHERE request_id = ? ORDER BY seq", (request_id,)
         )
         row["agent"] = self.agent(workspace_id, row["agent_id"])
+        # A request raised by a routine knows which standing job it belongs to.
+        run = self.one(
+            "SELECT rr.id AS run_id, rr.outcome AS run_outcome, rr.started_at AS run_at, "
+            "ro.id AS routine_id, ro.name AS routine_name, ro.cadence AS routine_cadence "
+            "FROM routine_runs rr JOIN routines ro ON ro.id = rr.routine_id "
+            "WHERE rr.request_id = ? ORDER BY rr.started_at DESC LIMIT 1",
+            (request_id,),
+        )
+        row["routine"] = (
+            {
+                "id": run["routine_id"],
+                "name": run["routine_name"],
+                "cadence": run["routine_cadence"],
+                "run_id": run["run_id"],
+                "outcome": run["run_outcome"],
+                "at": run["run_at"],
+            }
+            if run
+            else None
+        )
         return row
 
     def list_requests(
@@ -1092,6 +1157,9 @@ class Store:
             "SELECT r.id, r.seq, r.title, r.status, r.decision_outcome, r.total_cents, "
             "r.currency, r.channel, r.requester, r.origin, r.created_at, r.decided_at, "
             "r.agent_id, a.name AS agent_name, a.tag AS agent_tag, "
+            "(SELECT ro.name FROM routine_runs rr JOIN routines ro ON ro.id = rr.routine_id "
+            " WHERE rr.request_id = r.id ORDER BY rr.started_at DESC, rr.rowid DESC LIMIT 1) "
+            "AS routine_name, "
             "(SELECT COUNT(*) FROM request_lines l WHERE l.request_id = r.id) AS line_count "
             "FROM requests r LEFT JOIN agents a ON a.id = r.agent_id "
             "WHERE r.workspace_id = ?"
@@ -1177,6 +1245,161 @@ class Store:
                 "committed_cents": int(row["committed_cents"] or 0),
             }
             for row in rows
+        }
+
+    # -- routines: an agent's standing job ------------------------------
+    ROUTINE_UPDATABLE = (
+        "name", "instruction", "cadence", "envelope_cents", "dedupe_days",
+        "status", "next_run_at", "last_run_at", "approved_by",
+    )
+
+    def create_routine(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        *,
+        name: str,
+        instruction: str,
+        cadence: str = "weekly",
+        envelope_cents: int = 0,
+        dedupe_days: int = 0,
+        next_run_at: str | None = None,
+        created_by: str | None = None,
+        approved_by: str | None = None,
+    ) -> dict:
+        routine_id = new_id("rtn_", 6)
+        created = now_iso()
+        self.execute(
+            "INSERT INTO routines (id, workspace_id, agent_id, name, instruction, "
+            "cadence, envelope_cents, dedupe_days, status, next_run_at, created_by, "
+            "approved_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+            (
+                routine_id, workspace_id, agent_id, name, instruction, cadence,
+                int(envelope_cents or 0), int(dedupe_days or 0),
+                next_run_at or created, created_by, approved_by, created,
+            ),
+        )
+        return self.routine(workspace_id, routine_id) or {}
+
+    def routine(self, workspace_id: str, routine_id: str) -> dict | None:
+        row = self.one(
+            "SELECT * FROM routines WHERE workspace_id = ? AND id = ?",
+            (workspace_id, routine_id),
+        )
+        if row is None:
+            return None
+        row["agent"] = self.agent(workspace_id, row["agent_id"])
+        return row
+
+    def routine_for_agent(self, workspace_id: str, agent_id: str) -> dict | None:
+        return self.one(
+            "SELECT * FROM routines WHERE workspace_id = ? AND agent_id = ?",
+            (workspace_id, agent_id),
+        )
+
+    def list_routines(self, workspace_id: str) -> list[dict]:
+        return self.query(
+            "SELECT r.*, a.name AS agent_name, a.tag AS agent_tag "
+            "FROM routines r LEFT JOIN agents a ON a.id = r.agent_id "
+            "WHERE r.workspace_id = ? ORDER BY r.created_at, r.rowid",
+            (workspace_id,),
+        )
+
+    def update_routine(
+        self, workspace_id: str, routine_id: str, *, fields: dict
+    ) -> dict | None:
+        allowed = [key for key in fields if key in self.ROUTINE_UPDATABLE]
+        if allowed:
+            assignments = ", ".join(f"{key} = ?" for key in allowed)
+            params = [fields[key] for key in allowed] + [workspace_id, routine_id]
+            cur = self.execute(
+                f"UPDATE routines SET {assignments} WHERE workspace_id = ? AND id = ?",
+                params,
+            )
+            if cur.rowcount == 0:
+                return None
+        return self.routine(workspace_id, routine_id)
+
+    def due_routines(self, now: str | None = None, *, limit: int = 25) -> list[dict]:
+        """Active routines whose next run is due. The scheduler claims each one."""
+        return self.query(
+            "SELECT * FROM routines WHERE status = 'active' AND next_run_at <= ? "
+            "ORDER BY next_run_at LIMIT ?",
+            (now or now_iso(), max(1, min(100, int(limit)))),
+        )
+
+    def claim_routine(
+        self, routine_id: str, *, expected_next: str, next_run_at: str
+    ) -> bool:
+        """Move the schedule forward atomically: two ticks cannot run one due slot."""
+        cur = self.execute(
+            "UPDATE routines SET next_run_at = ? WHERE id = ? AND next_run_at = ? "
+            "AND status = 'active'",
+            (next_run_at, routine_id, expected_next),
+        )
+        return cur.rowcount == 1
+
+    def create_routine_run(
+        self,
+        routine_id: str,
+        workspace_id: str,
+        *,
+        due_at: str,
+        started_at: str,
+        outcome: str,
+        request_id: str | None = None,
+        amount_cents: int = 0,
+        note: str | None = None,
+        finished_at: str | None = None,
+    ) -> dict:
+        run_id = new_id("run_", 6)
+        self.execute(
+            "INSERT INTO routine_runs (id, routine_id, workspace_id, due_at, started_at, "
+            "finished_at, outcome, request_id, amount_cents, note) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id, routine_id, workspace_id, due_at, started_at,
+                finished_at or started_at, outcome, request_id,
+                int(amount_cents or 0), note,
+            ),
+        )
+        return self.one("SELECT * FROM routine_runs WHERE id = ?", (run_id,)) or {}
+
+    def routine_runs_for(
+        self, workspace_id: str, routine_id: str | None = None, *, limit: int = 10
+    ) -> list[dict]:
+        sql = "SELECT * FROM routine_runs WHERE workspace_id = ?"
+        params: list[Any] = [workspace_id]
+        if routine_id:
+            sql += " AND routine_id = ?"
+            params.append(routine_id)
+        sql += " ORDER BY started_at DESC, rowid DESC LIMIT ?"
+        params.append(max(1, min(100, int(limit))))
+        return self.query(sql, params)
+
+    def last_routine_order(self, routine_id: str, *, since: str) -> dict | None:
+        """The last run that put an order in flight, for the dedupe window."""
+        return self.one(
+            "SELECT * FROM routine_runs WHERE routine_id = ? AND started_at >= ? "
+            "AND outcome IN ('captured', 'awaiting', 'approved') "
+            "ORDER BY started_at DESC LIMIT 1",
+            (routine_id, since),
+        )
+
+    def routine_month_cents(self, routine_id: str, *, since: str) -> dict:
+        """This routine's month: settled money and money still owed a signature."""
+        row = self.one(
+            "SELECT "
+            "COALESCE(SUM(CASE WHEN outcome = 'captured' THEN amount_cents END), 0) "
+            "AS captured_cents, "
+            "COALESCE(SUM(CASE WHEN outcome IN ('awaiting', 'approved') "
+            "THEN amount_cents END), 0) AS committed_cents "
+            "FROM routine_runs WHERE routine_id = ? AND started_at >= ?",
+            (routine_id, since),
+        ) or {}
+        return {
+            "captured_cents": int(row.get("captured_cents") or 0),
+            "committed_cents": int(row.get("committed_cents") or 0),
         }
 
     def overview_counts(self, workspace_id: str, *, month_start: str | None = None) -> dict:

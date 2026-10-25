@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 
 from veto import auth
+from veto import routines as veto_routines
 from veto.store import Store
 
 WORKSPACE_NAME = "Bracken & Field"
@@ -43,6 +44,13 @@ AGENTS = (
         "categories": ["pantry"],
         "rules": list(ALL_RULES),
         "overrides": [],
+        "routine": {
+            "name": "Pantry restock",
+            "instruction": "Restock the pantry: 2 packs of toilet paper and a bottle of dish soap.",
+            "cadence": "weekly",
+            "envelope_cents": 25_000,
+            "dedupe_days": 10,
+        },
     },
     {
         "name": "Desk kit",
@@ -58,6 +66,13 @@ AGENTS = (
         "overrides": [
             {"category": "stationery", "kind": "per_unit_cap", "value_cents": 5_000},
         ],
+        "routine": {
+            "name": "Desk kit top-up",
+            "instruction": "Top up the desk kit: a box of pens and two packs of sticky notes.",
+            "cadence": "monthly",
+            "envelope_cents": 30_000,
+            "dedupe_days": 14,
+        },
     },
     {
         "name": "Client lunch",
@@ -86,6 +101,13 @@ AGENTS = (
         "overrides": [
             {"category": "stationery", "kind": "per_unit_cap", "value_cents": 800},
         ],
+        "routine": {
+            "name": "Studio supplies",
+            "instruction": "Order studio supplies: two packs of envelopes and a box of pens.",
+            "cadence": "monthly",
+            "envelope_cents": 8_000,
+            "dedupe_days": 20,
+        },
     },
 )
 
@@ -124,11 +146,34 @@ def _ensure_agents(store: Store, workspace_id: str) -> None:
         store.create_agent(
             workspace_id,
             {key: value for key, value in spec.items()
-             if key not in ("vendors", "categories", "rules", "overrides")},
+             if key not in ("vendors", "categories", "rules", "overrides", "routine")},
             vendors=spec["vendors"],
             categories=spec["categories"],
             rules=spec["rules"],
             overrides=spec["overrides"],
+        )
+
+
+def _ensure_routines(store: Store, workspace_id: str) -> None:
+    """Give each demo agent its standing job once; never reset a live schedule."""
+    agents = {agent["name"]: agent for agent in store.list_agents(workspace_id)}
+    for spec in AGENTS:
+        routine_spec = spec.get("routine")
+        agent = agents.get(spec["name"])
+        if not routine_spec or agent is None:
+            continue
+        if store.routine_for_agent(workspace_id, agent["id"]) is not None:
+            continue
+        store.create_routine(
+            workspace_id,
+            agent["id"],
+            name=routine_spec["name"],
+            instruction=routine_spec["instruction"],
+            cadence=routine_spec["cadence"],
+            envelope_cents=routine_spec["envelope_cents"],
+            dedupe_days=routine_spec["dedupe_days"],
+            next_run_at=veto_routines.next_run_at(routine_spec["cadence"]),
+            created_by="demo",
         )
 
 
@@ -137,6 +182,7 @@ def _populate(store: Store) -> dict:
     admin = _ensure_user(store, workspace["id"], ADMIN_EMAIL, "Ops admin", "admin")
     approver = _ensure_user(store, workspace["id"], APPROVER_EMAIL, "Priya Raman", "approver")
     _ensure_agents(store, workspace["id"])
+    _ensure_routines(store, workspace["id"])
 
     if store.wallet(workspace["id"]) is None:
         store.set_wallet(workspace["id"], status="disconnected")

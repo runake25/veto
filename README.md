@@ -45,6 +45,10 @@ block   → (no consent, no PayPal object)                        status: blocke
   assembled in the order the request named the items.
 - **The dry run is streamed**: the agent page reads `POST /api/v1/simulate/stream`, so
   each stage and each resolved item appears as it lands instead of behind a spinner.
+- **Agents are standing jobs**: an agent can own one routine — a standing instruction, a
+  cadence, a monthly envelope and a dedupe window. The runner's scheduler claims each due
+  slot once, runs it through the same pipeline, records the run, and escalates a cart that
+  crosses the envelope instead of capturing it.
 - **Routing** is semantic: a request that does not name an agent is read by the model and
   matched to the agent whose categories and approved merchants fit it. The channel is only
   provenance; the routing decision is the first step of the record's trail.
@@ -69,12 +73,23 @@ block   → (no consent, no PayPal object)                        status: blocke
 
 ## Slack
 
-`/veto <what to buy>` creates the request. The model reads the cart against every agent's
-scope (categories, approved merchants, tag) and routes it to the agent whose charter should
-judge it — the channel only records where it was typed. A model error or an unknown agent
-falls back to the workspace default. The reply carries the decision and, when a signature is
-needed, **Approve** and **Veto** buttons that write the same store. Requests are signed with `SLACK_SIGNING_SECRET`; configure the slash command and
-interactivity URLs from *Integrations*.
+One Request URL serves several commands; Slack sends the invoked `command` in the payload,
+so the app never needs a second endpoint.
+
+| Command | It does | Usage hint shown in Slack |
+|---|---|---|
+| `/veto <what to buy>` | creates the request and model-routes it to the agent whose charter fits | `what to buy — e.g. 2 packs of toilet paper` |
+| `/veto-status [agent]` | what waits for a signature, with **Approve** / **Veto** buttons | `[agent] — leave empty for everything` |
+| `/veto-budget [agent]` | this month's settled, waiting and left, per agent | `[agent] — leave empty for the whole workspace` |
+| `/veto-routines [agent]` | the standing jobs, their next run and last result | `[agent] — leave empty for every routine` |
+| `/veto-help` | the command list | — |
+
+`/veto` is the buying door. The model reads the cart against every agent's scope
+(categories, approved merchants, tag) and routes it to the agent whose charter should judge
+it — the channel only records where it was typed. A model error or an unknown agent falls
+back to the workspace default. The reply carries the decision and, when a signature is
+needed, **Approve** and **Veto** buttons that write the same store. Requests are signed with
+`SLACK_SIGNING_SECRET`; paste the Request URL from *Integrations* into every command row.
 
 ## Agent API keys
 
@@ -93,7 +108,9 @@ The key scopes the request to its own agent's charter. Revoking it is immediate.
 ```
 server.py            one stdlib HTTP runner: API, Slack, the built app, /connect
 veto/                store.py · auth.py · seed.py · policy.py · pipeline.py
-                     requests.py (the board) · settlement.py (the only money mover)
+                     requests.py (the board) · routines.py (standing jobs)
+                     slack_commands.py (the command surface)
+                     settlement.py (the only money mover)
 web/src/             React app: screens/, components/, styles/tokens.css
 app/                 the built web app (served at / and /app/)
 tools/               check_m3.py (request board, ~60s) · check_m4.py (read models, ~1s)
@@ -107,7 +124,7 @@ shots/               screenshots used as delivery evidence
 ## Verify it
 
 ```bash
-python3 -m unittest discover -s tests    # 209 backend tests
+python3 -m unittest discover -s tests    # 236 backend tests
 python3 tools/check_m3.py                # 19 checks: the request loop over HTTP (real pipeline)
 python3 tools/check_m4.py                # 32 checks: read models, read-only, no money moves
 cd web && npm run build && npx tsc --noEmit

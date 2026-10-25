@@ -168,8 +168,12 @@ The expensive doors are rate limited in-process (requests, simulate, search, Sla
 | `GET/POST /api/v1/agents/{id}/keys` · `DELETE …/keys/{kid}` | admin | **M3 done** — `vkey_…`, shown once, stored hashed |
 | `GET /api/v1/analytics?from&to=` | session | **M4 done** — daily series and agent/tag/vendor/category/rule aggregates |
 | `GET /api/v1/integrations` | session | **M4 done** — Slack endpoints + routing, wallet, agent keys |
+| `GET /api/v1/routines` | session | **M6 done** — the standing jobs with their month and next run |
+| `POST /api/v1/agents/{id}/routine` · `/pause` · `/resume` | admin/approver | **M6 done** — save the standing job, stop or restart it |
+| `POST /api/v1/agents/{id}/routine/run` · `/run/stream` | admin/approver | **M6 done** — run once; the streamed form emits the same frames as a dry run, then the run |
 | `GET /` · `GET /app/*` | — | **M4 done** — the built app; both serve the same shell |
-| `POST /api/slack/veto` · `POST /api/slack/interact` | Slack signature | kept from v1 |
+| `POST /api/slack/veto` | Slack signature | **M6** — one Request URL for every Slack command: `/veto`, `/veto-status`, `/veto-budget`, `/veto-routines`, `/veto-help` |
+| `POST /api/slack/interact` | Slack signature | **M3 done** — Approve/Veto buttons, challenge probe |
 | `GET /api/health` | — | extended (db, seeded, counts) |
 
 The request board is now the store, not the old in-memory engine:
@@ -207,6 +211,42 @@ The old static console (`index.html`, `ui/`) is deleted: `/` and `/app/` serve t
 React app, and `/demo` no longer exists. `/connect` remains as the one-page wallet setup
 utility (it drives the legacy engine's PayPal vault flow); everything the product does now
 lives behind `/api/v1/*`.
+
+### Slack command surface
+
+`POST /api/slack/veto` serves five commands from one Request URL; the signed payload's
+`command` field selects the handler. All answers are ephemeral, and `/veto-status` carries
+the same Approve/Veto buttons as a request message.
+
+| Command | Behavior | Usage hint shown in Slack |
+|---|---|---|
+| `/veto <text>` | create a request through routing + pipeline | `what to buy — e.g. 2 packs of toilet paper` |
+| `/veto-status [agent]` | up to five awaiting requests, oldest first, each with Approve/Veto | `[agent] — leave empty for everything` |
+| `/veto-budget [agent]` | workspace settled/committed/left, then per-agent caps | `[agent] — leave empty for the whole workspace` |
+| `/veto-routines [agent]` | cadence, envelope, next run and last outcome per routine | `[agent] — leave empty for every routine` |
+| `/veto-help` (`/veto help`) | the command list | — |
+
+The command metadata lives in `veto/slack_commands.py`; `slack/link.py`,
+`slack/manifest.yml` and the Integrations screen read the same list, so the manifest and the
+UI cannot drift. Every command shares `SLACK_SIGNING_SECRET` verification and the per-user
+Slack rate limit.
+
+### Routines
+
+An agent owns at most one routine: a standing instruction, a cadence (`daily`, `weekly`,
+`monthly`), a monthly envelope and a dedupe window. `veto/routines.py` runs a due routine
+through the same `requests.create` path as any other request:
+
+- the scheduler claims a due slot with one conditional `UPDATE`, so a restart or two ticks
+  cannot order twice; a missed slot is caught up once and the cadence resumes from now;
+- a run inside the dedupe window is recorded as `skipped`, not reordered;
+- a cart that would cross the routine's remaining envelope is escalated (reason
+  `routine_envelope`) instead of captured; an exhausted envelope skips the run;
+- each run is a `routine_runs` row (`captured`, `awaiting`, `approved`, `blocked`,
+  `skipped`, `failed`) linked to its request; `public_request` carries the routine name.
+
+Tables: `routines` (one per agent, `next_run_at`, `last_run_at`, envelope, dedupe) and
+`routine_runs` (due/start/finish, outcome, request, amount, note).
 
 ## 5. Screens and data ownership
 
@@ -259,7 +299,7 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 | M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | **done (2026-10-23)** |
 | M4 | Inbox, Record, Analytics, Integrations; Overview rewritten; palette retuned to the ledger tone; old console deleted; `/` flips to the app; model routing for Slack | **done (2026-10-24)** |
 | M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | **in progress (2026-10-26)** — rate limits, real agent budget track, send-from-dry-run, parallel item search and the streamed dry run are done; UI smoke test and hosting next |
-| M6 | README/SPEC/PRODUCT, deploy, video, Devpost text | |
+| M6 | routines (standing jobs) + Slack command surface, UI smoke test, hosting, video, Devpost | **in progress (2026-10-26)** — routine schema, scheduler, envelope, run history and the five Slack commands are live; routine UI, smoke test, hosting and video next |
 
 ## 9. Running it
 
@@ -267,9 +307,9 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (209)
+python3 -m unittest discover -s tests    # backend tests (222)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
-python3 tools/check_m4.py                # 32 checks: screens' data, read-only (~1s)
+python3 tools/check_m4.py                # 34 checks: screens' data, read-only (~1s)
 ```
 
 M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
@@ -304,6 +344,15 @@ trail stage as it lands, one `item` frame per cart line as it resolves, then `re
 The console shows the stages and the items filling in instead of a spinner; the run is
 still read-only. A multi-item cart searches and chooses items concurrently, and the
 expensive doors are rate limited.
+
+M6 gives the agent a standing job. A routine is a standing instruction, a cadence, a
+monthly envelope and a dedupe window; the runner's scheduler claims each due slot once
+and runs it through the same pipeline, so a routine run is judged, consented and captured
+exactly like a hand-typed request. Over-envelope runs escalate instead of capturing, and
+every run is recorded on the agent. The same surface is reachable from Slack: `/veto-status`,
+`/veto-budget`, `/veto-routines` and `/veto-help` share one Request URL with `/veto`, and
+`/veto-status` returns the Approve/Veto buttons. The command list is data in
+`veto/slack_commands.py`, consumed by the server, the manifest and the Integrations screen.
 
 `PAYPAL_LIVE=0` runs the whole loop against the in-process PayPal simulator with no keys.
 Hosted deploys pass the approved `PAYPAL_VAULT_ID` through the environment.

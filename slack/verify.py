@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the Slack app is wired correctly — and print the two URLs to paste.
+"""Prove the Slack app is wired correctly — and print the URL and commands to paste.
 
     python3 slack/verify.py            # safe: no purchases, no new requests
     python3 slack/verify.py --live     # also posts a real /veto (spends sandbox money)
@@ -8,7 +8,7 @@ Checks, in order:
   1. a signing secret and bot token are present in .env
   2. the bot token is real (auth.test) and says which workspace it belongs to
   3. the runner is reachable at the public URL Slack has to call
-  4. that URL is the one the Slack app must be configured with, printed in full
+  4. the Request URL and every command the Slack app must be configured with
   5. both request URLs answer the way Slack expects (ssl_check, and a signed POST)
 
 The URL checks are the safe signed call with an empty text — Veto answers
@@ -29,6 +29,10 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from veto.slack_commands import COMMANDS  # noqa: E402
 
 
 def dotenv() -> dict:
@@ -103,9 +107,11 @@ def main() -> int:
             problems.append("public URL does not answer")
 
         print("\n4. what the Slack app must be pointed at")
-        print(f"   slash command  : {base}/api/slack/veto")
-        print(f"   interactivity  : {base}/api/slack/interact")
-        print("   (paste these into api.slack.com/apps after every runner restart)")
+        print(f"   request URL (all commands) : {base}/api/slack/veto")
+        print(f"   interactivity              : {base}/api/slack/interact")
+        print("   commands to create         : "
+              + ", ".join(command["command"] for command in COMMANDS))
+        print("   (paste the request URL into every command row, after every restart)")
 
         print("\n5. Slack request checks")
         try:
@@ -151,6 +157,42 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             print(f"   signed /veto   : FAILED {exc}")
             problems.append("signed slash command failed")
+
+        # every other command is read-only, so probing them spends nothing
+        for command in COMMANDS:
+            if command["command"] == "/veto":
+                continue
+            body_form = urllib.parse.urlencode({
+                "command": command["command"],
+                "text": "",
+                "user_name": "verify",
+                "channel_name": "office-ops",
+                "response_url": "https://hooks.slack.com/commands/verify",
+            }).encode()
+            stamp = str(int(time.time()))
+            signature = "v0=" + hmac.new(
+                secret.encode(), b"v0:" + stamp.encode() + b":" + body_form,
+                hashlib.sha256,
+            ).hexdigest()
+            probe = urllib.request.Request(
+                base + "/api/slack/veto", data=body_form,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-Slack-Request-Timestamp": stamp,
+                    "X-Slack-Signature": signature,
+                },
+            )
+            try:
+                with urllib.request.urlopen(probe, timeout=30) as reply_res:
+                    reply = json.loads(reply_res.read())
+                shaped = bool(reply.get("blocks")) and bool(reply.get("text"))
+                print(f"   signed {command['command']:<14}: "
+                      f"{'ok' if shaped else 'no blocks'} · {(reply.get('text') or '')[:52]}")
+                if not shaped:
+                    problems.append(f"{command['command']} returned no blocks")
+            except Exception as exc:  # noqa: BLE001
+                print(f"   signed {command['command']:<14}: FAILED {exc}")
+                problems.append(f"{command['command']} failed")
 
         if token and "-v" in os.environ.get("VETO_ARGV", ""):
             print("\n5. hello message")

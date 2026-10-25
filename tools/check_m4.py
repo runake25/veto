@@ -187,6 +187,17 @@ def run_checks() -> bool:
     check("slack routes by model, not by channel",
           slack.get("routing") == "model" and "routes" not in slack,
           f"routing={slack.get('routing')}")
+    commands = slack.get("commands") or []
+    check("slack exposes its command surface",
+          {row.get("command") for row in commands} >= {
+              "/veto", "/veto-status", "/veto-budget", "/veto-routines", "/veto-help"},
+          ", ".join(row.get("command", "?") for row in commands))
+    check("every Slack command carries its own copy",
+          len(commands) >= 5
+          and all(row.get("description") for row in commands)
+          and all(row.get("usage_hint")
+                  for row in commands if row.get("command") != "/veto-help"),
+          f"{sum(1 for row in commands if row.get('usage_hint'))} with hints")
     scopes = [
         (agent.get("categories"), agent.get("merchants"))
         for agent in integrations.get("agents") or []

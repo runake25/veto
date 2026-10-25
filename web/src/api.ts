@@ -212,6 +212,12 @@ export interface IntegrationsData {
     slash_url: string
     interact_url: string
     public_url: string
+    commands: {
+      command: string
+      description: string
+      usage_hint: string
+      example: string
+    }[]
     default_agent: { id: string; name: string } | null
     routing: 'model'
   }

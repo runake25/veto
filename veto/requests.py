@@ -135,11 +135,19 @@ def create(
     initiator_user_id: str | None = None,
     settlement: Settlement | None = None,
     route: dict | None = None,
+    routine: dict | None = None,
+    progress=None,
     extract_fn=None,
     search_fn=None,
     choose_fn=None,
 ) -> dict:
-    """Run the pipeline, persist the request and settle it if the rules allow."""
+    """Run the pipeline, persist the request and settle it if the rules allow.
+
+    ``routine`` carries the standing job this run belongs to: its remaining
+    monthly envelope can turn an ``auto`` decision into a review, so a routine
+    cannot quietly spend past the ceiling a human approved for it. ``progress``
+    is the pipeline's callback, used by the streamed endpoints.
+    """
     body = str(text or "").strip()
     if not body:
         raise RequestError(400, "missing_text", "A request needs something to buy.")
@@ -156,6 +164,7 @@ def create(
             extract_fn=extract_fn,
             search_fn=search_fn,
             choose_fn=choose_fn,
+            progress=progress,
             month_spent_cents=month_spent,
             workspace_monthly_budget_cents=workspace.get("monthly_budget_cents"),
         )
@@ -166,6 +175,43 @@ def create(
     outcome = decision["outcome"]
     lines = result["lines"]
     total_cents = int(result["total_cents"])
+
+    if routine and outcome == "auto":
+        remaining = routine.get("remaining_cents")
+        if remaining is not None and total_cents > int(remaining):
+            # The envelope is a ceiling on the job, not on one cart. A run that
+            # crosses it becomes a review instead of an unsupervised capture.
+            message = (
+                f"This run would spend ${total_cents / 100:,.2f}; the routine has "
+                f"${int(remaining) / 100:,.2f} left this month."
+            )
+            decision = {
+                **decision,
+                "outcome": "review",
+                "reasons": [
+                    *(decision.get("reasons") or []),
+                    {
+                        "rule": "routine_envelope",
+                        "severity": "wait",
+                        "message": message,
+                        "observed_cents": total_cents,
+                        "limit_cents": int(remaining),
+                        "unblock": "Approve this run, or raise the routine's envelope.",
+                    },
+                ],
+            }
+            outcome = "review"
+            result["decision"] = decision
+            result["events"] = [
+                {**event, "label": "Decision: review", "detail": message}
+                if event.get("kind") == "decision" else event
+                for event in (result.get("events") or [])
+            ] + [{
+                "kind": "envelope",
+                "label": "Routine envelope reached",
+                "detail": f"${int(remaining) / 100:,.2f} left · waiting for a signature",
+            }]
+
     status = _OUTCOME_STATUS.get(outcome, STATUS_BLOCKED)
 
     events = list(result.get("events") or [])
@@ -450,6 +496,7 @@ def public_summary(row: dict) -> dict:
         "line_count": row.get("line_count") or 0,
         "created_at": row.get("created_at"),
         "decided_at": row.get("decided_at"),
+        "routine_name": row.get("routine_name"),
         "agent": {
             "id": row.get("agent_id"),
             "name": row.get("agent_name"),
@@ -484,6 +531,17 @@ def public_request(record: dict, *, full: bool = True) -> dict:
         "channel": agent.get("channel"),
         "status": agent.get("status"),
     }
+    routine = record.get("routine") or {}
+    data["routine"] = (
+        {
+            "id": routine.get("id"),
+            "name": routine.get("name"),
+            "cadence": routine.get("cadence"),
+            "run_id": routine.get("run_id"),
+        }
+        if routine
+        else None
+    )
     if not full:
         return data
 

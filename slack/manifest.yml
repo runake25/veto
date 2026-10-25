@@ -13,7 +13,26 @@ features:
     - command: /veto
       url: https://REPLACE-ME.ngrok-free.app/api/slack/veto
       description: Order supplies through the team's spending rules.
-      usage_hint: 2 packs of bamboo toilet paper
+      usage_hint: what to buy — e.g. 2 packs of toilet paper
+      should_escape: false
+    - command: /veto-status
+      url: https://REPLACE-ME.ngrok-free.app/api/slack/veto
+      description: Show what is waiting for a signature.
+      usage_hint: "[agent] — leave empty for everything"
+      should_escape: false
+    - command: /veto-budget
+      url: https://REPLACE-ME.ngrok-free.app/api/slack/veto
+      description: "Show this month's money: settled, waiting, left."
+      usage_hint: "[agent] — leave empty for the whole workspace"
+      should_escape: false
+    - command: /veto-routines
+      url: https://REPLACE-ME.ngrok-free.app/api/slack/veto
+      description: Show the agents' standing jobs and when they run next.
+      usage_hint: "[agent] — leave empty for every routine"
+      should_escape: false
+    - command: /veto-help
+      url: https://REPLACE-ME.ngrok-free.app/api/slack/veto
+      description: Show what Veto can do from Slack.
       should_escape: false
 oauth_config:
   scopes:

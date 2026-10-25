@@ -42,17 +42,26 @@ function SlackCard({ data }: { data: IntegrationsData }) {
         </span>
       </header>
       <p className="card-lede">
-        <span className="mono">/veto</span> takes a cart in plain words. The model reads the
-        request and routes it to the agent whose charter fits it — the channel only records
-        where it was typed.
+        <span className="mono">/veto</span> buys through the rules; the other commands show the
+        manager&rsquo;s side — what waits for a signature, this month&rsquo;s money, and the
+        standing jobs. One Request URL serves all of them.
       </p>
 
       <div className="endpoints">
-        <p className="route-title">Endpoints</p>
-        <div className="endpoint">
-          <span className="endpoint-label">Slash command</span>
-          <span className="endpoint-value mono">{slack.slash_command}</span>
-        </div>
+        <p className="route-title">Commands</p>
+        <ul className="command-list">
+          {slack.commands.map((command) => (
+            <li key={command.command}>
+              <span className="command-name mono">{command.command}</span>
+              <span className="command-text">
+                <span className="command-desc">{command.description}</span>
+                {command.usage_hint ? (
+                  <span className="command-hint mono">{command.usage_hint}</span>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
         <div className="endpoint">
           <span className="endpoint-label">Request URL</span>
           <span className="endpoint-value mono">{slack.slash_url}</span>

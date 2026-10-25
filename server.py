@@ -26,14 +26,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from veto.engine import ApprovalPending, Engine, VaultRequired  # noqa: E402
-from veto.store import Store, month_start_iso  # noqa: E402
+from veto.store import Store, month_start_iso, parse_iso  # noqa: E402
 from veto import auth as veto_auth  # noqa: E402
 from veto import pipeline as veto_pipeline  # noqa: E402
 from veto.policy import RULE_KINDS  # noqa: E402
 from veto import requests as veto_requests  # noqa: E402
 from veto import routing as veto_routing  # noqa: E402
+from veto import routines as veto_routines  # noqa: E402
 from veto.ratelimit import RateLimiter  # noqa: E402
 from veto import settlement as veto_settlement  # noqa: E402
+from veto import slack_commands as veto_slack  # noqa: E402
 from veto.seed import seed_demo  # noqa: E402
 
 ENGINE = Engine()
@@ -535,13 +537,27 @@ class Handler(BaseHTTPRequestHandler):
             session = self._require_session()
             workspace_id = session["workspace"]["id"]
             totals = STORE.agent_month_totals(workspace_id, since=month_start_iso())
+            routines = {row["agent_id"]: row for row in STORE.list_routines(workspace_id)}
             agents = []
             for agent in STORE.list_agents(workspace_id):
                 month = totals.get(agent["id"]) or {}
+                routine = routines.get(agent["id"])
                 agents.append({
                     **agent,
                     "spent_month_cents": int(month.get("spent_cents") or 0),
                     "committed_month_cents": int(month.get("committed_cents") or 0),
+                    "routine": (
+                        {
+                            "id": routine["id"],
+                            "name": routine["name"],
+                            "cadence": routine["cadence"],
+                            "cadence_word": veto_routines.cadence_word(routine["cadence"]),
+                            "status": routine["status"],
+                            "next_run_at": routine["next_run_at"],
+                        }
+                        if routine
+                        else None
+                    ),
                 })
             self._ok({"agents": agents})
             return True
@@ -564,6 +580,9 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path == "/api/v1/integrations":
             self._v1_integrations()
+            return True
+        if path == "/api/v1/routines":
+            self._v1_list_routines()
             return True
         if path == "/api/v1/requests":
             self._v1_list_requests()
@@ -616,6 +635,19 @@ class Handler(BaseHTTPRequestHandler):
             parts = [unquote(part) for part in path[len("/api/v1/agents/"):].split("/") if part]
             if len(parts) == 2 and parts[1] == "keys":
                 self._v1_create_key(parts[0])
+                return True
+            if len(parts) == 2 and parts[1] == "routine":
+                self._v1_save_routine(parts[0])
+                return True
+            if len(parts) == 3 and parts[1] == "routine" and parts[2] in ("pause", "resume"):
+                self._v1_set_routine_status(parts[0], parts[2])
+                return True
+            if len(parts) == 3 and parts[1] == "routine" and parts[2] == "run":
+                self._v1_routine_run(parts[0])
+                return True
+            if len(parts) == 4 and parts[1] == "routine" and parts[2] == "run" \
+                    and parts[3] == "stream":
+                self._v1_routine_run_stream(parts[0])
                 return True
         self._api_error(404, "not_found", "Unknown route.")
         return True
@@ -872,6 +904,7 @@ class Handler(BaseHTTPRequestHandler):
                 "slash_url": base + "/api/slack/veto",
                 "interact_url": base + "/api/slack/interact",
                 "public_url": base,
+                "commands": [dict(command) for command in veto_slack.COMMANDS],
                 "default_agent": {"id": default_id, "name": names[default_id]}
                 if default_id in names
                 else None,
@@ -1046,7 +1079,166 @@ class Handler(BaseHTTPRequestHandler):
 
 
     def _v1_agent_detail(self, agent_id: str) -> None:
-        self._ok({"agent": self._workspace_agent(agent_id)})
+        session = self._require_session()
+        workspace = session["workspace"]
+        agent = self._workspace_agent(agent_id)
+        routine = STORE.routine_for_agent(workspace["id"], agent_id)
+        runs = (
+            STORE.routine_runs_for(workspace["id"], routine["id"], limit=8)
+            if routine is not None
+            else []
+        )
+        self._ok({
+            "agent": agent,
+            "routine": (
+                veto_routines.public_routine(STORE, workspace, routine)
+                if routine is not None
+                else None
+            ),
+            "runs": [veto_routines.public_run(run) for run in runs],
+        })
+
+    # -- routines: the agent's standing job ------------------------------
+    def _v1_list_routines(self) -> None:
+        session = self._require_session()
+        workspace = session["workspace"]
+        rows = STORE.list_routines(workspace["id"])
+        self._ok({
+            "routines": [veto_routines.public_routine(STORE, workspace, row) for row in rows]
+        })
+
+    def _v1_save_routine(self, agent_id: str) -> None:
+        """Create or edit an agent's standing job. A human signs off every edit."""
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        agent = STORE.agent(workspace["id"], agent_id)
+        if agent is None:
+            self._api_error(404, "agent_not_found", "That agent does not exist.")
+        routine = STORE.routine_for_agent(workspace["id"], agent_id)
+        body = self._body()
+
+        cadence = str(
+            body.get("cadence") if "cadence" in body
+            else (routine or {}).get("cadence") or "weekly"
+        ).strip().lower()
+        if cadence not in veto_routines.CADENCES:
+            self._api_error(400, "invalid_cadence", "cadence must be daily, weekly or monthly.")
+
+        instruction = str(
+            body.get("instruction") if "instruction" in body
+            else (routine or {}).get("instruction") or ""
+        ).strip()
+        if len(instruction) < 3:
+            self._api_error(
+                400, "missing_instruction",
+                "Say what the agent should buy on its routine.",
+            )
+        instruction = instruction[:MAX_SIMULATE_CHARS]
+
+        name = str(
+            body.get("name") if "name" in body
+            else (routine or {}).get("name") or f"{agent['name']} routine"
+        ).strip()[:80] or f"{agent['name']} routine"
+
+        try:
+            envelope = int(body.get("envelope_cents")
+                           if "envelope_cents" in body
+                           else (routine or {}).get("envelope_cents") or 0)
+            dedupe = int(body.get("dedupe_days")
+                         if "dedupe_days" in body
+                         else (routine or {}).get("dedupe_days") or 0)
+        except (TypeError, ValueError):
+            self._api_error(400, "invalid_routine", "The envelope and window must be numbers.")
+        envelope = max(0, min(10_000_000, envelope))
+        dedupe = max(0, min(365, dedupe))
+
+        user_id = session["user"]["id"]
+        if routine is None:
+            routine = STORE.create_routine(
+                workspace["id"],
+                agent_id,
+                name=name,
+                instruction=instruction,
+                cadence=cadence,
+                envelope_cents=envelope,
+                dedupe_days=dedupe,
+                next_run_at=veto_routines.next_run_at(cadence),
+                created_by=user_id,
+                approved_by=user_id,
+            )
+        else:
+            fields = {
+                "name": name,
+                "instruction": instruction,
+                "cadence": cadence,
+                "envelope_cents": envelope,
+                "dedupe_days": dedupe,
+                "approved_by": user_id,
+            }
+            if cadence != routine["cadence"]:
+                fields["next_run_at"] = veto_routines.next_run_at(cadence)
+            routine = STORE.update_routine(workspace["id"], routine["id"], fields=fields)
+        self._ok({"routine": veto_routines.public_routine(STORE, workspace, routine)})
+
+    def _v1_set_routine_status(self, agent_id: str, action: str) -> None:
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        routine = STORE.routine_for_agent(workspace["id"], agent_id)
+        if routine is None:
+            self._api_error(404, "no_routine", "This agent has no routine yet.")
+        fields: dict = {"status": "paused" if action == "pause" else "active"}
+        if action == "resume":
+            nxt = parse_iso(routine.get("next_run_at"))
+            if nxt is not None and nxt <= datetime.now(timezone.utc):
+                # a paused routine resumes on its cadence; it does not backfill
+                fields["next_run_at"] = veto_routines.next_run_at(routine["cadence"])
+        routine = STORE.update_routine(workspace["id"], routine["id"], fields=fields)
+        self._ok({"routine": veto_routines.public_routine(STORE, workspace, routine)})
+
+    def _routine_run_payload(self, workspace: dict, run: dict) -> dict:
+        record = (
+            STORE.request(workspace["id"], run["request_id"])
+            if run.get("request_id")
+            else None
+        )
+        return {
+            "run": veto_routines.public_run(run),
+            "request": veto_requests.public_request(record) if record else None,
+        }
+
+    def _routine_for_run(self, agent_id: str) -> tuple[dict, dict]:
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        routine = STORE.routine_for_agent(workspace["id"], agent_id)
+        if routine is None:
+            self._api_error(404, "no_routine", "This agent has no routine yet.")
+        if routine["status"] != "active":
+            self._api_error(
+                409, "routine_paused", "Resume the routine before running it."
+            )
+        self._limit("simulate", f"user:{session['user']['id']}", RATE_SESSION_PER_MIN)
+        return workspace, routine
+
+    def _v1_routine_run(self, agent_id: str) -> None:
+        workspace, routine = self._routine_for_run(agent_id)
+        run = veto_routines.run_once(STORE, workspace, routine, settlement=SETTLEMENT)
+        self._ok(self._routine_run_payload(workspace, run))
+
+    def _v1_routine_run_stream(self, agent_id: str) -> None:
+        """Run the routine now, streaming the same frames as a dry run, then the run."""
+        workspace, routine = self._routine_for_run(agent_id)
+        emit = self._start_sse()
+        try:
+            run = veto_routines.run_once(
+                STORE, workspace, routine, settlement=SETTLEMENT, progress=emit
+            )
+        except Exception:  # noqa: BLE001 - the stream is already open; report, don't 500
+            traceback.print_exc()
+            emit({"type": "error",
+                  "error": {"code": "server_error", "message": "The run failed."}})
+            return
+        payload = self._routine_run_payload(workspace, run)
+        emit({"type": "run", **payload})
 
     def _v1_agent_search(self, agent_id: str) -> None:
         agent = self._workspace_agent(agent_id)
@@ -1123,6 +1315,34 @@ class Handler(BaseHTTPRequestHandler):
             self._api_error(400, "no_intent", str(exc))
         self._ok(result)
 
+    def _start_sse(self):
+        """Open a server-sent-event response and return its emit(payload) writer."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("Connection", "close")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        lock = threading.Lock()
+        closed = False
+
+        def emit(payload: dict) -> None:
+            nonlocal closed
+            if closed:
+                return
+            frame = b"data: " + json.dumps(payload, separators=(",", ":")).encode() + b"\n\n"
+            try:
+                with lock:
+                    self.wfile.write(frame)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                # the reader went away; the work keeps going but says nothing
+                closed = True
+
+        emit({"type": "start"})
+        return emit
+
     def _v1_simulate_stream(self) -> None:
         """The same dry run as ``/simulate``, streamed as server-sent events.
 
@@ -1151,30 +1371,7 @@ class Handler(BaseHTTPRequestHandler):
             workspace["id"], agent_id=agent["id"], since=month_start_iso()
         )
 
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache, no-transform")
-        self.send_header("Connection", "close")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-
-        lock = threading.Lock()
-        closed = False
-
-        def emit(payload: dict) -> None:
-            nonlocal closed
-            if closed:
-                return
-            frame = b"data: " + json.dumps(payload, separators=(",", ":")).encode() + b"\n\n"
-            try:
-                with lock:
-                    self.wfile.write(frame)
-                    self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                # the reader went away; the pipeline keeps running but says nothing
-                closed = True
-
-        emit({"type": "start"})
+        emit = self._start_sse()
         try:
             result = veto_pipeline.simulate(
                 agent,
@@ -1369,13 +1566,27 @@ class Handler(BaseHTTPRequestHandler):
         if not allowed:
             self._json(200, {
                 "response_type": "ephemeral",
-                "text": f"One cart at a time — too many requests. Try again in "
+                "text": f"Easy — too many Veto commands. Try again in "
                         f"{max(1, int(round(retry)))}s.",
             })
             return
         text = (form.get("text") or "").strip()
-        command = form.get("command") or "/veto"
+        command = (form.get("command") or "/veto").strip()
         response_url = form.get("response_url") or ""
+
+        # Several Slack commands share this one Request URL; the payload names
+        # the command that was actually typed.
+        if command == "/veto-status":
+            return self._json(200, self._slack_status_payload(text))
+        if command == "/veto-budget":
+            return self._json(200, self._slack_budget_payload(text))
+        if command == "/veto-routines":
+            return self._json(200, self._slack_routines_payload(text))
+        if command == "/veto-help" or text.lower() in ("help", "?", "commands"):
+            return self._json(200, veto_slack.help_payload(public_base()))
+        if command != "/veto":
+            return self._json(200, veto_slack.help_payload(public_base()))
+
         if text and response_url:
             self._json(200, {
                 "response_type": "ephemeral",
@@ -1384,6 +1595,107 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=self._slack_veto_job, args=(form, response_url), daemon=True).start()
             return
         self._json(200, self._slack_veto_payload(form))
+
+    def _slack_status_payload(self, text: str) -> dict:
+        """What waits for a signature, with the same Approve/Veto buttons as a request."""
+        workspace = self._demo_workspace()
+        if workspace is None:
+            return {"response_type": "ephemeral", "text": "No workspace is seeded."}
+        agents = STORE.list_agents(workspace["id"])
+        only = veto_slack.match_agents(text, agents)
+        pending = STORE.list_requests(
+            workspace["id"], status="awaiting", limit=10, oldest_first=True
+        )
+        if only is not None:
+            pending = [row for row in pending if row["agent_id"] in only]
+            if not pending:
+                return {
+                    "response_type": "ephemeral",
+                    "text": f"Nothing is waiting for “{text}”. Try `/veto-status` for everything.",
+                }
+        pending = pending[:5]
+        counts = STORE.overview_counts(workspace["id"], month_start=month_start_iso())
+        routines = STORE.list_routines(workspace["id"])
+        nxt = min(routines, key=lambda row: row["next_run_at"]) if routines else None
+        next_routine = (
+            {
+                "name": nxt["name"],
+                "agent_name": nxt.get("agent_name") or "",
+                "next_run_at": nxt["next_run_at"],
+            }
+            if nxt
+            else None
+        )
+        return veto_slack.status_payload(
+            pending,
+            committed_cents=int(counts.get("committed_cents") or 0),
+            capture_owed=STORE.count_requests(workspace["id"], status="approved"),
+            next_routine=next_routine,
+            base_url=public_base(),
+        )
+
+    def _slack_budget_payload(self, text: str) -> dict:
+        """This month's money: workspace total, then one line per agent."""
+        workspace = self._demo_workspace()
+        if workspace is None:
+            return {"response_type": "ephemeral", "text": "No workspace is seeded."}
+        agents = STORE.list_agents(workspace["id"])
+        only = veto_slack.match_agents(text, agents)
+        totals = STORE.agent_month_totals(workspace["id"], since=month_start_iso())
+        rows = []
+        for agent in agents:
+            if only is not None and agent["id"] not in only:
+                continue
+            month = totals.get(agent["id"]) or {}
+            rows.append({
+                "name": agent["name"],
+                "monthly_cap_cents": agent.get("monthly_cap_cents") or 0,
+                "spent_cents": int(month.get("spent_cents") or 0),
+                "committed_cents": int(month.get("committed_cents") or 0),
+            })
+        if only is not None and not rows:
+            return {
+                "response_type": "ephemeral",
+                "text": f"No agent matches “{text}”. Try `/veto-budget` for the workspace.",
+            }
+        counts = STORE.overview_counts(workspace["id"], month_start=month_start_iso())
+        return veto_slack.budget_payload(
+            agents=rows,
+            budget_cents=int(workspace.get("monthly_budget_cents") or 0),
+            settled_cents=int(counts.get("settled_month_cents") or 0),
+            committed_cents=int(counts.get("committed_cents") or 0),
+            base_url=public_base(),
+        )
+
+    def _slack_routines_payload(self, text: str) -> dict:
+        """The standing jobs: cadence, envelope, next run, last outcome."""
+        workspace = self._demo_workspace()
+        if workspace is None:
+            return {"response_type": "ephemeral", "text": "No workspace is seeded."}
+        agents = STORE.list_agents(workspace["id"])
+        only = veto_slack.match_agents(text, agents)
+        rows = STORE.list_routines(workspace["id"])
+        if only is not None:
+            rows = [row for row in rows if row["agent_id"] in only]
+            if not rows:
+                return {
+                    "response_type": "ephemeral",
+                    "text": f"No routine matches “{text}”. Try `/veto-routines`.",
+                }
+        enriched = []
+        for row in rows:
+            public = veto_routines.public_routine(STORE, workspace, row)
+            runs = STORE.routine_runs_for(workspace["id"], row["id"], limit=1)
+            enriched.append({
+                "name": public["name"],
+                "agent_name": row.get("agent_name") or "",
+                "cadence_word": public["cadence_word"],
+                "next_run_at": public["next_run_at"],
+                "envelope_cents": public["envelope_cents"],
+                "spent_cents": public["spent_cents"],
+                "last": runs[0] if runs else None,
+            })
+        return veto_slack.routines_payload(enriched, base_url=public_base())
 
     def _slack_veto_job(self, form: dict, response_url: str) -> None:
         message = self._slack_veto_payload(form)
@@ -1595,6 +1907,8 @@ def main() -> int:
     if PUBLIC_URL:
         print(f"  public    {PUBLIC_URL}")
         print(f"  slack     {PUBLIC_URL}/api/slack/veto   {PUBLIC_URL}/api/slack/interact")
+    # the schedule lives in this process: due routines run through the same pipeline
+    veto_routines.start_scheduler(STORE, SETTLEMENT)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

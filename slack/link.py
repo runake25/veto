@@ -5,7 +5,7 @@
     python3 slack/link.py https://foo.trycloudflare.com
 
 It prints a URL that opens Slack's "create an app" flow with the whole manifest
-already filled in: slash command, interactivity URL, and the three bot scopes.
+already filled in: all five slash commands, interactivity URL, and the bot scopes.
 Pick a workspace, press Create, then Install.
 
 Slack documents this link shape at
@@ -19,6 +19,10 @@ import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from veto.slack_commands import COMMANDS  # noqa: E402
 
 
 def dotenv() -> dict:
@@ -49,12 +53,17 @@ def manifest(base: str) -> dict:
             "bot_user": {"display_name": "Veto", "always_online": True},
             "slash_commands": [
                 {
-                    "command": "/veto",
+                    "command": command["command"],
                     "url": f"{base}/api/slack/veto",
-                    "description": "Order supplies through the team's spending rules.",
-                    "usage_hint": "2 packs of bamboo toilet paper",
+                    "description": command["description"],
+                    **(
+                        {"usage_hint": command["usage_hint"]}
+                        if command["usage_hint"]
+                        else {}
+                    ),
                     "should_escape": False,
                 }
+                for command in COMMANDS
             ],
         },
         "oauth_config": {
@@ -84,6 +93,8 @@ def main(argv: list[str]) -> int:
         json.dumps(doc, separators=(",", ":"))
     )
     print("Slack app manifest written to slack/manifest.json for", base)
+    print("\nCommands in the manifest:",
+          ", ".join(command["command"] for command in COMMANDS))
     print("\nOpen this to create the app:\n")
     print(link)
     print("\nThen: Install to Workspace → copy the Signing Secret (Basic Information)")
