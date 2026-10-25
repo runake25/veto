@@ -190,10 +190,11 @@ def run_checks() -> bool:
     commands = slack.get("commands") or []
     check("slack exposes its command surface",
           {row.get("command") for row in commands} >= {
-              "/veto", "/veto-status", "/veto-budget", "/veto-routines", "/veto-help"},
+              "/veto", "/veto-check", "/veto-status", "/veto-budget",
+              "/veto-routines", "/veto-help"},
           ", ".join(row.get("command", "?") for row in commands))
     check("every Slack command carries its own copy",
-          len(commands) >= 5
+          len(commands) >= 6
           and all(row.get("description") for row in commands)
           and all(row.get("usage_hint")
                   for row in commands if row.get("command") != "/veto-help"),

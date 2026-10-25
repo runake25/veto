@@ -112,6 +112,67 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(payload["text"], "Waiting on you")
 
 
+class CheckTests(unittest.TestCase):
+    def candidate(self, index: int, verdict: str, amount: int = 1_500) -> dict:
+        return {
+            "index": index,
+            "title": f"Paper towels {index}",
+            "qty": 1,
+            "unit_cents": amount,
+            "line_cents": amount,
+            "vendor": "walmart.com",
+            "category": "pantry",
+            "url": f"https://walmart.example/{index}",
+            "verdict": verdict,
+        }
+
+    def test_the_shortlist_offers_a_button_only_for_chooseable_rows(self) -> None:
+        payload = slack.check_payload(
+            "abc123",
+            query="paper towels",
+            agent_name="Pantry runner",
+            qty=1,
+            candidates=[
+                self.candidate(0, "auto"),
+                self.candidate(1, "review"),
+                self.candidate(2, "block"),
+            ],
+        )
+        text = "\n".join(section_texts(payload))
+        self.assertIn("Top 3", text)
+        self.assertIn("Paper towels 0", text)
+        self.assertIn("fits", text)
+        self.assertIn("needs a signature", text)
+        self.assertIn("blocked by the rules", text)
+        buttons = actions(payload)
+        self.assertEqual([button["action_id"] for button in buttons], ["veto_pick", "veto_pick"])
+        self.assertEqual([button["value"] for button in buttons], ["abc123:0", "abc123:1"])
+        labels = [button["text"]["text"] for button in buttons]
+        self.assertEqual(labels, ["Choose", "Choose · needs signature"])
+
+    def test_a_multi_unit_check_prices_the_line_and_says_so(self) -> None:
+        candidate = self.candidate(0, "auto", amount=999)
+        candidate["qty"] = 2
+        candidate["line_cents"] = 1_998
+        candidate["unit_cents"] = 999
+        payload = slack.check_payload(
+            "abc", query="paper towels", agent_name="Pantry runner",
+            qty=2, candidates=[candidate],
+        )
+        text = "\n".join(section_texts(payload))
+        self.assertIn("$19.98", text)
+        self.assertIn("2 × $9.99", text)
+        self.assertIn("2 per item", text)
+
+    def test_no_matches_is_an_honest_empty_state(self) -> None:
+        payload = slack.check_payload(
+            "abc", query="wagyu", agent_name="Pantry runner", qty=1, candidates=[],
+        )
+        text = "\n".join(section_texts(payload))
+        self.assertIn("No match inside Pantry runner", text)
+        self.assertEqual(actions(payload), [])
+
+
 class BudgetTests(unittest.TestCase):
     def test_budget_shows_workspace_then_agents(self) -> None:
         payload = slack.budget_payload(

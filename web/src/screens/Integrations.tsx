@@ -42,9 +42,10 @@ function SlackCard({ data }: { data: IntegrationsData }) {
         </span>
       </header>
       <p className="card-lede">
-        <span className="mono">/veto</span> buys through the rules; the other commands show the
-        manager&rsquo;s side — what waits for a signature, this month&rsquo;s money, and the
-        standing jobs. One Request URL serves all of them.
+        <span className="mono">/veto</span> buys through the rules; <span className="mono">
+        /veto-check</span> shows the shortlist so a person can pick the exact offer; the rest
+        show the manager&rsquo;s side — what waits for a signature, this month&rsquo;s money,
+        and the standing jobs. One Request URL serves all of them.
       </p>
 
       <div className="endpoints">

@@ -31,6 +31,7 @@ from veto import auth as veto_auth  # noqa: E402
 from veto import pipeline as veto_pipeline  # noqa: E402
 from veto.policy import RULE_KINDS  # noqa: E402
 from veto import requests as veto_requests  # noqa: E402
+from veto import check as veto_check  # noqa: E402
 from veto import routing as veto_routing  # noqa: E402
 from veto import routines as veto_routines  # noqa: E402
 from veto.ratelimit import RateLimiter  # noqa: E402
@@ -1433,10 +1434,24 @@ class Handler(BaseHTTPRequestHandler):
         if not actions:
             return self._json(200, {"ok": True})
         action = actions[0]
-        rid = action.get("value") or ""
-        verb = "approve" if action.get("action_id") == "veto_approve" else "veto"
+        action_id = action.get("action_id") or ""
+        value = action.get("value") or ""
         user = (payload.get("user") or {}).get("username") or (payload.get("user") or {}).get("name") or "a human"
         response_url = payload.get("response_url") or ""
+
+        # A person picked one offer from a /veto-check shortlist.
+        if action_id == "veto_pick":
+            if response_url:
+                self._json(200, {"ok": True})
+                threading.Thread(
+                    target=self._slack_pick_job,
+                    args=(value, user, response_url), daemon=True
+                ).start()
+                return
+            return self._json(200, self._slack_pick_payload(value, user))
+
+        rid = value
+        verb = "approve" if action_id == "veto_approve" else "veto"
 
         # PayPal captures take a second or two; Slack gives us three. Ack first,
         # then replace the message through response_url from a worker thread.
@@ -1542,6 +1557,123 @@ class Handler(BaseHTTPRequestHandler):
             payload["blocks"][0]["text"]["text"] = first + f"\n_Actioned by @{user} in Slack_"
         return payload
 
+    # -- veto-check: show the shortlist, then buy the exact pick ----------
+    def _slack_check(self, text: str, response_url: str, user: str) -> None:
+        if not text:
+            return self._json(200, {
+                "response_type": "ephemeral",
+                "text": "`/veto-check` needs something to look for. "
+                        "Try: `/veto-check paper towels`",
+            })
+        # routing + a catalogue search take longer than Slack's three seconds
+        if response_url:
+            self._json(200, {
+                "response_type": "ephemeral",
+                "text": f"Checking the catalogue for “{text[:80]}”…",
+            })
+            threading.Thread(
+                target=self._slack_check_job,
+                args=(text, response_url, user), daemon=True
+            ).start()
+            return
+        self._json(200, self._slack_check_payload(text))
+
+    def _slack_check_job(self, text: str, response_url: str, user: str) -> None:
+        message = self._slack_check_payload(text)
+        message.setdefault("response_type", "ephemeral")
+        post_json(response_url, message)
+
+    def _slack_check_payload(self, text: str) -> dict:
+        workspace = self._demo_workspace()
+        if workspace is None:
+            return {"response_type": "ephemeral", "text": "No workspace is seeded."}
+        try:
+            agent, _decision = veto_routing.route_request(STORE, workspace, text)
+        except Exception:  # noqa: BLE001 - routing has its own fallback; be defensive
+            traceback.print_exc()
+            agent = None
+        if agent is None:
+            return {"response_type": "ephemeral", "text": "This workspace has no agents yet."}
+        try:
+            check_id, result = veto_check.remember(agent, text)
+        except ValueError:
+            return {
+                "response_type": "ephemeral",
+                "text": "I couldn't find a product to check in that message. "
+                        "Try naming it plainly, e.g. `paper towels`.",
+            }
+        except Exception:  # noqa: BLE001 - the catalogue may be down
+            traceback.print_exc()
+            return {"response_type": "ephemeral",
+                    "text": "The catalogue did not answer. Try again."}
+        return veto_slack.check_payload(
+            check_id,
+            query=result["query"],
+            agent_name=agent.get("name") or "agent",
+            qty=result["qty"],
+            candidates=result["candidates"],
+            source="Channel3" if result["source"] == "channel3" else "local catalogue",
+            checked=result["checked"],
+            base_url=public_base(),
+        )
+
+    def _slack_pick_payload(self, value: str, user: str) -> dict:
+        try:
+            check_id, raw_index = value.split(":", 1)
+            index = int(raw_index)
+        except (AttributeError, ValueError):
+            return {"response_type": "ephemeral",
+                    "text": "That choice is not one I can price."}
+        picked = veto_check.resolve(check_id, index)
+        if picked is None:
+            return {"response_type": "ephemeral",
+                    "text": "That check expired. Run `/veto-check` again."}
+        workspace = self._demo_workspace()
+        if workspace is None:
+            return {"response_type": "ephemeral", "text": "No workspace is seeded."}
+        agent = STORE.agent(workspace["id"], picked["agent"]["id"])
+        if agent is None:
+            return {"response_type": "ephemeral",
+                    "text": "The agent behind that check is gone."}
+        try:
+            record = veto_requests.create(
+                STORE,
+                workspace=workspace,
+                agent=agent,
+                text=picked["text"],
+                origin="slack",
+                requester=user.title() if user else None,
+                settlement=SETTLEMENT,
+                pinned_lines=[picked["line"]],
+            )
+        except veto_requests.WalletRequired:
+            return {
+                "response_type": "ephemeral",
+                "text": "The company wallet has to be approved once before this can "
+                        "capture. Connect it in the console, then choose again.",
+            }
+        except veto_requests.RequestError as exc:
+            return {"response_type": "ephemeral",
+                    "text": f"Could not price that pick: {exc.message}"}
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return {"response_type": "ephemeral",
+                    "text": "The pick failed. Nothing was ordered."}
+        record = STORE.request(workspace["id"], record["id"]) or record
+        payload = self._slack_request_blocks(veto_requests.public_request(record))
+        payload["replace_original"] = True
+        payload["text"] = f"{payload['text']} · chosen by @{user}"
+        if payload.get("blocks"):
+            payload["blocks"][0]["text"]["text"] += (
+                f"\n_Chosen by @{user} from a veto-check_"
+            )
+        return payload
+
+    def _slack_pick_job(self, value: str, user: str, response_url: str) -> None:
+        message = self._slack_pick_payload(value, user)
+        message.setdefault("response_type", "ephemeral")
+        post_json(response_url, message)
+
     def _slack_veto(self) -> None:
         """The slash command itself. Slack sends command/text/user_name/channel_name;
         we answer in Slack's own shape, so the same URL works as a Slack app endpoint
@@ -1582,6 +1714,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, self._slack_budget_payload(text))
         if command == "/veto-routines":
             return self._json(200, self._slack_routines_payload(text))
+        if command == "/veto-check":
+            return self._slack_check(text, response_url, user)
         if command == "/veto-help" or text.lower() in ("help", "?", "commands"):
             return self._json(200, veto_slack.help_payload(public_base()))
         if command != "/veto":

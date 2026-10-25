@@ -15,6 +15,11 @@ features:
       description: Order supplies through the team's spending rules.
       usage_hint: what to buy — e.g. 2 packs of toilet paper
       should_escape: false
+    - command: /veto-check
+      url: https://REPLACE-ME.ngrok-free.app/api/slack/veto
+      description: Show the top five matches so you can pick one or refine.
+      usage_hint: what to look for — e.g. paper towels
+      should_escape: false
     - command: /veto-status
       url: https://REPLACE-ME.ngrok-free.app/api/slack/veto
       description: Show what is waiting for a signature.

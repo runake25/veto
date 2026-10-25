@@ -162,13 +162,17 @@ def main() -> int:
         for command in COMMANDS:
             if command["command"] == "/veto":
                 continue
-            body_form = urllib.parse.urlencode({
+            fields = {
                 "command": command["command"],
-                "text": "",
+                # a check needs something to look for; still read-only
+                "text": "toilet paper" if command["command"] == "/veto-check" else "",
                 "user_name": "verify",
                 "channel_name": "office-ops",
-                "response_url": "https://hooks.slack.com/commands/verify",
-            }).encode()
+            }
+            if command["command"] != "/veto-check":
+                # the check answers inline, so its blocks are visible here
+                fields["response_url"] = "https://hooks.slack.com/commands/verify"
+            body_form = urllib.parse.urlencode(fields).encode()
             stamp = str(int(time.time()))
             signature = "v0=" + hmac.new(
                 secret.encode(), b"v0:" + stamp.encode() + b":" + body_form,
@@ -183,7 +187,7 @@ def main() -> int:
                 },
             )
             try:
-                with urllib.request.urlopen(probe, timeout=30) as reply_res:
+                with urllib.request.urlopen(probe, timeout=90) as reply_res:
                     reply = json.loads(reply_res.read())
                 shaped = bool(reply.get("blocks")) and bool(reply.get("text"))
                 print(f"   signed {command['command']:<14}: "

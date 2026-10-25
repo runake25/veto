@@ -24,6 +24,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from veto import pipeline as veto_pipeline
+from veto import policy
 from veto.settlement import Settlement, SettlementError, VaultRequired
 from veto.store import Store, month_start_iso, now_iso, parse_iso
 
@@ -123,6 +124,82 @@ def _consent(record: dict) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # create
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# a cart a human pinned
+# ---------------------------------------------------------------------------
+def _pinned_result(
+    agent: dict,
+    raw_lines: list[dict],
+    *,
+    month_spent_cents: int,
+    workspace_monthly_budget_cents: int | None,
+) -> dict:
+    """Price a hand-picked cart and judge it. No extract, no search, no chooser."""
+    lines: list[dict] = []
+    items: list[dict] = []
+    for raw in raw_lines or []:
+        title = str(raw.get("title") or "").strip()
+        try:
+            unit = int(raw.get("unit_cents") or 0)
+            qty = max(1, min(99, int(raw.get("qty") or 1)))
+        except (TypeError, ValueError):
+            raise RequestError(400, "invalid_cart", "That pick has no usable price.") from None
+        if not title or unit <= 0:
+            raise RequestError(400, "invalid_cart", "That pick has no priced product.")
+        line = {
+            "sku": str(raw.get("sku") or ""),
+            "title": title[:120],
+            "qty": qty,
+            "unit_cents": unit,
+            "line_cents": unit * qty,
+            "vendor": str(raw.get("vendor") or ""),
+            "category": str(raw.get("category") or "").lower(),
+            "catalogue_category": str(raw.get("catalogue_category") or ""),
+            "brand": str(raw.get("brand") or ""),
+            "image": str(raw.get("image") or ""),
+            "url": str(raw.get("url") or ""),
+            "source": str(raw.get("source") or "channel3"),
+        }
+        lines.append(line)
+        items.append({"name": title, "qty": qty})
+    if not lines:
+        raise RequestError(400, "invalid_cart", "A pick needs at least one product.")
+
+    total_cents = sum(line["line_cents"] for line in lines)
+    events = [{
+        "kind": "pick",
+        "label": "Chosen from a check",
+        "detail": f"{len(lines)} item(s) picked by a person, not the model",
+    }]
+    events.append({
+        "kind": "price",
+        "label": "Cart priced",
+        "detail": " · ".join(f"{line['qty']} x {line['title']}" for line in lines),
+    })
+    decision = policy.evaluate(
+        agent=agent,
+        lines=lines,
+        month_spent_cents=month_spent_cents,
+        workspace_monthly_budget_cents=workspace_monthly_budget_cents,
+    )
+    events.append({
+        "kind": "decision",
+        "label": f"Decision: {decision['outcome']}",
+        "detail": "; ".join(reason["message"] for reason in decision["reasons"])
+                  or "within every rule",
+    })
+    return {
+        "items": items,
+        "lines": lines,
+        "total_cents": total_cents,
+        "currency": CURRENCY,
+        "decision": decision,
+        "events": events,
+        "source": lines[0]["source"],
+        "dry_run": False,
+    }
+
+
 def create(
     store: Store,
     *,
@@ -136,6 +213,7 @@ def create(
     settlement: Settlement | None = None,
     route: dict | None = None,
     routine: dict | None = None,
+    pinned_lines: list[dict] | None = None,
     progress=None,
     extract_fn=None,
     search_fn=None,
@@ -147,6 +225,10 @@ def create(
     monthly envelope can turn an ``auto`` decision into a review, so a routine
     cannot quietly spend past the ceiling a human approved for it. ``progress``
     is the pipeline's callback, used by the streamed endpoints.
+
+    ``pinned_lines`` is a cart a human picked from a veto-check: the pipeline
+    starts at PRICE instead of EXTRACT/SOURCE/CHOOSE, then judges, consents and
+    settles exactly like any other request. The line still has to pass policy.
     """
     body = str(text or "").strip()
     if not body:
@@ -157,19 +239,27 @@ def create(
     month_spent = store.spent_cents(
         workspace["id"], agent_id=agent["id"], since=month_start
     )
-    try:
-        result = veto_pipeline.simulate(
+    if pinned_lines is not None:
+        result = _pinned_result(
             agent,
-            body,
-            extract_fn=extract_fn,
-            search_fn=search_fn,
-            choose_fn=choose_fn,
-            progress=progress,
+            pinned_lines,
             month_spent_cents=month_spent,
             workspace_monthly_budget_cents=workspace.get("monthly_budget_cents"),
         )
-    except ValueError as exc:
-        raise RequestError(400, "no_intent", str(exc)) from exc
+    else:
+        try:
+            result = veto_pipeline.simulate(
+                agent,
+                body,
+                extract_fn=extract_fn,
+                search_fn=search_fn,
+                choose_fn=choose_fn,
+                progress=progress,
+                month_spent_cents=month_spent,
+                workspace_monthly_budget_cents=workspace.get("monthly_budget_cents"),
+            )
+        except ValueError as exc:
+            raise RequestError(400, "no_intent", str(exc)) from exc
 
     decision = result["decision"]
     outcome = decision["outcome"]

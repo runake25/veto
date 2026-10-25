@@ -45,6 +45,9 @@ block   → (no consent, no PayPal object)                        status: blocke
   assembled in the order the request named the items.
 - **The dry run is streamed**: the agent page reads `POST /api/v1/simulate/stream`, so
   each stage and each resolved item appears as it lands instead of behind a spinner.
+- **A check before a bigger buy**: `/veto-check` shows the shortlist the agent's search
+  actually returned inside its rules; choosing one pins that exact offer and re-enters the
+  pipeline at PRICE, so the model never stands in for the person's choice.
 - **Agents are standing jobs**: an agent can own one routine — a standing instruction, a
   cadence, a monthly envelope and a dedupe window. The runner's scheduler claims each due
   slot once, runs it through the same pipeline, records the run, and escalates a cart that
@@ -79,6 +82,7 @@ so the app never needs a second endpoint.
 | Command | It does | Usage hint shown in Slack |
 |---|---|---|
 | `/veto <what to buy>` | creates the request and model-routes it to the agent whose charter fits | `what to buy — e.g. 2 packs of toilet paper` |
+| `/veto-check <what>` | the top five offers the agent's search returned, each with a **Choose** button | `what to look for — e.g. paper towels` |
 | `/veto-status [agent]` | what waits for a signature, with **Approve** / **Veto** buttons | `[agent] — leave empty for everything` |
 | `/veto-budget [agent]` | this month's settled, waiting and left, per agent | `[agent] — leave empty for the whole workspace` |
 | `/veto-routines [agent]` | the standing jobs, their next run and last result | `[agent] — leave empty for every routine` |
@@ -109,7 +113,7 @@ The key scopes the request to its own agent's charter. Revoking it is immediate.
 server.py            one stdlib HTTP runner: API, Slack, the built app, /connect
 veto/                store.py · auth.py · seed.py · policy.py · pipeline.py
                      requests.py (the board) · routines.py (standing jobs)
-                     slack_commands.py (the command surface)
+                     check.py (top-five shortlists) · slack_commands.py (the command surface)
                      settlement.py (the only money mover)
 web/src/             React app: screens/, components/, styles/tokens.css
 app/                 the built web app (served at / and /app/)
@@ -124,7 +128,7 @@ shots/               screenshots used as delivery evidence
 ## Verify it
 
 ```bash
-python3 -m unittest discover -s tests    # 236 backend tests
+python3 -m unittest discover -s tests    # 252 backend tests
 python3 tools/check_m3.py                # 19 checks: the request loop over HTTP (real pipeline)
 python3 tools/check_m4.py                # 32 checks: read models, read-only, no money moves
 cd web && npm run build && npx tsc --noEmit

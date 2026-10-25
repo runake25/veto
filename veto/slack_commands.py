@@ -24,6 +24,12 @@ COMMANDS = (
         "example": "/veto 2 packs of toilet paper",
     },
     {
+        "command": "/veto-check",
+        "description": "Show the top five matches so you can pick one or refine.",
+        "usage_hint": "what to look for — e.g. paper towels",
+        "example": "/veto-check paper towels",
+    },
+    {
         "command": "/veto-status",
         "description": "Show what is waiting for a signature.",
         "usage_hint": "[agent] — leave empty for everything",
@@ -172,6 +178,79 @@ def help_payload(base_url: str | None = None) -> dict:
     if console:
         blocks.append(_context(f"Console · {console}"))
     return _payload("Veto commands", blocks)
+
+
+# ---------------------------------------------------------------------------
+# /veto-check
+# ---------------------------------------------------------------------------
+def check_payload(
+    check_id: str,
+    *,
+    query: str,
+    agent_name: str,
+    qty: int,
+    candidates: list[dict],
+    source: str = "Channel3",
+    checked: int = 1,
+    base_url: str | None = None,
+) -> dict:
+    """The shortlist: what the agent's search returned, and what a click would buy."""
+    if not candidates:
+        blocks = [
+            _section(f"*No match inside {agent_name}’s rules.*"),
+            _context(
+                f"The catalogue returned nothing for “{query}”. Try different words, "
+                "or widen the agent's scope in the console."
+            ),
+        ]
+    else:
+        blocks = [_section(f"*Top {len(candidates)} for “{query}”*")]
+        note = f"{agent_name} · {source}"
+        if checked > 1:
+            note += f" · checked the first of {checked} items in the message"
+        if qty > 1:
+            note += f" · {qty} per item"
+        blocks.append(_context(note))
+        for candidate in candidates:
+            title = candidate.get("title") or "untitled"
+            url = candidate.get("url") or ""
+            heading = f"*{candidate['index'] + 1} · {f'<{url}|{title}>' if url else title}*"
+            amount = money(candidate.get("line_cents"))
+            if candidate.get("qty", 1) > 1:
+                amount += f" ({candidate['qty']} × {money(candidate.get('unit_cents'))})"
+            verdict = candidate.get("verdict") or "block"
+            if verdict == "auto":
+                word = "fits"
+            elif verdict == "review":
+                word = "needs a signature"
+            else:
+                word = "blocked by the rules"
+            meta = " · ".join([
+                candidate.get("vendor") or "unknown vendor",
+                candidate.get("category") or "uncategorised",
+                word,
+            ])
+            blocks.append(_section(f"{heading} — {amount}\n{meta}"))
+            if verdict != "block":
+                label = "Choose" if verdict == "auto" else "Choose · needs signature"
+                blocks.append({
+                    "type": "actions",
+                    "elements": [{
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": label},
+                        "style": "primary",
+                        "action_id": "veto_pick",
+                        "value": f"{check_id}:{candidate['index']}",
+                    }],
+                })
+        blocks.append(_context(
+            "Choosing prices that exact offer and runs the same rules; nothing is ordered "
+            "until you choose."
+        ))
+    console = _commands_url(base_url)
+    if console:
+        blocks.append(_context(f"Console · {console}"))
+    return _payload(f"Top matches for {query}", blocks)
 
 
 # ---------------------------------------------------------------------------
