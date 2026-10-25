@@ -1,6 +1,21 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useEffect } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { initials, type Me } from '../api'
 import { Wordmark } from '../components/Logo'
+
+const TITLES: Record<string, string> = {
+  '/': 'Overview · Veto',
+  '/inbox': 'Inbox · Veto',
+  '/agents': 'Agents · Veto',
+  '/analytics': 'Analytics · Veto',
+  '/integrations': 'Integrations · Veto',
+}
+
+function titleFor(pathname: string): string {
+  if (pathname.startsWith('/inbox/')) return TITLES['/inbox'] ?? 'Inbox · Veto'
+  if (pathname.startsWith('/agents/')) return TITLES['/agents'] ?? 'Agents · Veto'
+  return TITLES[pathname] ?? 'Veto — spend control'
+}
 
 const SECTIONS = [
   { to: '/', label: 'Overview', end: true },
@@ -13,9 +28,17 @@ const SECTIONS = [
 export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const walletOn = me.wallet.status === 'connected'
   const period = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date())
+  const location = useLocation()
+
+  useEffect(() => {
+    document.title = titleFor(location.pathname)
+  }, [location.pathname])
 
   return (
     <div className="shell">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       <aside className="sidebar">
         <div className="brand-row">
           <Wordmark />
@@ -78,7 +101,7 @@ export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           </div>
         </header>
 
-        <main className="sheet">
+        <main className="sheet" id="main-content" tabIndex={-1}>
           <Outlet />
         </main>
       </div>

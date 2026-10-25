@@ -194,6 +194,9 @@ def date_range(params: dict) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 AGENT_WRITE_ROLES = ("admin", "approver")
 REQUEST_STATUSES = ("blocked", "awaiting", "approved", "captured", "vetoed", "voided")
+REQUEST_SORTS = (
+    "priority", "newest", "oldest", "amount_desc", "amount_asc", "agent", "agent_desc",
+)
 MAX_AGENT_NAME = 80
 MAX_AGENT_TAG = 40
 MAX_AGENT_CHANNEL = 60
@@ -853,6 +856,8 @@ class Handler(BaseHTTPRequestHandler):
             workspace_id, status="awaiting", limit=3, oldest_first=True
         )
         wallet = STORE.wallet(workspace_id) or {"status": "disconnected"}
+        budget = int(session["workspace"].get("monthly_budget_cents") or 0)
+        used = int(counts["settled_month_cents"]) + int(counts["committed_cents"])
         self._ok({
             "counts": counts,
             "pending": [veto_requests.public_summary(row) for row in pending],
@@ -860,6 +865,8 @@ class Handler(BaseHTTPRequestHandler):
                 "status": wallet.get("status") or "disconnected",
                 "mode": SETTLEMENT.mode,
             },
+            "budget_cents": budget,
+            "remaining_cents": max(0, budget - used),
             "month": month_start_iso(),
         })
 
@@ -935,18 +942,28 @@ class Handler(BaseHTTPRequestHandler):
         if status and status not in REQUEST_STATUSES:
             self._api_error(400, "invalid_status", f"Unknown status: {status}")
         agent_id = (params.get("agent_id") or [""])[0].strip() or None
+        sort = (params.get("sort") or [""])[0].strip()
+        if sort and sort not in REQUEST_SORTS:
+            self._api_error(400, "invalid_sort", f"Unknown order: {sort}")
         try:
             limit = max(1, min(100, int((params.get("limit") or ["50"])[0])))
             offset = max(0, int((params.get("offset") or ["0"])[0]))
         except (TypeError, ValueError):
             limit, offset = 50, 0
         rows = STORE.list_requests(
-            workspace_id, status=status, agent_id=agent_id, limit=limit, offset=offset
+            workspace_id,
+            status=status,
+            agent_id=agent_id,
+            limit=limit,
+            offset=offset,
+            sort=sort or "priority",
         )
         self._ok({
             "requests": [veto_requests.public_summary(row) for row in rows],
             "returned": len(rows),
-            "total": STORE.count_requests(workspace_id, status=status),
+            "total": STORE.count_requests(workspace_id, status=status, agent_id=agent_id),
+            "sum_cents": STORE.sum_requests(workspace_id, status=status, agent_id=agent_id),
+            "sort": sort or "priority",
         })
 
     def _v1_request_detail(self, request_id: str) -> None:

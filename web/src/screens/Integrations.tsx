@@ -195,6 +195,7 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [keys, setKeys] = useState(data.keys)
+  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null)
 
   useEffect(() => setKeys(data.keys), [data.keys])
 
@@ -223,6 +224,7 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
     setError(null)
     try {
       await api.revokeKey(agentId, keyId)
+      setConfirmRevoke(null)
       await reload()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'The key was not revoked.')
@@ -306,12 +308,38 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
                       </span>
                       <button
                         type="button"
-                        className="btn btn-quiet btn-small key-revoke"
-                        onClick={() => void revoke(agent.id, key.id)}
+                        className={`btn ${
+                          confirmRevoke === key.id ? 'btn-danger' : 'btn-quiet'
+                        } btn-small key-revoke`}
+                        onClick={() => {
+                          if (confirmRevoke !== key.id) {
+                            setConfirmRevoke(key.id)
+                            return
+                          }
+                          void revoke(agent.id, key.id)
+                        }}
                         disabled={!admin || busy !== null}
+                        title={
+                          confirmRevoke === key.id
+                            ? 'Confirm: this agent key stops working immediately'
+                            : 'Revoke this key'
+                        }
                       >
-                        {busy === key.id ? 'Revoking…' : 'Revoke'}
+                        {busy === key.id
+                          ? 'Revoking…'
+                          : confirmRevoke === key.id
+                            ? 'Confirm revoke'
+                            : 'Revoke'}
                       </button>
+                      {confirmRevoke === key.id ? (
+                        <button
+                          type="button"
+                          className="btn btn-quiet btn-small"
+                          onClick={() => setConfirmRevoke(null)}
+                        >
+                          Cancel
+                        </button>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

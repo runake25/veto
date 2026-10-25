@@ -14,15 +14,47 @@ const FILTERS = [
   { value: 'voided', label: 'Voided', hint: 'Withdrawn before any capture' },
 ]
 
-/** Pending first, then newest — an inbox order, decided once here. */
-function ordered(rows: RequestSummary[]): RequestSummary[] {
-  const rank = (row: RequestSummary) =>
-    row.status === 'awaiting' ? 0 : row.status === 'approved' ? 1 : 2
-  return [...rows].sort(
-    (a, b) =>
-      rank(a) - rank(b) ||
-      (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0),
-  )
+/** The orders the record offers. The server owns the SQL; the UI names it. */
+const SORT_OPTIONS = [
+  { value: '', label: 'Needs you first' },
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'amount_desc', label: 'Amount: high to low' },
+  { value: 'amount_asc', label: 'Amount: low to high' },
+  { value: 'agent', label: 'Agent: A to Z' },
+  { value: 'agent_desc', label: 'Agent: Z to A' },
+]
+
+function nextSort(current: string, column: 'agent' | 'amount' | 'created'): string {
+  if (column === 'agent') return current === 'agent' ? 'agent_desc' : 'agent'
+  if (column === 'amount') return current === 'amount_desc' ? 'amount_asc' : 'amount_desc'
+  return current === 'newest' ? 'oldest' : 'newest'
+}
+
+function sortLabel(current: string, column: 'agent' | 'amount' | 'created'): string {
+  if (column === 'agent') {
+    return current === 'agent_desc' ? 'Sort agent, Z to A' : 'Sort agent, A to Z'
+  }
+  if (column === 'amount') {
+    return current === 'amount_asc' ? 'Sort amount, low to high' : 'Sort amount, high to low'
+  }
+  return current === 'oldest' ? 'Sort oldest first' : 'Sort newest first'
+}
+
+function sortMark(current: string, column: 'agent' | 'amount' | 'created'): string {
+  if (column === 'agent' && current === 'agent') return '↑'
+  if (column === 'agent' && current === 'agent_desc') return '↓'
+  if (column === 'amount' && current === 'amount_desc') return '↓'
+  if (column === 'amount' && current === 'amount_asc') return '↑'
+  if (column === 'created' && current === 'newest') return '↓'
+  if (column === 'created' && current === 'oldest') return '↑'
+  return '↕'
+}
+
+function isSorted(current: string, column: 'agent' | 'amount' | 'created'): boolean {
+  if (column === 'agent') return current === 'agent' || current === 'agent_desc'
+  if (column === 'amount') return current === 'amount_desc' || current === 'amount_asc'
+  return current === 'newest' || current === 'oldest'
 }
 
 function emptyCopy(status: string): { title: string; note: string } {
@@ -65,9 +97,12 @@ export function Inbox() {
   const [params, setParams] = useSearchParams()
   const status = params.get('status') ?? ''
   const agentId = params.get('agent') ?? ''
+  const sort = params.get('sort') ?? ''
 
   const [rows, setRows] = useState<RequestSummary[] | null>(null)
   const [total, setTotal] = useState(0)
+  const [sumCents, setSumCents] = useState(0)
+  const [reloadTick, setReloadTick] = useState(0)
   const [agents, setAgents] = useState<Agent[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [moreBusy, setMoreBusy] = useState(false)
@@ -96,12 +131,14 @@ export function Inbox() {
     const query = new URLSearchParams({ limit: '50' })
     if (status) query.set('status', status)
     if (agentId) query.set('agent_id', agentId)
+    if (sort) query.set('sort', sort)
     api
       .requests(query.toString())
       .then((data) => {
         if (!live) return
-        setRows(ordered(data.requests))
+        setRows(data.requests)
         setTotal(data.total)
+        setSumCents(data.sum_cents ?? 0)
       })
       .catch(() => {
         if (live) setError('The request list did not load.')
@@ -109,18 +146,20 @@ export function Inbox() {
     return () => {
       live = false
     }
-  }, [status, agentId])
+  }, [status, agentId, sort, reloadTick])
 
   const choose = useCallback(
-    (next: { status?: string; agent?: string }) => {
+    (next: { status?: string; agent?: string; sort?: string }) => {
       const params = new URLSearchParams()
       const nextStatus = next.status ?? status
       const nextAgent = next.agent ?? agentId
+      const nextSort = next.sort ?? sort
       if (nextStatus) params.set('status', nextStatus)
       if (nextAgent) params.set('agent', nextAgent)
+      if (nextSort) params.set('sort', nextSort)
       setParams(params, { replace: true })
     },
-    [status, agentId, setParams],
+    [status, agentId, sort, setParams],
   )
 
   const loadMore = async () => {
@@ -130,8 +169,9 @@ export function Inbox() {
       const query = new URLSearchParams({ limit: '50', offset: String(rows.length) })
       if (status) query.set('status', status)
       if (agentId) query.set('agent_id', agentId)
+      if (sort) query.set('sort', sort)
       const data = await api.requests(query.toString())
-      setRows(ordered([...rows, ...data.requests]))
+      setRows([...rows, ...data.requests])
     } catch {
       setError('The next page did not load.')
     } finally {
@@ -140,7 +180,8 @@ export function Inbox() {
   }
 
   const empty = emptyCopy(status)
-  const count = rows ? (agentId ? `${rows.length} shown` : `${total} in the record`) : ''
+  const filtered = Boolean(status || agentId)
+  const count = rows ? (filtered ? `${total} matching` : `${total} in the record`) : ''
 
   return (
     <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
@@ -182,22 +223,83 @@ export function Inbox() {
             ))}
           </select>
         </label>
+        <label className="filter-sort">
+          <span className="filter-agent-label">Order</span>
+          <select
+            className="select"
+            value={sort}
+            aria-label="Order requests"
+            onChange={(event) => choose({ sort: event.target.value })}
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value || 'priority'} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </motion.div>
 
       {error ? (
-        <p className="inline-error" role="alert">
+        <p className="inline-error inbox-error" role="alert">
           {error}
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            onClick={() => setReloadTick((value) => value + 1)}
+          >
+            Retry
+          </button>
         </p>
       ) : null}
 
       <motion.section className="card card-flush" variants={m.riseIn}>
-        <div className="inbox-head" aria-hidden="true">
+        <div className="inbox-head">
           <span>Request</span>
-          <span>Agent</span>
+          <span>
+            <button
+              type="button"
+              className={`inbox-sort${isSorted(sort, 'agent') ? ' is-on' : ''}`}
+              aria-label={sortLabel(sort, 'agent')}
+              title={sortLabel(sort, 'agent')}
+              onClick={() => choose({ sort: nextSort(sort, 'agent') })}
+            >
+              Agent
+              <span className="sort-mark" aria-hidden="true">
+                {sortMark(sort, 'agent')}
+              </span>
+            </button>
+          </span>
           <span>Source</span>
-          <span className="num">Amount</span>
+          <span className="num">
+            <button
+              type="button"
+              className={`inbox-sort${isSorted(sort, 'amount') ? ' is-on' : ''}`}
+              aria-label={sortLabel(sort, 'amount')}
+              title={sortLabel(sort, 'amount')}
+              onClick={() => choose({ sort: nextSort(sort, 'amount') })}
+            >
+              Amount
+              <span className="sort-mark" aria-hidden="true">
+                {sortMark(sort, 'amount')}
+              </span>
+            </button>
+          </span>
           <span>Status</span>
-          <span className="num">Created</span>
+          <span className="num">
+            <button
+              type="button"
+              className={`inbox-sort${isSorted(sort, 'created') ? ' is-on' : ''}`}
+              aria-label={sortLabel(sort, 'created')}
+              title={sortLabel(sort, 'created')}
+              onClick={() => choose({ sort: nextSort(sort, 'created') })}
+            >
+              Created
+              <span className="sort-mark" aria-hidden="true">
+                {sortMark(sort, 'created')}
+              </span>
+            </button>
+          </span>
         </div>
 
         {!rows && !error ? (
@@ -215,6 +317,15 @@ export function Inbox() {
           <div className="empty inbox-empty">
             <p className="empty-title">{empty.title}</p>
             <p className="empty-note">{empty.note}</p>
+            {filtered || sort ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                onClick={() => choose({ status: '', agent: '', sort: '' })}
+              >
+                Show all requests
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -222,7 +333,7 @@ export function Inbox() {
           <ul className="inbox-rows">
             {rows.map((row) => (
               <li key={row.id}>
-                <Link className="inbox-row" to={`/inbox/${row.id}`}>
+                <Link className="inbox-row" to={`/inbox/${row.id}`} title={row.title}>
                   <span className="inbox-request">
                     <b>{row.title}</b>
                     <span className="inbox-meta mono">
@@ -246,6 +357,15 @@ export function Inbox() {
               </li>
             ))}
           </ul>
+        ) : null}
+
+        {rows && rows.length ? (
+          <div className="inbox-summary">
+            <span className="mono">
+              {filtered ? `1–${rows.length} of ${total}` : `1–${rows.length} of ${total}`}
+            </span>
+            <span className="inbox-summary-total mono">{money(sumCents)} total</span>
+          </div>
         ) : null}
 
         {rows && total > rows.length ? (

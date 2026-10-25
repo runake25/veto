@@ -62,6 +62,8 @@ export interface OverviewData {
   counts: OverviewCounts
   pending: RequestSummary[]
   wallet: { status: string; mode: string }
+  budget_cents: number
+  remaining_cents: number
   month: string
 }
 
@@ -544,7 +546,11 @@ export interface SessionData {
 export const api = {
   me: () => request<Me>('/api/v1/me'),
   overview: () => request<OverviewData>('/api/v1/overview'),
-  requests: (query = '') => request<{ requests: RequestSummary[]; total: number }>(
+  requests: (query = '') => request<{
+    requests: RequestSummary[]
+    total: number
+    sum_cents?: number
+  }>(
     `/api/v1/requests${query ? `?${query}` : ''}`,
   ),
   request: (id: string) =>

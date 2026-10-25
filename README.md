@@ -68,7 +68,7 @@ block   → (no consent, no PayPal object)                        status: blocke
 | Screen | It owns |
 |---|---|
 | **Overview** (`/`) | needs-you count, committed-unsigned, settled this month, the agent roster, the oldest pending requests as links |
-| **Inbox** (`/inbox`) | the only request list; status and agent filters live in the URL |
+| **Inbox** (`/inbox`) | the only request list; status/agent filters and the order live in the URL, with a filtered total and a retryable error state |
 | **Record** (`/inbox/REQ-1043`) | the cart, the rule reasons, the consent hash, the PayPal ids, the trail and approve / veto / void |
 | **Agents** (`/agents`) | one plate per agent; the agent page carries the real month track (spent / unsigned / left), a dry run that can be sent as a real request, and a scoped catalogue search |
 | **Analytics** (`/analytics`) | captured money by day, agent, vendor, category and rule over one range, linking into the filtered Inbox |
@@ -128,7 +128,7 @@ shots/               screenshots used as delivery evidence
 ## Verify it
 
 ```bash
-python3 -m unittest discover -s tests    # 252 backend tests
+python3 -m unittest discover -s tests    # 259 backend tests
 python3 tools/check_m3.py                # 19 checks: the request loop over HTTP (real pipeline)
 python3 tools/check_m4.py                # 32 checks: read models, read-only, no money moves
 cd web && npm run build && npx tsc --noEmit

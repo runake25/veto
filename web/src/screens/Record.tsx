@@ -15,6 +15,12 @@ import {
 
 type Action = 'approve' | 'veto' | 'void'
 
+const DECISION_WORD: Record<string, string> = {
+  auto: 'inside the rules',
+  review: 'needs a signature',
+  block: 'refused by the rules',
+}
+
 /** Rule messages are audit text, so they are shown verbatim, with the numbers beside them. */
 function ReasonList({ record, showHints }: { record: RequestDetail; showHints: boolean }) {
   if (!record.reasons.length) {
@@ -221,6 +227,8 @@ export function Record({ me }: { me: Me }) {
   const [approveUrl, setApproveUrl] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
   const [busy, setBusy] = useState<Action | null>(null)
+  const [pendingAction, setPendingAction] = useState<Action | null>(null)
+  const [reloadTick, setReloadTick] = useState(0)
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
@@ -240,9 +248,15 @@ export function Record({ me }: { me: Me }) {
     return () => {
       live = false
     }
-  }, [id])
+  }, [id, reloadTick])
+
+  const askAct = (action: Action) => {
+    setActionError(null)
+    setPendingAction(action)
+  }
 
   const act = async (action: Action) => {
+    setPendingAction(null)
     setBusy(action)
     setActionError(null)
     setApproveUrl(null)
@@ -298,12 +312,25 @@ export function Record({ me }: { me: Me }) {
 
       {error ? (
         <div className="empty record-error">
+          <h1>Record not found</h1>
           <span className="empty-mark" aria-hidden="true" />
           <p className="empty-title">That record is not here.</p>
           <p className="empty-note">{error}</p>
-          <Link className="text-link mono" to="/inbox">
-            back to the inbox →
-          </Link>
+          <div className="empty-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-small"
+              onClick={() => {
+                setError(null)
+                setReloadTick((value) => value + 1)
+              }}
+            >
+              Retry
+            </button>
+            <Link className="text-link mono" to="/inbox">
+              back to the inbox →
+            </Link>
+          </div>
         </div>
       ) : null}
 
@@ -321,7 +348,8 @@ export function Record({ me }: { me: Me }) {
           <motion.header className="record-head" variants={m.riseIn}>
             <div className="record-ident">
               <span className="record-kicker mono">
-                {requestLabel(record.seq)} · {originLabel(record.origin, record.channel)}
+                {requestLabel(record.seq)} · {originLabel(record.origin)}
+                {record.channel ? ` · ${record.channel}` : ''}
               </span>
               <h1>{record.title}</h1>
               <p className="record-meta">
@@ -347,7 +375,8 @@ export function Record({ me }: { me: Me }) {
           <motion.section className={`verdict is-${tone}`} variants={m.riseIn}>
             <div className="verdict-main">
               <span className="verdict-kicker mono">
-                policy · {record.decision ?? '—'} · {record.status}
+                policy · {DECISION_WORD[record.decision ?? ''] ?? record.decision ?? '—'} ·{' '}
+                {STATUS[record.status]?.label ?? record.status}
               </span>
               <p className="verdict-title">{verdictHeadline(record)}</p>
               <ReasonList
@@ -372,8 +401,8 @@ export function Record({ me }: { me: Me }) {
                   <button
                     type="button"
                     className="btn btn-primary"
-                    onClick={() => void act('approve')}
-                    disabled={busy !== null}
+                    onClick={() => askAct('approve')}
+                    disabled={busy !== null || pendingAction !== null}
                   >
                     {busy === 'approve'
                       ? 'Capturing…'
@@ -384,8 +413,8 @@ export function Record({ me }: { me: Me }) {
                   <button
                     type="button"
                     className="btn btn-danger"
-                    onClick={() => void act('veto')}
-                    disabled={busy !== null}
+                    onClick={() => askAct('veto')}
+                    disabled={busy !== null || pendingAction !== null}
                     title="Refuse this request — the trail records a veto"
                   >
                     {busy === 'veto' ? 'Vetoing…' : 'Veto'}
@@ -395,12 +424,47 @@ export function Record({ me }: { me: Me }) {
                   <button
                     type="button"
                     className="btn btn-quiet"
-                    onClick={() => void act('void')}
-                    disabled={busy !== null}
+                    onClick={() => askAct('void')}
+                    disabled={busy !== null || pendingAction !== null}
                     title="Withdraw this request before capture — not a refusal"
                   >
                     {busy === 'void' ? 'Voiding…' : 'Void'}
                   </button>
+                ) : null}
+                {pendingAction ? (
+                  <div className="verdict-confirm">
+                    <p className="verdict-confirm-copy">
+                      {pendingAction === 'approve'
+                        ? `Capture ${money(record.total_cents, record.currency)} now? This moves money from the workspace wallet and cannot be undone.`
+                        : pendingAction === 'veto'
+                          ? 'Refuse this request? The veto is written to the trail and cannot be re-opened.'
+                          : 'Withdraw this request before capture? The void stays in the record.'}
+                    </p>
+                    <div className="verdict-confirm-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => void act(pendingAction)}
+                        disabled={busy !== null}
+                      >
+                        {busy !== null
+                          ? 'Working…'
+                          : pendingAction === 'approve'
+                            ? `Confirm · capture ${money(record.total_cents, record.currency)}`
+                            : pendingAction === 'veto'
+                              ? 'Confirm veto'
+                              : 'Confirm void'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-quiet"
+                        onClick={() => setPendingAction(null)}
+                        disabled={busy !== null}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
                 ) : null}
                 <p className="verdict-legend">
                   {canDecide

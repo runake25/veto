@@ -74,7 +74,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route element={<Shell me={boot.me} onSignOut={() => void signOut()} />}>
-        <Route index element={<Overview me={boot.me} />} />
+        <Route index element={<Overview />} />
         <Route path="inbox" element={<Inbox />} />
         <Route path="inbox/:id" element={<RequestRecord me={boot.me} />} />
         <Route path="agents" element={<Agents />} />
@@ -82,7 +82,7 @@ export default function App() {
         <Route path="agents/:id" element={<AgentDetail />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="integrations" element={<Integrations me={boot.me} />} />
-        <Route path="*" element={<Overview me={boot.me} />} />
+        <Route path="*" element={<Overview />} />
       </Route>
     </Routes>
   )

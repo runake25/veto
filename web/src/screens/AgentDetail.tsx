@@ -205,6 +205,7 @@ function liveNextLabel(steps: LiveStep[]): string {
 }
 
 function DryRun({ agent }: { agent: Agent }) {
+  const reduce = useReducedMotion()
   const [text, setText] = useState(() => defaultCart(agent))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -353,7 +354,7 @@ function DryRun({ agent }: { agent: Agent }) {
           <motion.div
             key={`${result.decision.outcome}-${result.total_cents}-${result.elapsed_ms}`}
             className="dry-result"
-            initial={{ opacity: 0, y: 8 }}
+            initial={reduce ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, transition: { duration: 0.12 } }}
             transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}

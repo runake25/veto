@@ -257,7 +257,7 @@ surfaces may show a count or a link. `/` opens the app; a hash router owns the r
 | Screen | Owns |
 |---|---|
 | **Overview** | needs-me count · committed-unsigned · settled this month · agent count · top-3 pending, linked |
-| **Inbox** | the only request list; status and agent filters live in the URL |
+| **Inbox** | the only request list; status/agent filters and order live in the URL, with a filtered total |
 | **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void, expired-consent state |
 | **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, the real month track (spent / unsigned / left), **test a request** (extract → choose → price → judge), **send it as a real request**, and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
 | **Analytics** | captured money by day, agent, vendor, category and rule, over one range; links into the filtered Inbox |
@@ -308,7 +308,7 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (252)
+python3 -m unittest discover -s tests    # backend tests (259)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
 python3 tools/check_m4.py                # 34 checks: screens' data, read-only (~1s)
 ```

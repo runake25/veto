@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { Link } from 'react-router-dom'
-import { api, capMoney, money, type Agent, type Me, type OverviewData } from '../api'
+import { api, capMoney, money, type Agent, type OverviewData } from '../api'
 import { motionSet } from '../components/motion'
 import { requestLabel, when } from '../components/request'
 
@@ -40,7 +40,7 @@ function capsLine(agent: Agent): string {
  * Overview: what needs a human, and where the money is. No charts, no invented
  * history — only facts the engine can stand behind, all read from the store.
  */
-export function Overview({ me }: { me: Me }) {
+export function Overview() {
   const [agents, setAgents] = useState<Agent[] | null>(null)
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -72,7 +72,6 @@ export function Overview({ me }: { me: Me }) {
   }, [])
 
   const counts = overview?.counts
-  const agentCount = counts?.agent_count ?? agents?.length ?? me.agent_count
   const pending = overview?.pending ?? []
 
   return (
@@ -84,9 +83,9 @@ export function Overview({ me }: { me: Me }) {
         </div>
         <Link
           className="btn btn-secondary"
-          to={agents && agents[0] ? `/agents/${agents[0].id}` : '/agents'}
+          to={counts && counts.needs_you > 0 ? '/inbox?status=awaiting' : '/inbox'}
         >
-          Try a cart
+          {counts && counts.needs_you > 0 ? 'Review requests' : 'Open the inbox'}
         </Link>
       </motion.header>
 
@@ -103,6 +102,7 @@ export function Overview({ me }: { me: Me }) {
           label="Held for a signature"
           value={counts ? money(counts.committed_cents) : '—'}
           note="money waiting on an approver"
+          tone={counts && counts.committed_cents > 0 ? 'wait' : undefined}
         />
         <Stat
           label="Settled this month"
@@ -111,9 +111,18 @@ export function Overview({ me }: { me: Me }) {
           tone={counts && counts.settled_month_cents > 0 ? 'pos' : undefined}
         />
         <Stat
-          label="Agents"
-          value={String(agentCount)}
-          note="each with its own rule set"
+          label="Left this month"
+          value={overview ? money(overview.remaining_cents) : '—'}
+          note={
+            overview
+              ? `${money(overview.counts.settled_month_cents + overview.counts.committed_cents)} of ${money(overview.budget_cents)} committed`
+              : ' '
+          }
+          tone={
+            overview && overview.remaining_cents === 0 && overview.budget_cents > 0
+              ? 'wait'
+              : undefined
+          }
         />
       </motion.div>
 

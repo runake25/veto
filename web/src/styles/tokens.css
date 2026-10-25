@@ -72,7 +72,7 @@
   --rail-hover: #17232f;
   --rail-active: #1d2c3b;
   --rail-line: #233140;
-  --rail-ink: #a9b4c0;
+  --rail-ink: #b3bdca;
   --rail-ink-strong: #f4f7fa;
   --rail-mark: #8fb4d6;
 
@@ -136,9 +136,32 @@ button {
   border-radius: 4px;
 }
 
-::selection {
-  background: var(--accent-soft);
+/* the rail is navy; the sheet's ring would vanish on it */
+.sidebar :focus-visible,
+.topnav :focus-visible {
+  outline-color: var(--rail-mark);
 }
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* the browser surfaces ship with defaults that belong to no design system */
+html {
+  scrollbar-color: var(--control) transparent;
+  scrollbar-width: thin;
+}
+
+input,
+textarea,
+select,
+[contenteditable] {
+  caret-color: var(--accent);
+  accent-color: var(--accent);
+}
+
+
 
 /* identifiers, hashes and money read as the product's own language */
 .mono {

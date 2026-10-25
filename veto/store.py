@@ -1151,8 +1151,14 @@ class Store:
         limit: int = 50,
         offset: int = 0,
         oldest_first: bool = False,
+        sort: str | None = None,
     ) -> list[dict]:
-        """Request summaries, newest first, with the agent's name and tag joined in."""
+        """Request summaries with the agent's name and tag joined in.
+
+        ``sort`` is a closed set of orders (see ``REQUEST_SORTS``); an unknown
+        value keeps the default so a URL cannot inject SQL. The default
+        (``priority``) is the inbox order: waiting requests first, then newest.
+        """
         sql = (
             "SELECT r.id, r.seq, r.title, r.status, r.decision_outcome, r.total_cents, "
             "r.currency, r.channel, r.requester, r.origin, r.created_at, r.decided_at, "
@@ -1174,21 +1180,60 @@ class Store:
         if before:
             sql += " AND r.created_at < ?"
             params.append(before)
-        order = "ASC" if oldest_first else "DESC"
-        sql += f" ORDER BY r.created_at {order}, r.seq {order} LIMIT ? OFFSET ?"
+        orders = {
+            "priority": (
+                "CASE r.status WHEN 'awaiting' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END "
+                "ASC, r.created_at DESC, r.seq DESC"
+            ),
+            "newest": "r.created_at DESC, r.seq DESC",
+            "oldest": "r.created_at ASC, r.seq ASC",
+            "amount_desc": "r.total_cents DESC, r.created_at DESC, r.seq DESC",
+            "amount_asc": "r.total_cents ASC, r.created_at DESC, r.seq DESC",
+            "agent": "a.name COLLATE NOCASE ASC, r.created_at DESC, r.seq DESC",
+            "agent_desc": "a.name COLLATE NOCASE DESC, r.created_at DESC, r.seq DESC",
+        }
+        if sort in orders:
+            sql += f" ORDER BY {orders[sort]}"
+        else:
+            order = "ASC" if oldest_first else "DESC"
+            sql += f" ORDER BY r.created_at {order}, r.seq {order}"
+        sql += " LIMIT ? OFFSET ?"
         params.extend([max(1, min(200, int(limit))), max(0, int(offset))])
         return self.query(sql, params)
 
-    def count_requests(self, workspace_id: str, status: str | None = None) -> int:
-        if status is None:
-            row = self.one(
-                "SELECT COUNT(*) AS n FROM requests WHERE workspace_id = ?", (workspace_id,)
-            )
-        else:
-            row = self.one(
-                "SELECT COUNT(*) AS n FROM requests WHERE workspace_id = ? AND status = ?",
-                (workspace_id, status),
-            )
+    def sum_requests(
+        self,
+        workspace_id: str,
+        status: str | None = None,
+        agent_id: str | None = None,
+    ) -> int:
+        """Total of the filtered requests, so a list can reconcile its own money."""
+        sql = "SELECT COALESCE(SUM(total_cents), 0) AS n FROM requests WHERE workspace_id = ?"
+        params: list[Any] = [workspace_id]
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        if agent_id:
+            sql += " AND agent_id = ?"
+            params.append(agent_id)
+        row = self.one(sql, params)
+        return int(row["n"]) if row else 0
+
+    def count_requests(
+        self,
+        workspace_id: str,
+        status: str | None = None,
+        agent_id: str | None = None,
+    ) -> int:
+        sql = "SELECT COUNT(*) AS n FROM requests WHERE workspace_id = ?"
+        params: list[Any] = [workspace_id]
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        if agent_id:
+            sql += " AND agent_id = ?"
+            params.append(agent_id)
+        row = self.one(sql, params)
         return int(row["n"]) if row else 0
 
     def spent_cents(

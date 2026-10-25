@@ -123,6 +123,14 @@ function SeriesChart({ data }: { data: AnalyticsData }) {
       <p className="card-footnote">
         A capture is counted on the day the money moved, not the day the request was written.
       </p>
+      <ul className="sr-only">
+        {days.map((day) => (
+          <li key={day.date}>
+            {day.date}: {money(day.captured_cents)} captured, {day.requests}{' '}
+            {day.requests === 1 ? 'request' : 'requests'}
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }
@@ -274,7 +282,7 @@ export function Analytics() {
           label="Settled"
           value={totals ? money(totals.captured_cents) : '—'}
           note={totals ? `${totals.captured} captured through PayPal` : ' '}
-          tone="pos"
+          tone={totals && totals.captured_cents > 0 ? 'pos' : undefined}
         />
         <Stat
           label="Held for a signature"
