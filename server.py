@@ -598,6 +598,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/simulate":
             self._v1_simulate()
             return True
+        if path == "/api/v1/simulate/stream":
+            self._v1_simulate_stream()
+            return True
         if path == "/api/v1/requests":
             self._v1_create_request()
             return True
@@ -1120,6 +1123,76 @@ class Handler(BaseHTTPRequestHandler):
             self._api_error(400, "no_intent", str(exc))
         self._ok(result)
 
+    def _v1_simulate_stream(self) -> None:
+        """The same dry run as ``/simulate``, streamed as server-sent events.
+
+        The pipeline calls ``emit`` per stage, so the console can show the work
+        as it happens instead of a spinner. The run is still read-only: nothing
+        is written to the store and no PayPal object is created.
+        """
+        session = self._require_session()
+        self._limit("simulate", f"user:{session['user']['id']}", RATE_SESSION_PER_MIN)
+        body = self._body()
+        text = str(body.get("text") or "").strip()
+        if not text:
+            self._api_error(400, "missing_text", "What should the agent buy?")
+        if len(text) > MAX_SIMULATE_CHARS:
+            text = text[:MAX_SIMULATE_CHARS]
+        agent_id = str(body.get("agent_id") or "").strip() or None
+        try:
+            agent = veto_pipeline.resolve_agent(STORE, session["workspace"]["id"], agent_id)
+        except LookupError as exc:
+            code = str(exc) or "no_agent"
+            message = ("That agent does not exist." if code == "agent_not_found"
+                       else "This workspace has no agents yet.")
+            self._api_error(404, code, message)
+        workspace = session["workspace"]
+        month_spent = STORE.spent_cents(
+            workspace["id"], agent_id=agent["id"], since=month_start_iso()
+        )
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("Connection", "close")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        lock = threading.Lock()
+        closed = False
+
+        def emit(payload: dict) -> None:
+            nonlocal closed
+            if closed:
+                return
+            frame = b"data: " + json.dumps(payload, separators=(",", ":")).encode() + b"\n\n"
+            try:
+                with lock:
+                    self.wfile.write(frame)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                # the reader went away; the pipeline keeps running but says nothing
+                closed = True
+
+        emit({"type": "start"})
+        try:
+            result = veto_pipeline.simulate(
+                agent,
+                text,
+                progress=emit,
+                month_spent_cents=month_spent,
+                workspace_monthly_budget_cents=workspace.get("monthly_budget_cents"),
+            )
+        except ValueError as exc:
+            emit({"type": "error", "error": {"code": "no_intent", "message": str(exc)}})
+            return
+        except Exception:  # noqa: BLE001 - the stream is already open; report, don't 500
+            traceback.print_exc()
+            emit({"type": "error",
+                  "error": {"code": "server_error", "message": "Something went wrong."}})
+            return
+        emit({"type": "result", "result": result})
+
     # -- routes ---------------------------------------------------------
     def _verify_slack(self, raw: bytes) -> bool:
         """Slack signs every request: v0=HMAC-SHA256(signing_secret, "v0:" + ts + ":" + body)."""
@@ -1275,15 +1348,20 @@ class Handler(BaseHTTPRequestHandler):
     def _slack_veto(self) -> None:
         """The slash command itself. Slack sends command/text/user_name/channel_name;
         we answer in Slack's own shape, so the same URL works as a Slack app endpoint
-        and from curl:
+        and from curl (sign the body, or unset SLACK_SIGNING_SECRET while testing):
             curl -X POST localhost:8787/api/slack/veto \
                  -d 'command=/veto&text=2 boxes of capsules from kettle supply&user_name=dan'
 
+        Slack signs the slash command exactly like it signs buttons, and this door can
+        create and capture, so the signature is checked before anything else happens.
         Searching the catalogue takes 1-4s, and Slack drops the slash command after
         three, so a real Slack call gets an immediate "on it" and the result arrives
         through response_url. curl (no response_url) still gets the answer inline.
         """
-        form = self._form()
+        raw = self._raw()
+        if not self._verify_slack(raw):
+            return self._json(401, {"error": "bad signature"})
+        form = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace")).items()}
         user = (form.get("user_name") or "someone").strip() or "someone"
         allowed, retry = LIMITER.allow(
             f"slack:{user}", limit=RATE_SLACK_PER_MIN, per_seconds=60
@@ -1410,7 +1488,6 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True, "paypal": ENGINE.paypal_mode, "llm": ENGINE.llm_mode,
                 "catalog": ENGINE.catalog_mode, "vault": bool(vault),
                 "settlement": SETTLEMENT.mode,
-                "vault_id": vault,
                 "vault_pending": bool(ENGINE.pending_setup or saved.get("pending_setup")),
                 "public_url": PUBLIC_URL or None,
                 "slack": {"signing_secret": signed, "bot_token": bot,

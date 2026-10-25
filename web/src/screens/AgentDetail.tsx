@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import {
@@ -11,6 +11,7 @@ import {
   type Reason,
   type ScopedSearch,
   type SimulateResult,
+  type SimulateStreamFrame,
 } from '../api'
 import { AgentForm } from '../components/AgentForm'
 import { OutcomePill, Track } from '../components/Bits'
@@ -190,14 +191,31 @@ function sendNote(result: SimulateResult): string {
   return 'A real request is recorded as blocked. No consent, no PayPal object, no money.'
 }
 
+type LiveStep = { kind: string; label: string; detail?: string | null }
+type LiveItem = { index: number; name: string; ok: boolean; title?: string | null }
+
+/* What the live panel says while a stage is still in flight. */
+function liveNextLabel(steps: LiveStep[]): string {
+  if (!steps.length) return 'Reading the request…'
+  const last = steps[steps.length - 1]?.kind
+  if (last === 'extract') return 'Searching and choosing…'
+  if (last === 'catalogue') return 'Pricing the cart…'
+  if (last === 'price') return 'Applying the rules…'
+  return 'Finishing…'
+}
+
 function DryRun({ agent }: { agent: Agent }) {
   const [text, setText] = useState(() => defaultCart(agent))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<SimulateResult | null>(null)
+  const [live, setLive] = useState<{ steps: LiveStep[]; items: LiveItem[] } | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  const runAbort = useRef<AbortController | null>(null)
   const navigate = useNavigate()
+
+  useEffect(() => () => runAbort.current?.abort(), [])
 
   const send = async () => {
     if (!result) return
@@ -216,14 +234,47 @@ function DryRun({ agent }: { agent: Agent }) {
   const run = async (event: FormEvent) => {
     event.preventDefault()
     if (!text.trim() || busy) return
+    runAbort.current?.abort()
+    const controller = new AbortController()
+    runAbort.current = controller
     setBusy(true)
     setError(null)
+    setResult(null)
+    setLive({ steps: [], items: [] })
     try {
-      setResult(await api.simulate(text, agent.id))
+      const next = await api.simulateStream(
+        text,
+        agent.id,
+        (frame: SimulateStreamFrame) => {
+          if (frame.type === 'event') {
+            setLive((prev) => (prev ? { ...prev, steps: [...prev.steps, frame.event] } : prev))
+          } else if (frame.type === 'item') {
+            const item: LiveItem = {
+              index: frame.index,
+              name: frame.name,
+              ok: frame.ok,
+              title: frame.title,
+            }
+            setLive((prev) => {
+              if (!prev) return prev
+              const items = [...prev.items, item].sort((a, b) => a.index - b.index)
+              return { ...prev, items }
+            })
+          }
+        },
+        controller.signal,
+      )
+      setResult(next)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'The dry run failed.')
+      if (!controller.signal.aborted) {
+        setError(err instanceof ApiError ? err.message : 'The dry run failed.')
+      }
     } finally {
-      setBusy(false)
+      if (runAbort.current === controller) {
+        setBusy(false)
+        setLive(null)
+        runAbort.current = null
+      }
     }
   }
 
@@ -258,6 +309,44 @@ function DryRun({ agent }: { agent: Agent }) {
       </form>
 
       {error ? <p className="inline-error">{error}</p> : null}
+
+      {busy && live ? (
+        <div className="dry-live" aria-live="polite">
+          <div className="dry-live-head">
+            <span className="live-dot" aria-hidden />
+            <span>Running the pipeline</span>
+            <span className="dry-live-note">read-only · nothing ordered</span>
+          </div>
+          {live.items.length ? (
+            <ul className="live-items">
+              {live.items.map((item) => (
+                <li key={item.index} className={item.ok ? 'is-ok' : 'is-miss'}>
+                  <span className="mono live-index">
+                    {String(item.index + 1).padStart(2, '0')}
+                  </span>
+                  <span className="live-name">{item.ok ? item.title : item.name}</span>
+                  <span className="live-state">{item.ok ? 'found' : 'no match'}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <ol className="mini-rail">
+            {live.steps.map((step, i) => (
+              <li key={`${step.kind}-${i}`}>
+                <span className="mini-step mono">{String(i + 1).padStart(2, '0')}</span>
+                <span className="mini-label">{step.label}</span>
+                {step.detail ? <span className="mini-detail mono">{step.detail}</span> : null}
+              </li>
+            ))}
+            <li className="is-pending">
+              <span className="mini-step mono">
+                {String(live.steps.length + 1).padStart(2, '0')}
+              </span>
+              <span className="mini-label">{liveNextLabel(live.steps)}</span>
+            </li>
+          </ol>
+        </div>
+      ) : null}
 
       <AnimatePresence mode="wait">
         {result ? (

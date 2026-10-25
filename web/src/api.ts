@@ -304,6 +304,21 @@ export interface SimulateResult {
   dry_run: boolean
 }
 
+/** One server-sent frame from the streamed dry run. */
+export type SimulateStreamFrame =
+  | { type: 'start' }
+  | { type: 'event'; event: { kind: string; label: string; detail?: string | null } }
+  | {
+      type: 'item'
+      index: number
+      name: string
+      ok: boolean
+      title?: string | null
+      source?: string | null
+    }
+  | { type: 'result'; result: SimulateResult }
+  | { type: 'error'; error: { code?: string; message?: string } }
+
 export interface SearchFit {
   category: boolean
   per_unit: boolean
@@ -424,6 +439,90 @@ function post<T>(path: string, payload?: unknown): Promise<T> {
   })
 }
 
+/**
+ * The same dry run as `simulate`, read as it happens: the server sends one
+ * `data:` frame per pipeline stage, plus one per cart item as it resolves.
+ * Resolves with the final result; `onFrame` sees every step on the way.
+ */
+export async function streamSimulate(
+  text: string,
+  agentId: string | undefined,
+  onFrame: (frame: SimulateStreamFrame) => void,
+  signal?: AbortSignal,
+): Promise<SimulateResult> {
+  let res: Response
+  try {
+    res = await fetch('/api/v1/simulate/stream', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, agent_id: agentId ?? null }),
+      signal,
+    })
+  } catch (err) {
+    if (signal?.aborted) throw err
+    throw new ApiError(
+      'offline',
+      'The engine is not answering. Start it with python3 server.py.',
+      0,
+    )
+  }
+
+  if (!res.ok || !res.body) {
+    let body: Envelope<unknown> | null = null
+    try {
+      body = (await res.json()) as Envelope<unknown>
+    } catch {
+      body = null
+    }
+    throw new ApiError(
+      body?.error?.code ?? `http_${res.status}`,
+      body?.error?.message ?? `The dry run failed (${res.status}).`,
+      res.status,
+    )
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let result: SimulateResult | null = null
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let cut = buffer.indexOf('\n\n')
+    while (cut >= 0) {
+      const frame = buffer.slice(0, cut)
+      buffer = buffer.slice(cut + 2)
+      const line = frame.split('\n').find((row) => row.startsWith('data:'))
+      if (line) {
+        let payload: SimulateStreamFrame | null = null
+        try {
+          payload = JSON.parse(line.slice(5).trim()) as SimulateStreamFrame
+        } catch {
+          payload = null
+        }
+        if (payload) {
+          if (payload.type === 'error') {
+            throw new ApiError(
+              payload.error?.code ?? 'stream_error',
+              payload.error?.message ?? 'The dry run failed.',
+              0,
+            )
+          }
+          if (payload.type === 'result') result = payload.result
+          onFrame(payload)
+        }
+      }
+      cut = buffer.indexOf('\n\n')
+    }
+  }
+
+  if (!result) throw new ApiError('stream_error', 'The dry run ended without a result.', 0)
+  return result
+}
+
 export interface SignupPayload {
   workspace_name: string
   name: string
@@ -483,6 +582,7 @@ export const api = {
     ),
   simulate: (text: string, agentId?: string) =>
     post<SimulateResult>('/api/v1/simulate', { text, agent_id: agentId ?? null }),
+  simulateStream: streamSimulate,
   createRequest: (text: string, agentId?: string | null) =>
     post<{ request: RequestDetail }>('/api/v1/requests', {
       text,

@@ -11,7 +11,7 @@ import json
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from veto import engine as legacy_engine
 from veto import policy
@@ -664,7 +664,7 @@ def _resolve_item(agent: dict, item: dict, *, search, choose) -> dict:
 
 
 def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
-             choose_fn=None, month_spent_cents: int = 0,
+             choose_fn=None, progress=None, month_spent_cents: int = 0,
              workspace_monthly_budget_cents: int | None = None) -> dict:
     """Run the whole loop in memory and return what would have happened.
 
@@ -673,6 +673,11 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
     possible. ``month_spent_cents`` is how much this agent has already captured
     this month, so the monthly cap is judged against the same history the store
     would use when the request is written.
+
+    ``progress`` receives one dict per stage (and per resolved item) while the
+    pipeline runs: ``{"type": "event", "event": ...}`` for the trail and
+    ``{"type": "item", ...}`` as each item in a parallel cart lands. It exists so
+    a caller can stream the work instead of waiting for the summary.
     """
     started = time.perf_counter()
     raw = _text(text)
@@ -680,6 +685,7 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
         raise ValueError("no purchase intent found")
     extract = extract_fn or extract_items
     search = search_fn or _search_for_item
+    emit = progress or (lambda payload: None)
 
     extracted = extract(raw)
     if not isinstance(extracted, dict):
@@ -696,31 +702,58 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
         if query and query.lower() != item["name"].lower():
             piece += f' → search “{query}”'
         described.append(piece)
-    events = [{
+
+    events: list[dict] = []
+
+    def _push(event: dict) -> None:
+        events.append(event)
+        emit({"type": "event", "event": event})
+
+    _push({
         "kind": "extract",
         "label": f"{len(items)} item{plural} extracted",
         "detail": " · ".join(described),
-    }]
+    })
 
     choose = choose_fn or choose_offer
     workers = min(PARALLEL_ITEMS, len(items))
+
+    def _item_event(index: int, item: dict, outcome: dict) -> dict:
+        line = outcome.get("line") or {}
+        return {
+            "type": "item",
+            "index": index,
+            "name": item.get("name") or "",
+            "ok": bool(line),
+            "title": line.get("title"),
+            "source": outcome.get("source"),
+        }
+
     if workers > 1:
+        # report as each item lands, but keep the cart in the order it was asked
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="veto-item") as pool:
-            futures = [
-                pool.submit(_resolve_item, agent, item, search=search, choose=choose)
-                for item in items
-            ]
-            resolved = []
-            for item, future in zip(items, futures):
+            futures = {
+                pool.submit(_resolve_item, agent, item, search=search, choose=choose): index
+                for index, item in enumerate(items)
+            }
+            done: dict[int, dict] = {}
+            for future in as_completed(futures):
+                index = futures[future]
+                item = items[index]
                 try:
-                    resolved.append(future.result())
+                    outcome = future.result()
                 except Exception:  # noqa: BLE001 - one item must not fail the cart
-                    resolved.append({"item": item, "line": None, "source": None,
-                                     "unresolved": True, "near_miss": None})
+                    outcome = {"item": item, "line": None, "source": None,
+                               "unresolved": True, "near_miss": None}
+                done[index] = outcome
+                emit(_item_event(index, item, outcome))
+            resolved = [done[index] for index in range(len(items))]
     else:
-        resolved = [
-            _resolve_item(agent, item, search=search, choose=choose) for item in items
-        ]
+        resolved = []
+        for index, item in enumerate(items):
+            outcome = _resolve_item(agent, item, search=search, choose=choose)
+            resolved.append(outcome)
+            emit(_item_event(index, item, outcome))
 
     # assemble in the order the request named the items, whatever finished first
     lines: list[dict] = []
@@ -742,12 +775,12 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
         found = f"{via} · {merchant_hint}"
     else:
         found = "no match inside these merchants"
-    events.append({
+    _push({
         "kind": "catalogue",
         "label": "Searched the catalogue",
         "detail": f"{_text(agent.get('name'))} · {found}",
     })
-    events.append({
+    _push({
         "kind": "price",
         "label": "Cart priced",
         "detail": " · ".join(f"{line['qty']} x {line['title']}" for line in lines) or "empty",
@@ -761,7 +794,7 @@ def simulate(agent: dict, text: str, *, extract_fn=None, search_fn=None,
         workspace_monthly_budget_cents=workspace_monthly_budget_cents,
         unresolved=unresolved,
     )
-    events.append({
+    _push({
         "kind": "decision",
         "label": f"Decision: {decision['outcome']}",
         "detail": "; ".join(reason["message"] for reason in decision["reasons"])

@@ -438,7 +438,7 @@ class MapCategoryTests(unittest.TestCase):
 
 class SimulateTests(unittest.TestCase):
     def run_simulate(self, text="toilet paper", agent_dict=None, items=None,
-                     lines_by_query=None, search=None, choose=None) -> dict:
+                     lines_by_query=None, search=None, choose=None, progress=None) -> dict:
         if search is None:
             mapping = {"toilet paper": line()} if lines_by_query is None else lines_by_query
             search = fake_search(mapping)
@@ -448,6 +448,7 @@ class SimulateTests(unittest.TestCase):
             extract_fn=fake_extract(items or [{"name": "toilet paper", "qty": 1}]),
             search_fn=search,
             choose_fn=choose or (lambda agent_dict, item, lines: lines[0] if lines else None),
+            progress=progress,
         )
 
     def test_auto_dry_run_shape(self) -> None:
@@ -606,6 +607,58 @@ class SimulateTests(unittest.TestCase):
             )
         self.assertEqual(result["parallel_items"], 1)
         self.assertEqual(calls, ["a", "b"])
+
+    def test_progress_streams_stages_and_items_before_the_summary(self) -> None:
+        frames: list[dict] = []
+        result = self.run_simulate(
+            items=[{"name": "toilet paper", "qty": 1}, {"name": "hand soap", "qty": 1}],
+            lines_by_query={"toilet paper": line(), "hand soap": line(sku="soap")},
+            progress=frames.append,
+        )
+        # the trail arrives as it is built, not as one blob at the end
+        trail = [frame["event"] for frame in frames if frame["type"] == "event"]
+        self.assertEqual([event["kind"] for event in trail],
+                         ["extract", "catalogue", "price", "decision"])
+        self.assertEqual(trail, result["events"])
+
+        items = [frame for frame in frames if frame["type"] == "item"]
+        self.assertEqual(len(items), 2)
+        self.assertEqual([frame["name"] for frame in items], ["toilet paper", "hand soap"])
+        self.assertTrue(all(frame["ok"] for frame in items))
+
+        # items are reported before the cart is priced, so a caller can show work
+        item_at = [i for i, frame in enumerate(frames) if frame["type"] == "item"]
+        priced_at = [
+            i for i, frame in enumerate(frames)
+            if frame["type"] == "event" and frame["event"]["kind"] == "price"
+        ]
+        self.assertLess(max(item_at), min(priced_at))
+        self.assertEqual(frames[0]["type"], "event")
+        self.assertEqual(frames[-1]["event"]["kind"], "decision")
+
+    def test_progress_reports_an_unresolved_item_as_a_miss(self) -> None:
+        frames: list[dict] = []
+        self.run_simulate(
+            items=[{"name": "toilet paper", "qty": 1}, {"name": "mystery", "qty": 1}],
+            lines_by_query={"toilet paper": line()},
+            progress=frames.append,
+        )
+        items = [frame for frame in frames if frame["type"] == "item"]
+        self.assertEqual([(frame["name"], frame["ok"]) for frame in items],
+                         [("toilet paper", True), ("mystery", False)])
+
+    def test_serial_cart_also_reports_each_item(self) -> None:
+        frames: list[dict] = []
+        with mock.patch.object(pipeline, "PARALLEL_ITEMS", 1):
+            self.run_simulate(
+                items=[{"name": "a", "qty": 1}, {"name": "b", "qty": 1}],
+                lines_by_query={"a": line(title="A", sku="a"),
+                                "b": line(title="B", sku="b")},
+                progress=frames.append,
+            )
+        items = [frame for frame in frames if frame["type"] == "item"]
+        self.assertEqual([frame["name"] for frame in items], ["a", "b"])
+        self.assertTrue(all(frame["ok"] for frame in items))
 
     def test_empty_text_and_empty_extraction_raise(self) -> None:
         with self.assertRaises(ValueError):

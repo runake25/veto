@@ -160,6 +160,7 @@ The expensive doors are rate limited in-process (requests, simulate, search, Sla
 | `POST /api/v1/agents` · `PATCH /api/v1/agents/{id}` | admin/approver | **M2 done** |
 | `GET /api/v1/agents/{id}/search?q=` | session | **M2 done** — scoped product search |
 | `POST /api/v1/simulate` | session | **M2 done** — dry-run, persists nothing |
+| `POST /api/v1/simulate/stream` | session | **M5 done** — the same dry run as SSE: `start`, one `event` per stage, one `item` per resolved cart line, `result` |
 | `GET /api/v1/overview` | session | **M3 done** — needs you, committed, settled this month, agents |
 | `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | **M3 done** — summaries and the full record |
 | `POST /api/v1/requests` | agent key / session | **M3 done** — persist, judge, consent, capture |
@@ -257,7 +258,7 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 | M2 | policy engine, guided agent rules, scoped search, dry-run | **done (2026-10-22)** |
 | M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | **done (2026-10-23)** |
 | M4 | Inbox, Record, Analytics, Integrations; Overview rewritten; palette retuned to the ledger tone; old console deleted; `/` flips to the app; model routing for Slack | **done (2026-10-24)** |
-| M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | **in progress (2026-10-24)** — rate limits, real agent budget track, send-from-dry-run and parallel item search done; streamed pipeline, UI smoke test, hosting next |
+| M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | **in progress (2026-10-26)** — rate limits, real agent budget track, send-from-dry-run, parallel item search and the streamed dry run are done; UI smoke test and hosting next |
 | M6 | README/SPEC/PRODUCT, deploy, video, Devpost text | |
 
 ## 9. Running it
@@ -266,7 +267,7 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (206)
+python3 -m unittest discover -s tests    # backend tests (209)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
 python3 tools/check_m4.py                # 32 checks: screens' data, read-only (~1s)
 ```
@@ -296,6 +297,13 @@ It proves Analytics reconciles with Overview (series sum = captured total = by-a
 sum = by-vendor sum), Integrations reports Slack routing/wallet/keys, a record carries
 its cart, consent, PayPal capture id and ordered trail, a refused record carries no
 wallet object, and `/` serves the app while the old console routes are gone.
+
+M5 keeps the run honest while it works. `POST /api/v1/simulate/stream` returns the
+same dry run as server-sent events: a `start` frame immediately, one `event` frame per
+trail stage as it lands, one `item` frame per cart line as it resolves, then `result`.
+The console shows the stages and the items filling in instead of a spinner; the run is
+still read-only. A multi-item cart searches and chooses items concurrently, and the
+expensive doors are rate limited.
 
 `PAYPAL_LIVE=0` runs the whole loop against the in-process PayPal simulator with no keys.
 Hosted deploys pass the approved `PAYPAL_VAULT_ID` through the environment.
