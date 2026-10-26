@@ -98,6 +98,10 @@ def main() -> int:
         print(f"FAIL  demo session · {status}")
         return 1
 
+    # -- health and monitors ------------------------------------------------
+    status, _ = client.call("HEAD", "/api/health")
+    check("the runner answers HEAD for monitors", status == 200, f"HEAD /api/health -> {status}")
+
     # -- change feed --------------------------------------------------------
     anon = Client()
     status, _ = anon.call("GET", "/api/v1/events")

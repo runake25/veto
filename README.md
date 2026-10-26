@@ -273,7 +273,7 @@ in-process PayPal simulator; with `PAYPAL_LIVE=1` and a vaulted sandbox wallet
 ```bash
 python3 -m unittest discover -s tests        # 343 tests — store, policy, pipeline, Slack, consent, routines, SSE, settings
 python3 tools/check_m4.py                    # 42 checks — every number a screen reads, read-only
-python3 tools/check_polish.py                # 20 checks — change feed, filters, delete guards, built controls
+python3 tools/check_polish.py                # 21 checks — change feed, filters, delete guards, built controls
 python3 tools/check_m3.py                    # 19 checks — the request loop over HTTP (real pipeline, ~60s)
 python3 tools/check_pipeline.py              # live pipeline edge cases — must resolve vs must refuse
 cd web && npm run build                      # tsc --noEmit + vite build

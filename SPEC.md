@@ -369,7 +369,7 @@ cd web && npm run dev                    # dev server on :5173, proxies /api to 
 python3 -m unittest discover -s tests    # backend tests (343)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
 python3 tools/check_m4.py                # 42 checks: screens' data, read-only (~1s)
-python3 tools/check_polish.py            # 20 checks: live feed, filters, delete guard, built controls
+python3 tools/check_polish.py            # 21 checks: live feed, filters, delete guard, built controls
 ```
 
 M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
@@ -429,7 +429,7 @@ A polish round (2026-10-26) closed the deferred findings from the two independen
 
 The regression harness for the round is read-only:
 
-    python3 tools/check_polish.py                      # 20 checks, no money moved
+    python3 tools/check_polish.py                      # 21 checks, no money moved
 
 It proves the feed opens (and needs a session), the day window only returns its own day and
 reconciles its sum, a merchant is searchable through a cart line, an agent with history is

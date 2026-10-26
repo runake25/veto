@@ -445,6 +445,9 @@ def _clean_agent_payload(body: dict, *, partial: bool) -> dict:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "Veto/1.0"
+    # HEAD answers like GET without a body: uptime monitors and link checkers
+    # use it, and a 501 there reads as "site down".
+    head_only = False
 
     def log_message(self, fmt, *args):  # quieter console
         if os.environ.get("VETO_VERBOSE"):
@@ -461,7 +464,8 @@ class Handler(BaseHTTPRequestHandler):
         for cookie in getattr(self, "_pending_cookies", ()):
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
-        self.wfile.write(body)
+        if not self.head_only:
+            self.wfile.write(body)
 
     def _redirect(self, location: str, code: int = 302) -> None:
         self.send_response(code)
@@ -1626,6 +1630,10 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        if self.head_only:
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         self.send_header("Cache-Control", "no-cache, no-transform")
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
@@ -2265,6 +2273,14 @@ class Handler(BaseHTTPRequestHandler):
                 **db_stats,
             })
         return self._file(path.lstrip("/"))
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        """HEAD is GET without a response body."""
+        self.head_only = True
+        try:
+            self.do_GET()
+        finally:
+            self.head_only = False
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
