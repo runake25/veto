@@ -2,26 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, ApiError, type IntegrationsData, type Me } from '../api'
+import { CopyValue, InlineError } from '../components/Bits'
+import { FreshnessButton, useFreshness } from '../components/freshness'
 import { motionSet } from '../components/motion'
 import { when } from '../components/request'
-
-function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1600)
-    } catch {
-      setCopied(false)
-    }
-  }
-  return (
-    <button type="button" className="copy-btn mono" onClick={() => void copy()}>
-      {copied ? 'copied' : label}
-    </button>
-  )
-}
+import { State, paymentMode } from '../components/state'
 
 function maskId(value: string | null): string {
   if (!value) return '—'
@@ -36,10 +21,9 @@ function SlackCard({ data }: { data: IntegrationsData }) {
     <section className="card integration-card">
       <header className="card-head">
         <h2>Slack</h2>
-        <span className={`integration-state ${ready ? 'is-on' : 'is-off'}`}>
-          <span className="mark-dot" aria-hidden="true" />
-          {ready ? 'commands configured' : 'not configured'}
-        </span>
+        <State tone={ready ? 'pos' : 'wait'}>
+          {ready ? 'Commands configured' : 'Not configured'}
+        </State>
       </header>
       <p className="card-lede">
         <span className="mono">/veto</span> buys through the rules; <span className="mono">
@@ -65,56 +49,18 @@ function SlackCard({ data }: { data: IntegrationsData }) {
         </ul>
         <div className="endpoint">
           <span className="endpoint-label">Request URL</span>
-          <span className="endpoint-value mono">{slack.slash_url}</span>
-          <CopyButton value={slack.slash_url} />
+          <CopyValue value={slack.slash_url} label="Copy the Request URL" />
         </div>
         <div className="endpoint">
           <span className="endpoint-label">Interactivity</span>
-          <span className="endpoint-value mono">{slack.interact_url}</span>
-          <CopyButton value={slack.interact_url} />
+          <CopyValue value={slack.interact_url} label="Copy the Interactivity URL" />
         </div>
         <div className="endpoint">
           <span className="endpoint-label">Signature</span>
-          <span className="endpoint-value mono">
-            {slack.signing_secret ? 'verified' : 'secret missing'}
-          </span>
+          <State tone={slack.signing_secret ? 'pos' : 'neg'}>
+            {slack.signing_secret ? 'Verified' : 'Secret missing'}
+          </State>
         </div>
-      </div>
-
-      <div className="route-block">
-        <p className="route-title">Model routing</p>
-        <p className="route-explain">
-          Each request is matched by what is being bought, so a cart typed in
-          <span className="mono"> #ops</span> can still be judged by the pantry agent.
-        </p>
-        {data.agents.length ? (
-          <ul className="route-list">
-            {data.agents.map((agent) => (
-              <li key={agent.id}>
-                <span className="route-agent-line">
-                  <Link className="route-agent" to={`/agents/${agent.id}`}>
-                    {agent.name}
-                  </Link>
-                  <span className="route-scope mono">
-                    {agent.categories.length
-                      ? agent.categories.join(', ')
-                      : 'any category'}
-                    {agent.merchants.length
-                      ? ` · ${agent.merchants.length} merchants`
-                      : ' · no merchants'}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="record-none">No agents yet.</p>
-        )}
-        {slack.default_agent ? (
-          <p className="card-footnote">
-            If the model finds no fit, {slack.default_agent.name} judges the request.
-          </p>
-        ) : null}
       </div>
 
       {!ready ? (
@@ -125,8 +71,8 @@ function SlackCard({ data }: { data: IntegrationsData }) {
         </p>
       ) : null}
       <p className="card-footnote">
-        The tunnel host changes when the runner restarts. Paste both URLs into the Slack app
-        again after a restart.
+        On the hosted demo both URLs are stable. A self-hosted runner behind a quick tunnel gets
+        a new host when it restarts, and both URLs have to be pasted again.
       </p>
     </section>
   )
@@ -139,10 +85,9 @@ function WalletCard({ data }: { data: IntegrationsData }) {
     <section className="card integration-card">
       <header className="card-head">
         <h2>PayPal wallet</h2>
-        <span className={`integration-state ${connected ? 'is-on' : 'is-off'}`}>
-          <span className="mark-dot" aria-hidden="true" />
-          {connected ? `${wallet.mode} · connected` : 'not connected'}
-        </span>
+        <State tone={connected ? 'pos' : 'wait'}>
+          {connected ? 'Connected' : 'Not connected'}
+        </State>
       </header>
       <p className="card-lede">
         Veto never charges a card it cannot name. Every capture comes from this vaulted payer, and
@@ -166,7 +111,7 @@ function WalletCard({ data }: { data: IntegrationsData }) {
           </div>
           <div className="record-row">
             <dt>Mode</dt>
-            <dd className="mono">{wallet.mode}</dd>
+            <dd>{paymentMode(wallet.mode)}</dd>
           </div>
         </dl>
       ) : (
@@ -189,6 +134,48 @@ function WalletCard({ data }: { data: IntegrationsData }) {
   )
 }
 
+/** Where a Slack request without a named agent is judged. */
+function RoutingCard({ data }: { data: IntegrationsData }) {
+  return (
+    <section className="card integration-card">
+      <header className="card-head">
+        <h2>Model routing</h2>
+        <span className="card-note">who judges a request</span>
+      </header>
+      <p className="card-lede">
+        Each request is matched by what is being bought, so a cart typed in
+        <span className="mono"> #ops</span> can still be judged by the pantry agent.
+      </p>
+      {data.agents.length ? (
+        <ul className="route-list">
+          {data.agents.map((agent) => (
+            <li key={agent.id}>
+              <span className="route-agent-line">
+                <Link className="route-agent" to={`/agents/${agent.id}`}>
+                  {agent.name}
+                </Link>
+                <span className="route-scope">
+                  {agent.categories.length ? agent.categories.join(', ') : 'any category'}
+                  {agent.merchants.length
+                    ? ` · ${agent.merchants.length} merchants`
+                    : ' · no merchants'}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="record-none">No agents yet.</p>
+      )}
+      {data.slack.default_agent ? (
+        <p className="card-footnote">
+          If the model finds no fit, {data.slack.default_agent.name} judges the request.
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
 function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
   const admin = me.user.role === 'admin'
   const [secret, setSecret] = useState<{ agent: string; token: string } | null>(null)
@@ -196,6 +183,7 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
   const [error, setError] = useState<string | null>(null)
   const [keys, setKeys] = useState(data.keys)
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
 
   useEffect(() => setKeys(data.keys), [data.keys])
 
@@ -207,6 +195,7 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
   const mint = async (agentId: string, agentName: string) => {
     setBusy(agentId)
     setError(null)
+    setFlash(null)
     setSecret(null)
     try {
       const created = await api.mintKey(agentId)
@@ -222,9 +211,12 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
   const revoke = async (agentId: string, keyId: string) => {
     setBusy(keyId)
     setError(null)
+    setFlash(null)
     try {
       await api.revokeKey(agentId, keyId)
       setConfirmRevoke(null)
+      setFlash('Key revoked. That agent’s next request is refused with 401.')
+      window.setTimeout(() => setFlash(null), 6000)
       await reload()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'The key was not revoked.')
@@ -253,9 +245,10 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
   -d '{"text":"2 packs of bamboo toilet paper"}'`}</pre>
       </div>
 
-      {error ? (
-        <p className="inline-error" role="alert">
-          {error}
+      {error ? <InlineError>{error}</InlineError> : null}
+      {flash ? (
+        <p className="record-flash" role="status">
+          {flash}
         </p>
       ) : null}
 
@@ -265,8 +258,7 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
             New key for {secret.agent} — shown once, copy it now.
           </p>
           <div className="key-secret-row">
-            <code className="mono key-secret-value">{secret.token}</code>
-            <CopyButton value={secret.token} />
+            <CopyValue value={secret.token} label="Copy the new agent key" />
           </div>
           <button type="button" className="btn btn-quiet btn-small" onClick={() => setSecret(null)}>
             Done
@@ -361,21 +353,27 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
 }
 
 /**
- * Integrations: the three doors into the record — Slack, the agent API and the
- * PayPal wallet — each with the state it is actually in.
+ * Integrations: the three doors into the record — Slack, the PayPal wallet and
+ * the agent API — each with the state it is actually in. The wallet and routing
+ * share a column so neither is a lonely card beside a tall one.
  */
 export function Integrations({ me }: { me: Me }) {
   const [data, setData] = useState<IntegrationsData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [reloadTick, setReloadTick] = useState(0)
+  const { tick, markLoaded } = useFreshness()
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
   useEffect(() => {
     let live = true
+    setError(null)
     api
       .integrations()
       .then((next) => {
-        if (live) setData(next)
+        if (!live) return
+        setData(next)
+        markLoaded()
       })
       .catch((err) => {
         if (!live) return
@@ -384,7 +382,7 @@ export function Integrations({ me }: { me: Me }) {
     return () => {
       live = false
     }
-  }, [])
+  }, [tick, reloadTick, markLoaded])
 
   return (
     <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
@@ -396,22 +394,32 @@ export function Integrations({ me }: { me: Me }) {
             console's session is recorded with source <span className="mono">Web</span>.
           </p>
         </div>
+        <div className="head-tools">
+          <FreshnessButton />
+        </div>
       </motion.header>
 
       {error ? (
-        <p className="inline-error" role="alert">
-          {error}
-        </p>
+        <InlineError onRetry={() => setReloadTick((value) => value + 1)}>{error}</InlineError>
       ) : null}
 
       {!data && !error ? (
-        <div className="integrations-grid">
-          {[0, 1].map((i) => (
-            <div className="card" key={i}>
-              <span className="skel" style={{ width: '40%', height: 16 }} />
-              <span className="skel" style={{ width: '100%', height: 90, marginTop: 14 }} />
+        <div className="integrations-grid" aria-hidden="true">
+          <div className="card">
+            <span className="skel" style={{ width: '28%', height: 16 }} />
+            <span className="skel" style={{ width: '100%', height: 34, marginTop: 14 }} />
+            <span className="skel" style={{ width: '100%', height: 140, marginTop: 12 }} />
+          </div>
+          <div className="integrations-side">
+            <div className="card">
+              <span className="skel" style={{ width: '36%', height: 16 }} />
+              <span className="skel" style={{ width: '100%', height: 96, marginTop: 14 }} />
             </div>
-          ))}
+            <div className="card">
+              <span className="skel" style={{ width: '30%', height: 16 }} />
+              <span className="skel" style={{ width: '100%', height: 64, marginTop: 14 }} />
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -419,7 +427,10 @@ export function Integrations({ me }: { me: Me }) {
         <>
           <div className="integrations-grid">
             <SlackCard data={data} />
-            <WalletCard data={data} />
+            <div className="integrations-side">
+              <WalletCard data={data} />
+              <RoutingCard data={data} />
+            </div>
           </div>
           <KeysCard data={data} me={me} />
         </>

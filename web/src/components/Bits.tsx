@@ -1,26 +1,73 @@
+import { useState, type ReactNode } from 'react'
 import { money } from '../api'
 
-/** Outcome pill: one shape, three tones. Red is a refusal signal, never decoration. */
-export function OutcomePill({
-  outcome,
-  dry = false,
+/**
+ * A ledger value a person may need elsewhere: the id stays readable and a copy
+ * button sits beside it. Clipboard failures are silent on purpose — the value is
+ * still on screen to select by hand.
+ */
+export function CopyValue({
+  value,
+  label = 'Copy',
+  children,
 }: {
-  outcome: 'auto' | 'review' | 'block'
-  dry?: boolean
+  value: string
+  /** Accessible name for the button: "Copy capture id". */
+  label?: string
+  children?: ReactNode
 }) {
-  const label = dry
-    ? outcome === 'auto'
-      ? 'Would pay automatically'
-      : outcome === 'review'
-        ? 'Would wait for a signature'
-        : 'Refused'
-    : outcome === 'auto'
-      ? 'Auto-approved'
-      : outcome === 'review'
-        ? 'Needs a signature'
-        : 'Blocked'
-  const tone = outcome === 'auto' ? 'is-pos' : outcome === 'review' ? 'is-wait' : 'is-neg'
-  return <span className={`pill ${tone}`}>{label}</span>
+  const [copied, setCopied] = useState(false)
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value)
+    } catch {
+      return
+    }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1600)
+  }
+
+  return (
+    <span className="copy-value">
+      <span className="copy-value-text mono" title={value}>
+        {children ?? value}
+      </span>
+      <button
+        type="button"
+        className="copy-btn mono"
+        onClick={() => void copy()}
+        aria-label={label}
+        title={label}
+      >
+        {copied ? 'copied' : 'copy'}
+      </button>
+    </span>
+  )
+}
+
+/** An error the screen can recover from: the message and the way back. */
+export function InlineError({
+  children,
+  onRetry,
+  retryLabel = 'Retry',
+  className,
+}: {
+  children: ReactNode
+  onRetry?: () => void
+  retryLabel?: string
+  className?: string
+}) {
+  return (
+    <p className={`inline-error${className ? ` ${className}` : ''}`} role="alert">
+      <span className="inline-error-text">{children}</span>
+      {onRetry ? (
+        <button type="button" className="btn btn-secondary btn-small" onClick={onRetry}>
+          {retryLabel}
+        </button>
+      ) : null}
+    </p>
+  )
 }
 
 /**

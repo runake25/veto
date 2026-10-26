@@ -18,9 +18,12 @@ import {
   type SimulateStreamFrame,
 } from '../api'
 import { AgentForm } from '../components/AgentForm'
-import { OutcomePill, Track } from '../components/Bits'
+import { InlineError, Track } from '../components/Bits'
+import { FreshnessButton, useFreshness } from '../components/freshness'
+import { PipelineLive, type Live, type LiveItem } from '../components/live'
 import { PressButton, Spinner } from '../components/PressButton'
 import { motionSet } from '../components/motion'
+import { State, agentState } from '../components/state'
 import { StandingJob } from '../components/StandingJob'
 
 /* What each rule is called when a person reads it, not when the engine does. */
@@ -196,17 +199,14 @@ function sendNote(result: SimulateResult): string {
   return 'A real request is recorded as blocked. No consent, no PayPal object, no money.'
 }
 
-type LiveStep = { kind: string; label: string; detail?: string | null }
-type LiveItem = { index: number; name: string; ok: boolean; title?: string | null }
-
-/* What the live panel says while a stage is still in flight. */
-function liveNextLabel(steps: LiveStep[]): string {
-  if (!steps.length) return 'Reading the request…'
-  const last = steps[steps.length - 1]?.kind
-  if (last === 'extract') return 'Searching and choosing…'
-  if (last === 'catalogue') return 'Pricing the cart…'
-  if (last === 'price') return 'Applying the rules…'
-  return 'Finishing…'
+/** The dry run's verdict in the shared state language, before the details. */
+function dryOutcome(outcome: SimulateResult['decision']['outcome']): {
+  label: string
+  tone: 'pos' | 'wait' | 'neg'
+} {
+  if (outcome === 'auto') return { label: 'Would pay automatically', tone: 'pos' }
+  if (outcome === 'review') return { label: 'Would wait for a signature', tone: 'wait' }
+  return { label: 'Refused', tone: 'neg' }
 }
 
 function DryRun({ agent }: { agent: Agent }) {
@@ -215,7 +215,7 @@ function DryRun({ agent }: { agent: Agent }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<SimulateResult | null>(null)
-  const [live, setLive] = useState<{ steps: LiveStep[]; items: LiveItem[] } | null>(null)
+  const [live, setLive] = useState<Live | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const runAbort = useRef<AbortController | null>(null)
@@ -317,41 +317,12 @@ function DryRun({ agent }: { agent: Agent }) {
       {error ? <p className="inline-error">{error}</p> : null}
 
       {busy && live ? (
-        <div className="dry-live" aria-live="polite">
-          <div className="dry-live-head">
-            <span className="live-dot" aria-hidden />
-            <span>Running the pipeline</span>
-            <span className="dry-live-note">read-only · nothing ordered</span>
-          </div>
-          {live.items.length ? (
-            <ul className="live-items">
-              {live.items.map((item) => (
-                <li key={item.index} className={item.ok ? 'is-ok' : 'is-miss'}>
-                  <span className="mono live-index">
-                    {String(item.index + 1).padStart(2, '0')}
-                  </span>
-                  <span className="live-name">{item.ok ? item.title : item.name}</span>
-                  <span className="live-state">{item.ok ? 'found' : 'no match'}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <ol className="mini-rail">
-            {live.steps.map((step, i) => (
-              <li key={`${step.kind}-${i}`}>
-                <span className="mini-step mono">{String(i + 1).padStart(2, '0')}</span>
-                <span className="mini-label">{step.label}</span>
-                {step.detail ? <span className="mini-detail mono">{step.detail}</span> : null}
-              </li>
-            ))}
-            <li className="is-pending">
-              <span className="mini-step mono">
-                {String(live.steps.length + 1).padStart(2, '0')}
-              </span>
-              <span className="mini-label">{liveNextLabel(live.steps)}</span>
-            </li>
-          </ol>
-        </div>
+        <PipelineLive
+          steps={live.steps}
+          items={live.items}
+          title="Running the pipeline"
+          note="read-only · nothing ordered"
+        />
       ) : null}
 
       <AnimatePresence mode="wait">
@@ -365,7 +336,9 @@ function DryRun({ agent }: { agent: Agent }) {
             transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
           >
             <div className="dry-head">
-              <OutcomePill outcome={result.decision.outcome} dry />
+              <State tone={dryOutcome(result.decision.outcome).tone} lead>
+                {dryOutcome(result.decision.outcome).label}
+              </State>
               <span className="dry-total">{money(result.total_cents)}</span>
               <span className="dry-meta">
                 {result.lines.length
@@ -491,12 +464,12 @@ function FitFlags({ item }: { item: ScopedSearch['results'][number] }) {
     still lets a human say yes. */
 function FitPill({ item }: { item: ScopedSearch['results'][number] }) {
   if (!item.fits.category || !item.fits.per_order) {
-    return <span className="pill is-neg">Blocked</span>
+    return <State tone="neg">Blocked</State>
   }
   if (!item.fits.per_unit || !item.fits.threshold) {
-    return <span className="pill is-wait">Needs signature</span>
+    return <State tone="wait">Needs signature</State>
   }
-  return <span className="pill is-pos">Fits</span>
+  return <State tone="pos">Fits</State>
 }
 
 function FindProduct({ agent }: { agent: Agent }) {
@@ -623,16 +596,22 @@ function FindProduct({ agent }: { agent: Agent }) {
 
 export function AgentDetail({ me }: { me: Me }) {
   const { id = '' } = useParams()
+  const navigate = useNavigate()
   const [agent, setAgent] = useState<Agent | null>(null)
   const [routine, setRoutine] = useState<Routine | null>(null)
   const [runs, setRuns] = useState<RoutineRun[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [reloadTick, setReloadTick] = useState(0)
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [statusBusy, setStatusBusy] = useState(false)
   const [confirmStatus, setConfirmStatus] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const { tick, markLoaded } = useFreshness()
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
@@ -642,20 +621,32 @@ export function AgentDetail({ me }: { me: Me }) {
     setRuns(detail.runs)
   }
 
+  // A different agent starts blank; a fresh read keeps what is on screen.
   useEffect(() => {
-    let live = true
     setAgent(null)
     setError(null)
+  }, [id])
+
+  useEffect(() => {
+    let live = true
     api
       .agentDetail(id)
-      .then((detail) => live && applyDetail(detail))
-      .catch(() => live && setError('That agent does not exist, or it belongs to another workspace.'))
+      .then((detail) => {
+        if (!live) return
+        applyDetail(detail)
+        markLoaded()
+      })
+      .catch(() => {
+        if (live) {
+          setError('That agent does not exist, or it belongs to another workspace.')
+        }
+      })
     return () => {
       live = false
     }
     // applyDetail only sets state; the fetch is the effect's only dependency
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
+  }, [id, tick, reloadTick, markLoaded])
 
   const refresh = async () => {
     applyDetail(await api.agentDetail(id))
@@ -675,6 +666,23 @@ export function AgentDetail({ me }: { me: Me }) {
       setEditError(err instanceof ApiError ? err.message : 'Could not change the agent state.')
     } finally {
       setStatusBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!agent) return
+    setDeleteBusy(true)
+    setDeleteError(null)
+    try {
+      await api.deleteAgent(agent.id)
+      navigate('/agents')
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError
+          ? err.message
+          : 'The agent was not deleted. Nothing changed.',
+      )
+      setDeleteBusy(false)
     }
   }
 
@@ -704,7 +712,7 @@ export function AgentDetail({ me }: { me: Me }) {
           <Link to="/agents">Agents</Link>
         </nav>
         <section className="card">
-          <p className="inline-error">{error}</p>
+          <InlineError onRetry={() => setReloadTick((value) => value + 1)}>{error}</InlineError>
           <Link className="text-link mono" to="/agents">
             ← back to agents
           </Link>
@@ -715,21 +723,49 @@ export function AgentDetail({ me }: { me: Me }) {
 
   if (!agent) {
     return (
-      <div className="screen">
+      <div className="screen agent-skel" aria-hidden="true">
+        <span className="skel" style={{ width: 148, height: 10 }} />
+        <div className="agent-skel-head">
+          <span className="skel" style={{ width: 220, height: 26 }} />
+          <span className="skel" style={{ width: 300, height: 11 }} />
+        </div>
         <div className="card">
-          <span className="skel" style={{ width: '28%', height: 20 }} />
-          <span className="skel" style={{ width: '52%', height: 12, marginTop: 10 }} />
-          <span className="skel" style={{ width: '40%', height: 12, marginTop: 8 }} />
+          <span className="skel" style={{ width: 118, height: 16 }} />
+          <div className="agent-skel-band">
+            {[0, 1, 2, 3].map((i) => (
+              <span className="skel" style={{ height: 42 }} key={i} />
+            ))}
+          </div>
+          <span className="skel" style={{ width: '100%', height: 10, marginTop: 14 }} />
+          <span className="skel" style={{ width: '74%', height: 10, marginTop: 8 }} />
+        </div>
+        <div className="card">
+          <span className="skel" style={{ width: 132, height: 16 }} />
+          <span className="skel" style={{ width: '100%', height: 62, marginTop: 14 }} />
+        </div>
+        <div className="cols cols-tools">
+          {[0, 1].map((i) => (
+            <div className="card" key={i}>
+              <span className="skel" style={{ width: '42%', height: 16 }} />
+              <span className="skel" style={{ width: '100%', height: 84, marginTop: 14 }} />
+            </div>
+          ))}
         </div>
       </div>
     )
   }
 
+  const headerState = agentState(agent)
+
   return (
     <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
-      <motion.nav className="breadcrumb mono" variants={m.riseIn} aria-label="Breadcrumb">
-        <Link to="/agents">Agents</Link> <span aria-hidden="true">/</span> <span>{agent.name}</span>
-      </motion.nav>
+      <motion.div className="breadcrumb-row" variants={m.riseIn}>
+        <nav className="breadcrumb mono" aria-label="Breadcrumb">
+          <Link to="/agents">Agents</Link> <span aria-hidden="true">/</span>{' '}
+          <span>{agent.name}</span>
+        </nav>
+        <FreshnessButton />
+      </motion.div>
 
       <motion.header className="screen-head agent-header" variants={m.riseIn}>
         <div>
@@ -737,10 +773,7 @@ export function AgentDetail({ me }: { me: Me }) {
           <div className="agent-meta">
             <span className="chip chip-quiet">{agent.tag}</span>
             {agent.channel ? <span className="mono agent-channel">{agent.channel}</span> : null}
-            <span className={`agent-state${agent.status === 'active' ? ' is-live' : ''}`}>
-              <span className="agent-dot" aria-hidden="true" />
-              {agent.status}
-            </span>
+            <State tone={headerState.tone}>{headerState.label}</State>
           </div>
         </div>
         {me.user.role === 'viewer' ? (
@@ -837,6 +870,59 @@ export function AgentDetail({ me }: { me: Me }) {
           <FindProduct agent={agent} />
         </motion.div>
       </div>
+
+      {me.user.role === 'viewer' ? null : (
+        <motion.section className="card danger-card" variants={m.riseIn}>
+          <header className="card-head">
+            <h2>Remove this agent</h2>
+            <span className="card-note">irreversible</span>
+          </header>
+          <p className="card-lede">
+            Deleting removes the agent, its rules and its standing job. An agent that has
+            ever made a request cannot be deleted — the money trail has to stay readable — so
+            Veto refuses and the brake to use is <b>Pause agent</b> instead.
+          </p>
+          {deleteError ? (
+            <p className="inline-error" role="alert">
+              {deleteError}
+            </p>
+          ) : null}
+          {confirmDelete ? (
+            <div className="danger-confirm">
+              <p className="danger-copy">
+                Delete {agent.name}? This cannot be undone, and its standing job goes with it.
+                Any request it already made stays in the record.
+              </p>
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => void remove()}
+                  disabled={deleteBusy}
+                >
+                  {deleteBusy ? 'Deleting…' : 'Confirm delete'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={deleteBusy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-quiet danger-open"
+              onClick={() => setConfirmDelete(true)}
+            >
+              Delete agent
+            </button>
+          )}
+        </motion.section>
+      )}
     </motion.div>
   )
 }

@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import os
+import queue
 import re
 import threading
 import time
@@ -34,6 +35,7 @@ from veto import requests as veto_requests  # noqa: E402
 from veto import check as veto_check  # noqa: E402
 from veto import routing as veto_routing  # noqa: E402
 from veto import routines as veto_routines  # noqa: E402
+from veto.events import FEED  # noqa: E402
 from veto.ratelimit import RateLimiter  # noqa: E402
 from veto import settlement as veto_settlement  # noqa: E402
 from veto import slack_commands as veto_slack  # noqa: E402
@@ -160,6 +162,80 @@ def public_workspace(workspace: dict) -> dict:
         "name": workspace.get("name") or "",
         "currency": workspace.get("currency") or "USD",
         "monthly_budget_cents": int(workspace.get("monthly_budget_cents") or 0),
+    }
+
+
+def _changed(*scopes: str) -> None:
+    """Tell every open SSE tab that a slice of the workspace moved.
+
+    Best-effort by design: publishing a refresh signal must never be able to
+    fail the mutation that already succeeded.
+    """
+    for scope in scopes:
+        try:
+            FEED.publish(scope)
+        except Exception:  # noqa: BLE001 - a broken feed cannot undo a write
+            traceback.print_exc()
+
+
+def request_date_bounds(params: dict) -> dict:
+    """The Inbox's optional date window, expressed as ``[start, end)`` instants.
+
+    ``from`` / ``to`` are ``YYYY-MM-DD`` in the viewer's local calendar and
+    ``tz`` is that calendar's offset from UTC in east-positive minutes (Hong
+    Kong = 480; a browser sends ``-new Date().getTimezoneOffset()``). Day D in
+    the viewer's calendar starts at ``D 00:00 UTC - tz minutes``, so the
+    returned bounds are exact UTC instants. Both days are inclusive; absent
+    parameters mean "no bound" (there is deliberately no default range here --
+    the inbox shows everything unless the user filters).
+
+    Returns ``{"created_from", "created_before", "from", "to", "tz"}``; the
+    store takes the first two, the response echoes the last three. Raises
+    ``ApiError(400, "invalid_range")`` for malformed dates, a reversed window or
+    an out-of-range / non-integer ``tz``.
+    """
+    raw_from = (params.get("from") or [""])[0].strip()
+    raw_to = (params.get("to") or [""])[0].strip()
+    raw_tz = (params.get("tz") or [""])[0].strip()
+    try:
+        tz_minutes = int(raw_tz) if raw_tz else 0
+    except (TypeError, ValueError):
+        raise ApiError(
+            400, "invalid_range", "tz must be whole minutes from UTC (-840..840)."
+        ) from None
+    if not -840 <= tz_minutes <= 840:
+        raise ApiError(
+            400, "invalid_range", "tz must be whole minutes from UTC (-840..840)."
+        )
+    try:
+        start_day = date.fromisoformat(raw_from) if raw_from else None
+        end_day = date.fromisoformat(raw_to) if raw_to else None
+    except ValueError:
+        raise ApiError(400, "invalid_range", "Pass from and to as YYYY-MM-DD.") from None
+    if start_day is not None and end_day is not None and end_day < start_day:
+        raise ApiError(400, "invalid_range", "`from` must not be after `to`.")
+
+    offset = timedelta(minutes=tz_minutes)
+
+    def utc_midnight(day: date) -> datetime:
+        return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+    created_from = (
+        (utc_midnight(start_day) - offset).isoformat(timespec="seconds")
+        if start_day is not None
+        else None
+    )
+    created_before = (
+        (utc_midnight(end_day) + timedelta(days=1) - offset).isoformat(timespec="seconds")
+        if end_day is not None
+        else None
+    )
+    return {
+        "created_from": created_from,
+        "created_before": created_before,
+        "from": raw_from or None,
+        "to": raw_to or None,
+        "tz": tz_minutes,
     }
 
 
@@ -537,6 +613,9 @@ class Handler(BaseHTTPRequestHandler):
                 "wallet": wallet_public,
             })
             return True
+        if path == "/api/v1/events":
+            self._v1_change_feed()
+            return True
         if path == "/api/v1/agents":
             session = self._require_session()
             workspace_id = session["workspace"]["id"]
@@ -657,12 +736,18 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _v2_delete(self, path: str) -> bool:
-        """Handle DELETE /api/v1/agents/{id}/keys/{kid}. True = handled."""
+        """Handle DELETE /api/v1/agents/{id}[/routine|/keys/{kid}]. True = handled."""
         if not path.startswith("/api/v1/"):
             return False
         prefix = "/api/v1/agents/"
         if path.startswith(prefix):
             parts = [unquote(part) for part in path[len(prefix):].split("/") if part]
+            if len(parts) == 1:
+                self._v1_delete_agent(parts[0])
+                return True
+            if len(parts) == 2 and parts[1] == "routine":
+                self._v1_delete_routine(parts[0])
+                return True
             if len(parts) == 3 and parts[1] == "keys":
                 self._v1_revoke_key(parts[0], parts[2])
                 return True
@@ -962,34 +1047,37 @@ class Handler(BaseHTTPRequestHandler):
             consent_state = "expired"
         elif status == "awaiting" and consent_state is None:
             consent_state = "actionable"
+        window = request_date_bounds(params)
         try:
             limit = max(1, min(100, int((params.get("limit") or ["50"])[0])))
             offset = max(0, int((params.get("offset") or ["0"])[0]))
         except (TypeError, ValueError):
             limit, offset = 50, 0
+        filters = {
+            "status": status,
+            "agent_id": agent_id,
+            "q": q,
+            "consent_state": consent_state,
+            "created_from": window["created_from"],
+            "created_before": window["created_before"],
+        }
         rows = STORE.list_requests(
             workspace_id,
-            status=status,
-            agent_id=agent_id,
             limit=limit,
             offset=offset,
             sort=sort or "priority",
-            q=q,
-            consent_state=consent_state,
+            **filters,
         )
         self._ok({
             "requests": [veto_requests.public_summary(row) for row in rows],
             "returned": len(rows),
-            "total": STORE.count_requests(
-                workspace_id, status=status, agent_id=agent_id, q=q,
-                consent_state=consent_state,
-            ),
-            "sum_cents": STORE.sum_requests(
-                workspace_id, status=status, agent_id=agent_id, q=q,
-                consent_state=consent_state,
-            ),
+            "total": STORE.count_requests(workspace_id, **filters),
+            "sum_cents": STORE.sum_requests(workspace_id, **filters),
             "sort": sort or "priority",
             "query": q or "",
+            "from": window["from"],
+            "to": window["to"],
+            "tz": window["tz"],
         })
 
     def _v1_request_detail(self, request_id: str) -> None:
@@ -1045,6 +1133,7 @@ class Handler(BaseHTTPRequestHandler):
             settlement=SETTLEMENT,
             route=route_note,
         )
+        _changed("requests")
         self._ok({"request": veto_requests.public_request(record)}, status=201)
 
     def _v1_decide_request(self, request_id: str) -> None:
@@ -1067,6 +1156,7 @@ class Handler(BaseHTTPRequestHandler):
             record = veto_requests.veto(
                 STORE, workspace=workspace, request_id=request_id, user=user
             )
+        _changed("requests")
         self._ok({"request": veto_requests.public_request(record)})
 
     def _v1_void_request(self, request_id: str) -> None:
@@ -1078,6 +1168,7 @@ class Handler(BaseHTTPRequestHandler):
             request_id=request_id,
             user=session["user"],
         )
+        _changed("requests")
         self._ok({"request": veto_requests.public_request(record)})
 
     def _public_key(self, row: dict) -> dict:
@@ -1107,6 +1198,7 @@ class Handler(BaseHTTPRequestHandler):
         if agent is None:
             self._api_error(404, "agent_not_found", "That agent does not exist.")
         token, record = veto_auth.mint_api_key(STORE, agent)
+        _changed("integrations")
         self._ok(
             {"key": self._public_key(record), "secret": token,
              "note": "This is the only time the key is shown."},
@@ -1117,6 +1209,7 @@ class Handler(BaseHTTPRequestHandler):
         session = self._require_role("admin")
         if not STORE.revoke_api_key(session["workspace"]["id"], key_id):
             self._api_error(404, "key_not_found", "That key does not exist.")
+        _changed("integrations")
         rows = STORE.list_api_keys(session["workspace"]["id"], agent_id=agent_id)
         match = next((row for row in rows if row["id"] == key_id), None)
         self._ok({"key": self._public_key(match) if match else {"id": key_id}})
@@ -1222,6 +1315,7 @@ class Handler(BaseHTTPRequestHandler):
             if cadence != routine["cadence"]:
                 fields["next_run_at"] = veto_routines.next_run_at(cadence)
             routine = STORE.update_routine(workspace["id"], routine["id"], fields=fields)
+        _changed("agents")
         self._ok({"routine": veto_routines.public_routine(STORE, workspace, routine)})
 
     def _v1_set_routine_status(self, agent_id: str, action: str) -> None:
@@ -1237,6 +1331,7 @@ class Handler(BaseHTTPRequestHandler):
                 # a paused routine resumes on its cadence; it does not backfill
                 fields["next_run_at"] = veto_routines.next_run_at(routine["cadence"])
         routine = STORE.update_routine(workspace["id"], routine["id"], fields=fields)
+        _changed("agents")
         self._ok({"routine": veto_routines.public_routine(STORE, workspace, routine)})
 
     def _routine_run_payload(self, workspace: dict, run: dict) -> dict:
@@ -1266,6 +1361,7 @@ class Handler(BaseHTTPRequestHandler):
     def _v1_routine_run(self, agent_id: str) -> None:
         workspace, routine = self._routine_for_run(agent_id)
         run = veto_routines.run_once(STORE, workspace, routine, settlement=SETTLEMENT)
+        _changed("agents", "requests")
         self._ok(self._routine_run_payload(workspace, run))
 
     def _v1_routine_run_stream(self, agent_id: str) -> None:
@@ -1281,6 +1377,7 @@ class Handler(BaseHTTPRequestHandler):
             emit({"type": "error",
                   "error": {"code": "server_error", "message": "The run failed."}})
             return
+        _changed("agents", "requests")
         payload = self._routine_run_payload(workspace, run)
         emit({"type": "run", **payload})
 
@@ -1309,6 +1406,7 @@ class Handler(BaseHTTPRequestHandler):
             rules=payload["rules"],
             overrides=payload["overrides"],
         )
+        _changed("agents")
         self._ok({"agent": agent}, status=201)
 
     def _v1_update_agent(self, agent_id: str) -> None:
@@ -1325,7 +1423,44 @@ class Handler(BaseHTTPRequestHandler):
         )
         if agent is None:
             self._api_error(404, "agent_not_found", "That agent does not exist.")
+        _changed("agents")
         self._ok({"agent": agent})
+
+    def _v1_delete_agent(self, agent_id: str) -> None:
+        """Delete an agent that never bought anything.
+
+        An agent with recorded requests is part of the ledger; deleting it would
+        orphan history the board and the analytics still count, so the operator
+        is told to pause it instead.
+        """
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        agent = STORE.agent(workspace["id"], agent_id)
+        if agent is None:
+            self._api_error(404, "agent_not_found", "That agent does not exist.")
+        history = STORE.count_requests(workspace["id"], agent_id=agent_id)
+        if history:
+            self._api_error(
+                409,
+                "agent_has_history",
+                f"{agent['name']} has {history} recorded request"
+                f"{'' if history == 1 else 's'} and the ledger keeps them. "
+                "Pause the agent instead.",
+            )
+        if not STORE.delete_agent(workspace["id"], agent_id):
+            self._api_error(404, "agent_not_found", "That agent does not exist.")
+        _changed("agents")
+        self._ok({"deleted": True})
+
+    def _v1_delete_routine(self, agent_id: str) -> None:
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        routine = STORE.routine_for_agent(workspace["id"], agent_id)
+        if routine is None:
+            self._api_error(404, "no_routine", "This agent has no standing job.")
+        STORE.delete_routine(workspace["id"], routine["id"])
+        _changed("agents")
+        self._ok({"deleted": True})
 
     def _v1_simulate(self) -> None:
         session = self._require_session()
@@ -1386,6 +1521,56 @@ class Handler(BaseHTTPRequestHandler):
 
         emit({"type": "start"})
         return emit
+
+    def _v1_change_feed(self) -> None:
+        """Authenticated SSE: a tiny "something changed" frame per write.
+
+        Open tabs keep this connection for hours; it is quiet most of the time,
+        so it sends a heartbeat comment every 20 seconds and otherwise only the
+        scope name that moved. Writes never block on it (the feed drops frames
+        for a slow reader); a tab that closes is unsubscribed silently.
+        """
+        self._require_session()
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        def write(frame: str) -> bool:
+            try:
+                self.wfile.write(frame.encode("utf-8"))
+                self.wfile.flush()
+                return True
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return False
+
+        if not write("retry: 4000\n\n"):
+            return
+        if not write('data: {"type":"ready"}\n\n'):
+            return
+        subscriber = FEED.subscribe()
+        try:
+            while True:
+                try:
+                    scope = subscriber.get(timeout=20)
+                except queue.Empty:
+                    if not write(": ping\n\n"):
+                        return
+                    continue
+                frame = json.dumps(
+                    {"type": "change", "scope": scope}, separators=(",", ":")
+                )
+                if not write(f"data: {frame}\n\n"):
+                    return
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            # the tab went away; that is the normal end of this stream
+            return
+        except Exception:  # noqa: BLE001 - headers are out; just close quietly
+            traceback.print_exc()
+        finally:
+            FEED.unsubscribe(subscriber)
 
     def _v1_simulate_stream(self) -> None:
         """The same dry run as ``/simulate``, streamed as server-sent events.
@@ -1576,6 +1761,7 @@ class Handler(BaseHTTPRequestHandler):
                     STORE, workspace=workspace, request_id=rid, user=actor
                 )
         except veto_requests.WalletRequired as exc:
+            _changed("requests")
             return {
                 "response_type": "ephemeral",
                 "text": "The company wallet has to be approved once before this can capture.",
@@ -1592,6 +1778,7 @@ class Handler(BaseHTTPRequestHandler):
         record = STORE.request(workspace["id"], rid)
         if record is None:
             return {"response_type": "ephemeral", "text": f"{rid} no longer exists."}
+        _changed("requests")
         payload = self._slack_request_blocks(veto_requests.public_request(record))
         payload["replace_original"] = True
         payload["text"] = f"{payload['text']} · actioned by @{user}"
@@ -1703,6 +1890,7 @@ class Handler(BaseHTTPRequestHandler):
             return {"response_type": "ephemeral",
                     "text": "The pick failed. Nothing was ordered."}
         record = STORE.request(workspace["id"], record["id"]) or record
+        _changed("requests")
         payload = self._slack_request_blocks(veto_requests.public_request(record))
         payload["replace_original"] = True
         payload["text"] = f"{payload['text']} · chosen by @{user}"
@@ -1925,6 +2113,7 @@ class Handler(BaseHTTPRequestHandler):
         record = STORE.request(workspace["id"], record["id"])
         if record is None:
             return {"response_type": "ephemeral", "text": "The request could not be read back."}
+        _changed("requests")
         return self._slack_request_blocks(veto_requests.public_request(record))
 
 

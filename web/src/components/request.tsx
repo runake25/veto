@@ -3,10 +3,11 @@
  * rule names, money and times. A fact lives here once and is rendered everywhere.
  */
 import type { RequestStatus } from '../api'
+import { State, type Tone } from './state'
 
 export const STATUS: Record<
   RequestStatus,
-  { label: string; tone: 'pos' | 'wait' | 'neg' | 'quiet'; note: string }
+  { label: string; tone: Tone; note: string }
 > = {
   awaiting: {
     label: 'Needs you',
@@ -128,12 +129,7 @@ export function dayLabel(iso: string): string {
 
 export function StatusMark({ status, label }: { status: RequestStatus; label?: string }) {
   const meta = STATUS[status] ?? STATUS.voided
-  return (
-    <span className={`mark is-${meta.tone}`}>
-      <span className="mark-dot" aria-hidden="true" />
-      {label ?? meta.label}
-    </span>
-  )
+  return <State tone={meta.tone}>{label ?? meta.label}</State>
 }
 
 /** The severity flag the policy engine attaches to a rule. */

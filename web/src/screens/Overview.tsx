@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { Link } from 'react-router-dom'
 import { api, capMoney, money, type Agent, type OverviewData } from '../api'
+import { InlineError } from '../components/Bits'
+import { FreshnessButton, useFreshness } from '../components/freshness'
 import { motionSet } from '../components/motion'
 import { requestLabel, when } from '../components/request'
 
@@ -46,12 +48,14 @@ export function Overview() {
   const [error, setError] = useState<string | null>(null)
   const [overviewError, setOverviewError] = useState<string | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
-  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
+  const { tick, markLoaded } = useFreshness()
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
   useEffect(() => {
     let live = true
+    setError(null)
+    setOverviewError(null)
     api
       .agents()
       .then((list) => {
@@ -65,7 +69,7 @@ export function Overview() {
       .then((data) => {
         if (!live) return
         setOverview(data)
-        setRefreshedAt(new Date())
+        markLoaded()
       })
       .catch(() => {
         if (live) setOverviewError('The live figures did not load.')
@@ -73,14 +77,7 @@ export function Overview() {
     return () => {
       live = false
     }
-  }, [reloadTick])
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') setReloadTick((value) => value + 1)
-    }, 30_000)
-    return () => window.clearInterval(timer)
-  }, [])
+  }, [reloadTick, tick, markLoaded])
 
   const counts = overview?.counts
   const pending = overview?.pending ?? []
@@ -101,25 +98,18 @@ export function Overview() {
           <p>What needs you, and where the money is.</p>
         </div>
         <div className="head-tools">
-          <button
-            type="button"
-            className="refresh-link mono"
-            onClick={() => setReloadTick((value) => value + 1)}
-          >
-            {refreshedAt
-              ? `Updated ${refreshedAt.toLocaleTimeString('en-US', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })} · Refresh`
-              : 'Refresh'}
-          </button>
+          <FreshnessButton />
           <Link className="btn btn-secondary" to={action.to}>
             {action.label}
           </Link>
         </div>
       </motion.header>
 
-      {overviewError ? <p className="inline-error">{overviewError}</p> : null}
+      {overviewError ? (
+        <InlineError onRetry={() => setReloadTick((value) => value + 1)}>
+          {overviewError}
+        </InlineError>
+      ) : null}
 
       <motion.div className="stats" variants={m.riseIn}>
         <Stat
@@ -221,7 +211,9 @@ export function Overview() {
             </Link>
           </header>
 
-          {error ? <p className="inline-error">{error}</p> : null}
+          {error ? (
+            <InlineError onRetry={() => setReloadTick((value) => value + 1)}>{error}</InlineError>
+          ) : null}
 
           {!agents && !error ? (
             <div className="rows">

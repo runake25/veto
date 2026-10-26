@@ -162,7 +162,8 @@ The expensive doors are rate limited in-process (requests, simulate, search, Sla
 | `POST /api/v1/simulate` | session | **M2 done** — dry-run, persists nothing |
 | `POST /api/v1/simulate/stream` | session | **M5 done** — the same dry run as SSE: `start`, one `event` per stage, one `item` per resolved cart line, `result` |
 | `GET /api/v1/overview` | session | **M3 done** — needs you (signable only), expired consents, committed, settled this month, budget/remaining, agents |
-| `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | **M3 done** — summaries and the full record; list takes `status` (incl. synthetic `expired`), `consent=actionable|expired`, `q`, whitelisted `sort`, and returns `total` + `sum_cents` |
+| `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | **M3 done, polished** — summaries and the full record; list takes `status` (incl. synthetic `expired`), `consent=actionable|expired`, `q` (title, text, agent, requester **and cart-line merchant**), whitelisted `sort`, an optional `from`/`to` day window with `tz` (viewer-local calendar, east-positive minutes), and returns `total` + `sum_cents` + the echoed window |
+| `GET /api/v1/events` | session | **polish** — the live board: SSE `retry`, a `ready` frame, then `{"type":"change","scope":"requests|agents|integrations"}` per write, with a `: ping` heartbeat every 20s. Bounded per-tab queues; a slow reader drops frames, never blocks a write |
 | `POST /api/v1/requests` | agent key / session | **M3 done** — persist, judge, consent, capture |
 | `POST /api/v1/requests/{id}/decision` · `/void` | approver / admin | **M3 done** — approve captures, veto/void move no money |
 | `GET/POST /api/v1/agents/{id}/keys` · `DELETE …/keys/{kid}` | admin | **M3 done** — `vkey_…`, shown once, stored hashed |
@@ -170,6 +171,8 @@ The expensive doors are rate limited in-process (requests, simulate, search, Sla
 | `GET /api/v1/integrations` | session | **M4 done** — Slack endpoints + routing, wallet, agent keys |
 | `GET /api/v1/routines` | session | **M6 done** — the standing jobs with their month and next run |
 | `POST /api/v1/agents/{id}/routine` · `/pause` · `/resume` | admin/approver | **M6 done** — save the standing job, stop or restart it |
+| `DELETE /api/v1/agents/{id}/routine` | admin/approver | **polish** — delete the job and its run history; the requests it made stay in the record |
+| `DELETE /api/v1/agents/{id}` | admin/approver | **polish** — delete an agent that never made a request (`409 agent_has_history` with the count and "pause instead" when it did) |
 | `POST /api/v1/agents/{id}/routine/run` · `/run/stream` | admin/approver | **M6 done** — run once; the streamed form emits the same frames as a dry run, then the run |
 | `GET /` · `GET /app/*` | — | **M4 done** — the built app; both serve the same shell |
 | `POST /api/slack/veto` | Slack signature | **M6** — one Request URL for every Slack command: `/veto`, `/veto-status`, `/veto-budget`, `/veto-routines`, `/veto-help` |
@@ -320,8 +323,8 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 | M2 | policy engine, guided agent rules, scoped search, dry-run | **done (2026-10-22)** |
 | M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | **done (2026-10-23)** |
 | M4 | Inbox, Record, Analytics, Integrations; Overview rewritten; palette retuned to the ledger tone; old console deleted; `/` flips to the app; model routing for Slack | **done (2026-10-24)** |
-| M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | **in progress (2026-10-26)** — rate limits, real agent budget track, send-from-dry-run, parallel item search and the streamed dry run are done; UI smoke test and hosting next |
-| M6 | routines (standing jobs) + Slack command surface + veto-check, UI smoke test, hosting, video, Devpost | **in progress (2026-10-26)** — routine schema, scheduler, envelope, run history, veto-check, the six Slack commands and the routine UI are live; the hosted demo is live on Render's free plan; smoke test, video and Devpost next |
+| M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | **done (2026-10-26)** — rate limits, real agent budget track, send-from-dry-run, parallel item search, the streamed dry run, the hosted demo and the HTTP smoke harnesses are live |
+| M6 | routines (standing jobs) + Slack command surface + veto-check, hosting, UI polish | **done (2026-10-26)** — routine schema, scheduler, envelope, run history, veto-check, the six Slack commands, the routine UI and the hosted demo are live; the deferred UI-audit findings are closed in the polish round (see §9a); video and Devpost remain submission work |
 
 ## 9. Running it
 
@@ -329,9 +332,10 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (269)
+python3 -m unittest discover -s tests    # backend tests (314)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
 python3 tools/check_m4.py                # 42 checks: screens' data, read-only (~1s)
+python3 tools/check_polish.py            # 20 checks: live feed, filters, delete guard, built controls
 ```
 
 M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
@@ -359,6 +363,43 @@ It proves Analytics reconciles with Overview (series sum = captured total = by-a
 sum = by-vendor sum), Integrations reports Slack routing/wallet/keys, a record carries
 its cart, consent, PayPal capture id and ordered trail, a refused record carries no
 wallet object, and `/` serves the app while the old console routes are gone.
+
+A polish round (2026-10-26) closed the deferred findings from the two independent UI audits:
+
+- **One status language.** `web/src/components/state.tsx` owns a single `State` component —
+  a dot and a word, four tones (positive, hold, refusal, quiet) — and the vocabulary for
+  agent state, job state, run outcome, payment state and payment mode. The old pill, raw
+  `agent-state` and text-only run outcome are gone, so a colour cannot mean two things.
+  "Can't buy" is computed by the same helper on the roster and the agent page.
+- **A live board.** `GET /api/v1/events` carries change frames from `veto/events.py`;
+  `FreshnessProvider` in the shell re-reads the screens on a change, on tab focus and on a
+  30-second fallback poll. Slack approvals now land on an open Inbox with no manual refresh.
+- **A real Inbox table.** The list is a `<table>` with sticky `aria-sort` column headers, a
+  phone list of the same rows, a `when` day range (viewer-local, offset sent to the server),
+  search over cart-line merchants, and a reconciliation footer.
+- **Honest deletes.** A standing job deletes with its run history; an agent with ledger
+  history is refused and told to pause. Both are two-step confirmations.
+- **Field-level validation.** The agent form validates name, lengths, money, merchant
+  domains, category slugs and the category exception at the field, mirrors the API's own
+  rules, and places a server message beside the field it names.
+- **No dead ends.** A failed session check opens its own retry state (with the free-instance
+  wake note) instead of the sign-in screen; screen errors carry Retry; skeletons mirror the
+  block geometry of the Inbox, record, agent page, analytics and integrations.
+- **Ledger affordances.** PayPal order/authorization/capture ids and the cart hash copy with
+  one control; `COMPLETED` reads "Completed"; mono `sandbox` tags became words; no meta text
+  below 11px.
+- **Run-now shows the money.** `Settlement.capture(on_step=…)` and `requests.create` stream
+  record → consent → order → authorization → capture into the same live panel as the dry run.
+- **Integrations layout** is Slack beside a wallet + routing column with the keys card full
+  width, and its skeleton matches.
+
+The regression harness for the round is read-only:
+
+    python3 tools/check_polish.py                      # 20 checks, no money moved
+
+It proves the feed opens (and needs a session), the day window only returns its own day and
+reconciles its sum, a merchant is searchable through a cart line, an agent with history is
+refused a delete with the pause remedy, and the built bundle carries the new controls.
 
 M5 keeps the run honest while it works. `POST /api/v1/simulate/stream` returns the
 same dry run as server-sent events: a `start` frame immediately, one `event` frame per

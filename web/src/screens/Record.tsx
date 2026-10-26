@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, ApiError, money, type Me, type RequestDetail, type RequestEvent } from '../api'
+import { CopyValue } from '../components/Bits'
+import { FreshnessButton, useFreshness } from '../components/freshness'
 import { motionSet } from '../components/motion'
 import {
   RuleFlag,
@@ -12,6 +14,7 @@ import {
   when,
   whenFull,
 } from '../components/request'
+import { State, paymentMode, paymentStatus } from '../components/state'
 
 type Action = 'approve' | 'veto' | 'void'
 
@@ -110,17 +113,20 @@ function verdictHeadline(record: RequestDetail): string {
 /** The money trail: every object PayPal returned, or the fact that none exists. */
 function PaymentCard({ record }: { record: RequestDetail }) {
   const payment = record.payment
+  const status = payment ? paymentStatus(payment.status) : null
   return (
     <section className="card">
       <header className="card-head">
         <h2>Payment</h2>
-        <span className="card-note mono">{payment ? payment.mode : 'none'}</span>
+        <span className="card-note">{paymentMode(payment?.mode)}</span>
       </header>
       {payment ? (
         <dl className="record-rows">
           <div className="record-row">
             <dt>PayPal status</dt>
-            <dd className="record-state mono">{payment.status}</dd>
+            <dd title={payment.status}>
+              {status ? <State tone={status.tone}>{status.label}</State> : '—'}
+            </dd>
           </div>
           <div className="record-row">
             <dt>Amount</dt>
@@ -128,15 +134,36 @@ function PaymentCard({ record }: { record: RequestDetail }) {
           </div>
           <div className="record-row">
             <dt>Order</dt>
-            <dd className="mono record-id-value">{payment.order_id ?? '—'}</dd>
+            <dd>
+              {payment.order_id ? (
+                <CopyValue value={payment.order_id} label="Copy the PayPal order id" />
+              ) : (
+                '—'
+              )}
+            </dd>
           </div>
           <div className="record-row">
             <dt>Authorization</dt>
-            <dd className="mono record-id-value">{payment.authorization_id ?? '—'}</dd>
+            <dd>
+              {payment.authorization_id ? (
+                <CopyValue
+                  value={payment.authorization_id}
+                  label="Copy the PayPal authorization id"
+                />
+              ) : (
+                '—'
+              )}
+            </dd>
           </div>
           <div className="record-row">
             <dt>Capture</dt>
-            <dd className="mono record-id-value">{payment.capture_id ?? '—'}</dd>
+            <dd>
+              {payment.capture_id ? (
+                <CopyValue value={payment.capture_id} label="Copy the PayPal capture id" />
+              ) : (
+                '—'
+              )}
+            </dd>
           </div>
         </dl>
       ) : (
@@ -163,8 +190,8 @@ function ConsentCard({ record }: { record: RequestDetail }) {
         <dl className="record-rows">
           <div className="record-row">
             <dt>Cart hash</dt>
-            <dd className="mono record-id-value record-hash" title={consent.cart_hash}>
-              {consent.cart_hash}
+            <dd>
+              <CopyValue value={consent.cart_hash} label="Copy the cart hash" />
             </dd>
           </div>
           <div className="record-row">
@@ -239,17 +266,23 @@ export function Record({ me }: { me: Me }) {
   const [pendingAction, setPendingAction] = useState<Action | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
   const [resending, setResending] = useState(false)
+  const { tick, markLoaded } = useFreshness()
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
   useEffect(() => {
-    let live = true
     setRecord(null)
     setError(null)
+  }, [id])
+
+  useEffect(() => {
+    let live = true
     api
       .request(id)
       .then((data) => {
-        if (live) setRecord(data)
+        if (!live) return
+        setRecord(data)
+        markLoaded()
       })
       .catch((err) => {
         if (!live) return
@@ -258,7 +291,7 @@ export function Record({ me }: { me: Me }) {
     return () => {
       live = false
     }
-  }, [id, reloadTick])
+  }, [id, reloadTick, tick, markLoaded])
 
   const askAct = (action: Action) => {
     setActionError(null)
@@ -331,7 +364,14 @@ export function Record({ me }: { me: Me }) {
         <Link className="back-link" to="/inbox">
           ← Inbox
         </Link>
-        {record ? <span className="back-id mono">{record.id}</span> : null}
+        <div className="back-tools">
+          <FreshnessButton />
+          {record ? (
+            <CopyValue value={record.id} label="Copy the record id">
+              {requestLabel(record.seq)}
+            </CopyValue>
+          ) : null}
+        </div>
       </motion.div>
 
       {error ? (
@@ -359,11 +399,38 @@ export function Record({ me }: { me: Me }) {
       ) : null}
 
       {!record && !error ? (
-        <div className="record-skel">
-          <span className="skel" style={{ width: '38%', height: 26 }} />
-          <span className="skel" style={{ width: '22%', height: 12 }} />
-          <span className="skel" style={{ width: '100%', height: 84 }} />
-          <span className="skel" style={{ width: '100%', height: 220 }} />
+        <div className="record-skel" aria-hidden="true">
+          <div className="record-skel-head">
+            <div className="record-skel-ident">
+              <span className="skel" style={{ width: 190, height: 10 }} />
+              <span className="skel" style={{ width: '58%', height: 28 }} />
+              <span className="skel" style={{ width: '76%', height: 11 }} />
+            </div>
+            <span className="skel" style={{ width: 120, height: 30 }} />
+          </div>
+          <span className="skel" style={{ width: '100%', height: 96 }} />
+          <div className="record-cols">
+            <div className="record-col">
+              <div className="card">
+                <span className="skel" style={{ width: '28%', height: 16 }} />
+                <span className="skel" style={{ width: '100%', height: 190, marginTop: 14 }} />
+              </div>
+              <div className="card">
+                <span className="skel" style={{ width: '24%', height: 16 }} />
+                <span className="skel" style={{ width: '100%', height: 72, marginTop: 14 }} />
+              </div>
+            </div>
+            <div className="record-col">
+              <div className="card">
+                <span className="skel" style={{ width: '26%', height: 16 }} />
+                <span className="skel" style={{ width: '100%', height: 116, marginTop: 14 }} />
+              </div>
+              <div className="card">
+                <span className="skel" style={{ width: '20%', height: 16 }} />
+                <span className="skel" style={{ width: '100%', height: 120, marginTop: 14 }} />
+              </div>
+            </div>
+          </div>
         </div>
       ) : null}
 

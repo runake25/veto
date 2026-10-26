@@ -80,7 +80,7 @@ class FakeSettlement:
         self.calls: list[dict] = []
 
     def capture(self, store, workspace, *, request_id, title, total_cents,
-                currency="USD", nonce):
+                currency="USD", nonce, on_step=None):
         self.calls.append({
             "request_id": request_id,
             "title": title,
@@ -91,6 +91,14 @@ class FakeSettlement:
         })
         if self.error is not None:
             raise self.error
+        steps = [
+            {"kind": "order", "label": "Order created", "detail": "intent AUTHORIZE · ORDER-1"},
+            {"kind": "auth", "label": "Authorized", "detail": "AUTH-1 · funds held, not taken"},
+            {"kind": "capture", "label": "Captured", "detail": "CAPTURE-1"},
+        ]
+        for step in steps:
+            if on_step is not None:
+                on_step(step)
         return {
             "mode": "mock",
             "vault_id": "vault_test",
@@ -98,11 +106,7 @@ class FakeSettlement:
             "authorization_id": "AUTH-1",
             "capture_id": "CAPTURE-1",
             "status": "COMPLETED",
-            "steps": [
-                {"kind": "order", "label": "Order created", "detail": "intent AUTHORIZE · ORDER-1"},
-                {"kind": "auth", "label": "Authorized", "detail": "AUTH-1 · funds held, not taken"},
-                {"kind": "capture", "label": "Captured", "detail": "CAPTURE-1"},
-            ],
+            "steps": steps,
         }
 
 

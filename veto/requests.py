@@ -121,6 +121,24 @@ def _consent(record: dict) -> tuple[str, str]:
     return consent.get("nonce") or "", consent.get("expires_at") or ""
 
 
+def _money(cents: int) -> str:
+    return "${:,.2f}".format((cents or 0) / 100)
+
+
+def _emit_progress(progress, event: dict) -> None:
+    """Send one event frame to a listening stream.
+
+    A closed pipe or a broken writer must never interrupt a request: progress is
+    best-effort, the stored record is the source of truth.
+    """
+    if progress is None:
+        return
+    try:
+        progress({"type": "event", "event": event})
+    except Exception:  # noqa: BLE001 - reporting never blocks the lifecycle
+        pass
+
+
 # ---------------------------------------------------------------------------
 # create
 # ---------------------------------------------------------------------------
@@ -354,7 +372,41 @@ def create(
         consent=consent,
     )
 
+    # The streamed run shows the record landing, then the consent it froze.
+    _emit_progress(progress, {
+        "kind": "record",
+        "label": "Request recorded",
+        "detail": f"{record['id']} · {record.get('title') or 'request'}",
+    })
+    if consent is not None:
+        _emit_progress(progress, {
+            "kind": "consent",
+            "label": "Consent issued",
+            "detail": (
+                f"single use · {CONSENT_TTL_MINUTES} min · "
+                f"sha256:{consent['cart_hash'][:12]}"
+            ),
+        })
+
     if outcome != "auto":
+        if status == STATUS_BLOCKED:
+            detail = "; ".join(
+                str(reason.get("message") or "") for reason in decision.get("reasons") or []
+            ) or "refused by the agent's rules"
+            _emit_progress(progress, {
+                "kind": "block",
+                "label": "Rules blocked the cart",
+                "detail": detail,
+            })
+        else:
+            _emit_progress(progress, {
+                "kind": "hold",
+                "label": "Waiting for a signature",
+                "detail": (
+                    f"{record['id']} · {_money(total_cents)} · "
+                    "a human has to approve this cart"
+                ),
+            })
         return record
 
     # Inside every rule: the agent pays now, without asking. A missing wallet is
@@ -368,6 +420,7 @@ def create(
             approver_user_id=None,
             raise_on_wallet=False,
             raise_on_failure=False,
+            progress=progress,
         )
     except RequestError:
         return store.request(workspace["id"], record["id"]) or record
@@ -385,11 +438,13 @@ def _settle(
     approver_user_id: str | None,
     raise_on_wallet: bool = True,
     raise_on_failure: bool = True,
+    progress=None,
 ) -> dict:
     """Issue the PayPal objects for an approved request, then write the proof.
 
     The consent's nonce is the idempotency key, so a retried approval replays the
-    same order / authorization / capture instead of charging twice.
+    same order / authorization / capture instead of charging twice. When
+    ``progress`` is given, each settlement step is streamed as it happens.
     """
     money_mover = settlement or default_settlement()
     nonce = _consent(record)[0]
@@ -398,6 +453,13 @@ def _settle(
         mode=money_mover.mode,
         amount_cents=record["total_cents"],
     )
+    streamed_steps = 0
+
+    def on_step(step: dict) -> None:
+        nonlocal streamed_steps
+        streamed_steps += 1
+        _emit_progress(progress, dict(step))
+
     try:
         result = money_mover.capture(
             store,
@@ -407,6 +469,7 @@ def _settle(
             total_cents=int(record["total_cents"]),
             currency=record.get("currency") or CURRENCY,
             nonce=nonce,
+            on_step=on_step,
         )
     except VaultRequired as exc:
         store.update_payment(payment["id"], status="wallet_required")
@@ -416,6 +479,11 @@ def _settle(
             "Wallet not connected",
             detail="approved, capture waits for a one-time PayPal approval",
         )
+        _emit_progress(progress, {
+            "kind": "wallet",
+            "label": "Wallet not connected",
+            "detail": "approved, capture waits for a one-time PayPal approval",
+        })
         if raise_on_wallet:
             raise WalletRequired(exc.approve_url, exc.setup_id) from exc
         return store.request(workspace["id"], record["id"]) or record
@@ -423,7 +491,16 @@ def _settle(
         store.update_payment(payment["id"], status="failed", **exc.partial)
         for step in exc.steps:
             store.add_event(record["id"], step["kind"], step["label"], detail=step.get("detail"))
+        # Steps the mover got through after this point were never streamed (the
+        # ones before it were, live, by on_step) so replay only the tail.
+        for step in exc.steps[streamed_steps:]:
+            _emit_progress(progress, dict(step))
         store.add_event(record["id"], "capture_failed", "Capture failed", detail=str(exc))
+        _emit_progress(progress, {
+            "kind": "capture_failed",
+            "label": "Capture failed",
+            "detail": str(exc),
+        })
         if raise_on_failure:
             raise RequestError(502, "capture_failed", f"PayPal did not capture: {exc}") from exc
         return store.request(workspace["id"], record["id"]) or record

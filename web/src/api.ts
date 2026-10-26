@@ -712,6 +712,15 @@ export const api = {
       `/api/v1/agents/${encodeURIComponent(agentId)}/keys/${encodeURIComponent(keyId)}`,
       { method: 'DELETE' },
     ),
+  deleteAgent: (id: string) =>
+    request<{ deleted: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  deleteRoutine: (agentId: string) =>
+    request<{ deleted: boolean }>(
+      `/api/v1/agents/${encodeURIComponent(agentId)}/routine`,
+      { method: 'DELETE' },
+    ),
   agents: () => request<{ agents: Agent[] }>('/api/v1/agents').then((d) => d.agents),
   agent: (id: string) => request<{ agent: Agent }>(`/api/v1/agents/${id}`).then((d) => d.agent),
   agentDetail: (id: string) => request<AgentDetailData>(`/api/v1/agents/${id}`),

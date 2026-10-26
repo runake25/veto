@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, money, type Analytics as AnalyticsData } from '../api'
+import { InlineError } from '../components/Bits'
+import { FreshnessButton, useFreshness } from '../components/freshness'
 import { motionSet } from '../components/motion'
 import { RuleFlag, dayLabel } from '../components/request'
 
@@ -102,7 +104,7 @@ function SeriesChart({ data }: { data: AnalyticsData }) {
                 }`}
               >
                 <span className="chart-bar" style={{ height: `${height}%` }} />
-                {day.captured_cents && activeDays <= 4 ? (
+                {day.captured_cents && height >= 22 && activeDays <= 4 ? (
                   <span
                     className={`chart-value mono${index === 0 ? ' is-first' : ''}${
                       index === days.length - 1 ? ' is-last' : ''
@@ -123,14 +125,36 @@ function SeriesChart({ data }: { data: AnalyticsData }) {
       <p className="card-footnote">
         A capture is counted on the day the money moved, not the day the request was written.
       </p>
-      <ul className="sr-only">
-        {days.map((day) => (
-          <li key={day.date}>
-            {day.date}: {money(day.captured_cents)} captured, {day.requests}{' '}
-            {day.requests === 1 ? 'request' : 'requests'}
-          </li>
-        ))}
-      </ul>
+      <details className="chart-table">
+        <summary>View the daily numbers</summary>
+        <div className="chart-table-scroll">
+          <table>
+            <caption className="sr-only">Captured spend by day, in dollars</caption>
+            <thead>
+              <tr>
+                <th scope="col">Day</th>
+                <th scope="col" className="num">
+                  Captured
+                </th>
+                <th scope="col" className="num">
+                  Requests
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((day) => (
+                <tr key={day.date}>
+                  <th scope="row" className="mono">
+                    {dayLabel(day.date)}
+                  </th>
+                  <td className="num">{money(day.captured_cents)}</td>
+                  <td className="num">{day.requests}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </section>
   )
 }
@@ -223,6 +247,8 @@ export function Analytics() {
 
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [reloadTick, setReloadTick] = useState(0)
+  const { tick, markLoaded } = useFreshness()
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
@@ -233,7 +259,9 @@ export function Analytics() {
     api
       .analytics(range.from, range.to)
       .then((next) => {
-        if (live) setData(next)
+        if (!live) return
+        setData(next)
+        markLoaded()
       })
       .catch(() => {
         if (live) setError('The aggregates did not load.')
@@ -241,7 +269,7 @@ export function Analytics() {
     return () => {
       live = false
     }
-  }, [range.from, range.to])
+  }, [range.from, range.to, tick, reloadTick, markLoaded])
 
   const totals = data?.totals
 
@@ -267,14 +295,13 @@ export function Analytics() {
         </div>
       </motion.header>
 
-      <motion.p className="range-label mono" variants={m.riseIn}>
-        {wordsRange(range.from, range.to)}
-      </motion.p>
+      <motion.div className="range-row" variants={m.riseIn}>
+        <p className="range-label mono">{wordsRange(range.from, range.to)}</p>
+        <FreshnessButton />
+      </motion.div>
 
       {error ? (
-        <p className="inline-error" role="alert">
-          {error}
-        </p>
+        <InlineError onRetry={() => setReloadTick((value) => value + 1)}>{error}</InlineError>
       ) : null}
 
       <motion.div className="stats" variants={m.riseIn}>
@@ -319,9 +346,34 @@ export function Analytics() {
       </motion.div>
 
       {!data && !error ? (
-        <div className="card">
-          <span className="skel" style={{ width: '100%', height: 140 }} />
-        </div>
+        <>
+          <div className="stats stats-skel" aria-hidden="true">
+            {[0, 1, 2, 3].map((i) => (
+              <div className="stat" key={i}>
+                <span className="skel" style={{ width: '46%', height: 10 }} />
+                <span className="skel" style={{ width: '62%', height: 20, marginTop: 8 }} />
+                <span className="skel" style={{ width: '72%', height: 10, marginTop: 8 }} />
+              </div>
+            ))}
+          </div>
+          <div className="card" aria-hidden="true">
+            <span className="skel" style={{ width: '28%', height: 16 }} />
+            <span className="skel" style={{ width: '100%', height: 118, marginTop: 14 }} />
+            <span className="skel" style={{ width: '44%', height: 10, marginTop: 12 }} />
+          </div>
+          <div className="record-cols analytics-cols" aria-hidden="true">
+            {[0, 1].map((col) => (
+              <div className="record-col" key={col}>
+                {[0, 1].map((i) => (
+                  <div className="card" key={i}>
+                    <span className="skel" style={{ width: '36%', height: 16 }} />
+                    <span className="skel" style={{ width: '100%', height: 48, marginTop: 12 }} />
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </>
       ) : null}
 
       {data ? (

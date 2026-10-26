@@ -24,6 +24,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 
 from veto import requests as veto_requests
+from veto.events import FEED
 from veto.store import month_start_iso, now_iso
 
 CADENCES = ("daily", "weekly", "monthly")
@@ -253,6 +254,12 @@ def tick(
                 note="The scheduler could not run this routine.",
             )
         runs.append(run)
+    if runs:
+        # One refresh signal for the console, however many jobs ran. A run that
+        # produced a request also moves the inbox numbers.
+        FEED.publish("agents")
+        if any(run.get("request_id") for run in runs):
+            FEED.publish("requests")
     return runs
 
 

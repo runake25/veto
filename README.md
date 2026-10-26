@@ -47,8 +47,17 @@ block   → (no consent, no PayPal object)                        status: blocke
   each stage and each resolved item appears as it lands instead of behind a spinner.
 - **A lapsed consent is its own queue**: a request whose 10-minute consent expired is not
   signable; it leaves "Needs you", gets an Expired tab, and the record offers "Send it again".
-- **The Inbox finds things**: search over title, text, agent and requester (URL-addressable),
-  sorting, a filtered total, and a refresh stamp with a 30-second poll while the tab is visible.
+- **The Inbox finds things**: a real table with sortable column headers, search over title,
+  text, agent, requester and merchant (URL-addressable), a day range in the viewer's own
+  calendar, a filtered total, and a footer that adds the queue up.
+- **The board is live**: open tabs hold one `GET /api/v1/events` stream; a write — a Slack
+  approval, a routine run, a web action — publishes a change frame, so the Inbox and the
+  record update without anyone pressing refresh. A 30-second poll and a refetch on tab focus
+  are the fallbacks for a sleeping instance or a proxy that buffers the stream.
+- **Two kinds of delete, one rule**: a standing job can be deleted with its run history (the
+  requests it made stay in the record); an agent that has ever made a request cannot be
+  deleted at all — the money trail has to stay readable, so Veto refuses and points at
+  pause. Every delete is a two-step confirmation that names the consequence.
 - **An agent has a brake**: pause and resume from its page; a paused agent refuses new requests.
 - **A check before a bigger buy**: `/veto-check` shows the shortlist the agent's search
   actually returned inside its rules; choosing one pins that exact offer and re-enters the
@@ -87,6 +96,9 @@ company *Bracken & Field* signs you in as its approver).
   instance hours a month.
 - **Data:** the instance seeds the demo workspace on boot; the history there is real sandbox
   activity created through the product (captured carts, a blocked cart, a vetoed cart).
+- **Live board:** approvals taken from Slack land on any open console tab through the change
+  feed; the Inbox, the record and the agent pages re-read themselves, and the header says
+  `Live` while the stream is connected.
 - **Power:** PayPal sandbox only. `PAYPAL_VAULT_ID` re-attaches the already-approved sandbox
   wallet on boot, so a hosted request captures exactly like a local one.
 
@@ -100,8 +112,8 @@ The image is built from `Dockerfile` (runtime files only: `server.py`, `veto/`, 
 | Screen | It owns |
 |---|---|
 | **Overview** (`/`) | needs-you count, committed-unsigned, settled this month, the agent roster, the oldest pending requests as links |
-| **Inbox** (`/inbox`) | the only request list; status/agent/order/search live in the URL, with a filtered total and a retryable error state |
-| **Record** (`/inbox/REQ-1043`) | the cart, the rule reasons, the consent hash, the PayPal ids, the trail and approve / veto / void |
+| **Inbox** (`/inbox`) | the only request list, a real table with `aria-sort` headers; status/agent/day range/order/search live in the URL, with a filtered total, a retryable error state and a phone layout of the same rows |
+| **Record** (`/inbox/REQ-1043`) | the cart, the rule reasons, the consent hash, the PayPal ids (each copyable), the trail, the payment state in words, and approve / veto / void |
 | **Agents** (`/agents`) | one plate per agent, with its standing job on the plate; the agent page carries the real month track (spent / unsigned / left), the **standing job** (schedule, envelope, run history, run now, pause, edit), a dry run that can be sent as a real request, and a scoped catalogue search |
 | **Analytics** (`/analytics`) | captured money by day, agent, vendor, category and rule over one range, linking into the filtered Inbox |
 | **Integrations** (`/integrations`) | Slack endpoints and model routing, the PayPal wallet, and agent API keys |
@@ -145,11 +157,13 @@ The key scopes the request to its own agent's charter. Revoking it is immediate.
 server.py            one stdlib HTTP runner: API, Slack, the built app, /connect
 veto/                store.py · auth.py · seed.py · policy.py · pipeline.py
                      requests.py (the board) · routines.py (standing jobs)
+                     events.py (the in-process change feed for the live board)
                      check.py (top-five shortlists) · slack_commands.py (the command surface)
                      settlement.py (the only money mover)
 web/src/             React app: screens/, components/, styles/tokens.css
 app/                 the built web app (served at / and /app/)
 tools/               check_m3.py (request board, ~60s) · check_m4.py (read models, ~1s)
+                     check_polish.py (live feed, filters, delete guard, built controls, ~2s)
 veto/routing.py      model routing for requests that do not name an agent
 veto/ratelimit.py    per-door minute limit; 429 + Retry-After
 tests/               stdlib unittest suite
@@ -160,15 +174,17 @@ shots/               screenshots used as delivery evidence
 ## Verify it
 
 ```bash
-python3 -m unittest discover -s tests    # 269 backend tests
+python3 -m unittest discover -s tests    # 314 backend tests
 python3 tools/check_m3.py                # 19 checks: the request loop over HTTP (real pipeline)
 python3 tools/check_m4.py                # 42 checks: read models, read-only, no money moves
+python3 tools/check_polish.py            # 20 checks: live feed, filters, delete guard, built controls
 cd web && npm run build && npx tsc --noEmit
 ```
 
 `check_m3` runs the real pipeline and leaves genuine request history in the demo workspace —
 Overview, Inbox and Analytics show real sandbox captures, not seeded fakes. `seed.py` writes
-no requests.
+no requests. `check_polish` is read-only too: it opens the change feed, compares a filtered
+Inbox against its own rows, and calls the delete guards, which refuse without writing.
 
 ## Environment
 
@@ -184,5 +200,7 @@ Sandbox money only. Every expensive door is rate limited (defaults: 30/min per a
 120/min per console session, 60/min per search, 20/min per Slack user; override with
 `VETO_RATE_*` in `.env`). Refunds are out of scope (`void` withdraws an uncaptured request;
 captured money cannot be reversed here). One workspace per runner; Slack OAuth
-distribution, multi-currency and accounting exports are future work. The free quick tunnel
-changes host on restart, so the Slack URLs must be re-pasted until the hosted deploy lands.
+distribution, multi-currency and accounting exports are future work. The hosted demo's URLs
+are stable; a self-hosted runner behind a quick tunnel still gets a new host on restart.
+On Render's free plan a sleeping instance loses its ephemeral history — the keep-alive
+workflow exists to prevent that, and the demo workspace reseeds itself on boot.

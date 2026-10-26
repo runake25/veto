@@ -268,14 +268,30 @@ class Settlement:
         total_cents: int,
         currency: str = CURRENCY,
         nonce: str,
+        on_step=None,
     ) -> dict:
         """Create the order, authorize it and capture it. Returns the PayPal ids.
 
         ``nonce`` is the consent's single-use nonce, so every PayPal call for this
         cart is idempotent: a retried approval replays the same objects instead of
         charging twice.
+
+        ``on_step`` (optional) is called with each step dict right after it is
+        appended, so a caller can stream order / auth / capture to a console
+        while the money moves. It may not change the outcome: a broken callback
+        is ignored.
         """
         steps: list[dict] = []
+
+        def _record(step: dict) -> None:
+            steps.append(step)
+            if on_step is None:
+                return
+            try:
+                on_step(step)
+            except Exception:  # noqa: BLE001 - progress reporting never blocks money
+                pass
+
         vault_id = self.ensure_wallet(store, workspace)
         amount = {
             "currency_code": currency,
@@ -306,8 +322,8 @@ class Settlement:
                                   steps=steps) from exc
 
         order_id = order["id"]
-        steps.append({"kind": "order", "label": "Order created",
-                      "detail": f"intent AUTHORIZE · {order_id}"})
+        _record({"kind": "order", "label": "Order created",
+                 "detail": f"intent AUTHORIZE · {order_id}"})
 
         # A vaulted wallet is a merchant-initiated payment: PayPal fills the order
         # while creating it, so the authorization already exists. Only authorize
@@ -324,8 +340,8 @@ class Settlement:
         auth = auth or {}
         auth_id = auth.get("id", "")
         if auth_id:
-            steps.append({"kind": "auth", "label": "Authorized",
-                          "detail": f"{auth_id} · funds held, not taken"})
+            _record({"kind": "auth", "label": "Authorized",
+                     "detail": f"{auth_id} · funds held, not taken"})
 
         cap = PayPalClient.first_capture(order)
         if cap is None and auth_id:
@@ -343,8 +359,8 @@ class Settlement:
         cap = cap or {}
         capture_id = cap.get("id", "")
         status = (cap.get("status") or "COMPLETED").upper()
-        steps.append({"kind": "capture", "label": "Captured",
-                      "detail": f"{capture_id or 'no capture id'} · {_money(total_cents)} moved"})
+        _record({"kind": "capture", "label": "Captured",
+                 "detail": f"{capture_id or 'no capture id'} · {_money(total_cents)} moved"})
         return {
             "mode": self.mode,
             "vault_id": vault_id,

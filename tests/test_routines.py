@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from veto import routines  # noqa: E402
 from veto.policy import RULE_KINDS  # noqa: E402
+from veto.settlement import SettlementError, VaultRequired  # noqa: E402
 from veto.store import Store  # noqa: E402
 from test_requests import (  # noqa: E402
     FakeSettlement,
@@ -237,6 +238,133 @@ class SchedulerTests(RoutineTestCase):
             next_run_at=stamp(FIXED + timedelta(days=14)),
         )
         self.assertFalse(again)
+
+
+class ProgressFrameTests(RoutineTestCase):
+    """The run stream: pipeline frames, then the record, consent and money steps."""
+
+    def make_agent_for(self, **overrides) -> dict:
+        extra = {
+            "vendors": overrides.pop("vendors", ["amazon.com"]),
+            "categories": overrides.pop("categories", ["pantry"]),
+            "rules": overrides.pop("rules", list(RULE_KINDS)),
+            "overrides": overrides.pop("overrides", []),
+        }
+        return self.store.create_agent(
+            self.workspace["id"], agent_fields(**overrides), **extra
+        )
+
+    def make_routine_for(self, agent: dict, **overrides) -> dict:
+        fields = {
+            "name": "Pantry restock",
+            "instruction": "2 packs of toilet paper",
+            "cadence": "weekly",
+            "envelope_cents": 25_000,
+            "dedupe_days": 0,
+            "next_run_at": stamp(FIXED + timedelta(days=7)),
+        }
+        fields.update(overrides)
+        return self.store.create_routine(self.workspace["id"], agent["id"], **fields)
+
+    def run_stream(self, routine: dict, *, settlement=None, search=None) -> tuple[dict, list]:
+        frames: list[dict] = []
+        run = routines.run_once(
+            self.store,
+            self.workspace,
+            routine,
+            settlement=settlement or self.settlement,
+            progress=frames.append,
+            now=FIXED,
+            extract_fn=extract_one(),
+            search_fn=search or search_one(),
+            choose_fn=choose_first,
+        )
+        return run, frames
+
+    @staticmethod
+    def events(frames: list[dict]) -> list[dict]:
+        return [frame["event"] for frame in frames if frame.get("type") == "event"]
+
+    @staticmethod
+    def kinds(frames: list[dict]) -> list[str]:
+        return [event["kind"] for event in ProgressFrameTests.events(frames)]
+
+    def test_auto_run_streams_pipeline_record_consent_and_settlement(self) -> None:
+        run, frames = self.run_stream(self.make_routine_for(self.agent))
+        self.assertEqual(run["outcome"], "captured")
+        kinds = self.kinds(frames)
+        for kind in ("extract", "catalogue", "price", "decision",
+                     "record", "consent", "order", "auth", "capture"):
+            self.assertIn(kind, kinds)
+        # the record and the consent frame both land before money moves
+        self.assertLess(kinds.index("record"), kinds.index("consent"))
+        self.assertLess(kinds.index("consent"), kinds.index("order"))
+        self.assertLess(kinds.index("order"), kinds.index("capture"))
+        # each settlement step is streamed exactly once
+        self.assertEqual(kinds.count("order"), 1)
+        self.assertEqual(kinds.count("auth"), 1)
+        self.assertEqual(kinds.count("capture"), 1)
+        record = self.events(frames)[kinds.index("record")]
+        self.assertEqual(record["label"], "Request recorded")
+        self.assertTrue(record["detail"].startswith(run["request_id"] + " · "))
+        consent = self.events(frames)[kinds.index("consent")]
+        self.assertEqual(consent["label"], "Consent issued")
+        self.assertTrue(consent["detail"].startswith("single use · 10 min · sha256:"))
+
+    def test_review_run_streams_a_hold_frame(self) -> None:
+        review_agent = self.make_agent_for(approval_threshold_cents=100)
+        routine = self.make_routine_for(review_agent)
+        run, frames = self.run_stream(routine)
+        self.assertEqual(run["outcome"], "awaiting")
+        kinds = self.kinds(frames)
+        self.assertIn("record", kinds)
+        self.assertIn("consent", kinds)
+        self.assertIn("hold", kinds)
+        self.assertNotIn("order", kinds)
+        self.assertNotIn("capture", kinds)
+        hold = self.events(frames)[kinds.index("hold")]
+        self.assertEqual(hold["label"], "Waiting for a signature")
+        self.assertIn(run["request_id"], hold["detail"])
+
+    def test_blocked_run_streams_a_block_frame_without_consent(self) -> None:
+        equipment_agent = self.make_agent_for(categories=["equipment"])
+        routine = self.make_routine_for(equipment_agent)
+        run, frames = self.run_stream(routine)
+        self.assertEqual(run["outcome"], "blocked")
+        kinds = self.kinds(frames)
+        self.assertIn("record", kinds)
+        self.assertIn("block", kinds)
+        self.assertNotIn("consent", kinds)
+        self.assertNotIn("order", kinds)
+        block = self.events(frames)[kinds.index("block")]
+        self.assertEqual(block["label"], "Rules blocked the cart")
+
+    def test_wallet_required_streams_a_wallet_frame(self) -> None:
+        settlement = FakeSettlement(error=VaultRequired("https://approve", "setup_1"))
+        run, frames = self.run_stream(self.make_routine_for(self.agent),
+                                      settlement=settlement)
+        self.assertEqual(run["outcome"], "approved")
+        kinds = self.kinds(frames)
+        self.assertIn("wallet", kinds)
+        self.assertNotIn("capture", kinds)
+        wallet = self.events(frames)[kinds.index("wallet")]
+        self.assertEqual(wallet["label"], "Wallet not connected")
+
+    def test_capture_failure_streams_carried_steps_and_capture_failed(self) -> None:
+        error = SettlementError(
+            "paypal said no",
+            steps=[{"kind": "order", "label": "Order created", "detail": "ORDER-X"}],
+        )
+        settlement = FakeSettlement(error=error)
+        run, frames = self.run_stream(self.make_routine_for(self.agent),
+                                      settlement=settlement)
+        self.assertEqual(run["outcome"], "approved")
+        kinds = self.kinds(frames)
+        self.assertIn("order", kinds)
+        self.assertIn("capture_failed", kinds)
+        failed = self.events(frames)[kinds.index("capture_failed")]
+        self.assertEqual(failed["label"], "Capture failed")
+        self.assertIn("paypal said no", failed["detail"])
 
 
 if __name__ == "__main__":

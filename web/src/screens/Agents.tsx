@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, money, type Agent } from '../api'
+import { InlineError } from '../components/Bits'
+import { FreshnessButton, useFreshness } from '../components/freshness'
 import { motionSet } from '../components/motion'
+import { State, agentState } from '../components/state'
 
 /** The price as short as it stays exact: $300, $1,200, $145.99. */
 function figure(cents: number | null): string | null {
@@ -23,24 +26,9 @@ function charter(agent: Agent) {
   }
 }
 
-/**
- * "Active" is the stored state, not the whole story: a charter with no approved
- * merchant or no allowed category cannot buy anything, and that has to show in
- * the same slot, not as a footnote at the end of the scope.
- */
-function instanceState(agent: Agent, rules: ReturnType<typeof charter>) {
-  if (agent.status === 'paused') return { label: 'paused', tone: '' }
-  const cannotBuy =
-    (rules.categories !== null && rules.categories.length === 0) ||
-    (rules.merchants !== null && rules.merchants.length === 0)
-  return cannotBuy
-    ? { label: "can't buy", tone: ' is-blocked' }
-    : { label: 'active', tone: ' is-live' }
-}
-
 function Plate({ agent }: { agent: Agent }) {
   const rules = charter(agent)
-  const state = instanceState(agent, rules)
+  const state = agentState(agent)
   const readout = [
     { label: 'Monthly', value: figure(rules.monthly), fallback: 'No cap', lead: true },
     { label: 'Per order', value: figure(rules.perOrder), fallback: 'No cap', lead: false },
@@ -68,10 +56,7 @@ function Plate({ agent }: { agent: Agent }) {
     <Link className="agent-plate" to={`/agents/${agent.id}`}>
       <div className="agent-plate-tag">
         <span className="mono">{agent.id}</span>
-        <span className={`agent-state${state.tone}`}>
-          <span className="agent-dot" aria-hidden="true" />
-          {state.label}
-        </span>
+        <State tone={state.tone}>{state.label}</State>
       </div>
 
       <header className="agent-plate-head">
@@ -166,19 +151,28 @@ function PlateSkeleton() {
 export function Agents() {
   const [agents, setAgents] = useState<Agent[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [reloadTick, setReloadTick] = useState(0)
+  const { tick, markLoaded } = useFreshness()
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
   useEffect(() => {
     let live = true
+    setError(null)
     api
       .agents()
-      .then((list) => live && setAgents(list))
-      .catch(() => live && setError('The agent list did not load.'))
+      .then((list) => {
+        if (!live) return
+        setAgents(list)
+        markLoaded()
+      })
+      .catch(() => {
+        if (live) setError('The agent list did not load.')
+      })
     return () => {
       live = false
     }
-  }, [])
+  }, [tick, reloadTick, markLoaded])
 
   return (
     <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
@@ -193,13 +187,16 @@ export function Agents() {
               {agents.length} agent{agents.length === 1 ? '' : 's'}
             </span>
           ) : null}
+          <FreshnessButton />
           <Link className="btn btn-primary" to="/agents/new">
             New agent
           </Link>
         </div>
       </motion.header>
 
-      {error ? <p className="inline-error">{error}</p> : null}
+      {error ? (
+        <InlineError onRetry={() => setReloadTick((value) => value + 1)}>{error}</InlineError>
+      ) : null}
 
       {!agents && !error ? (
         <div className="agent-grid">

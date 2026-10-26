@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, money, type Agent, type RequestSummary } from '../api'
+import { InlineError } from '../components/Bits'
+import { FreshnessButton, useFreshness } from '../components/freshness'
 import { motionSet } from '../components/motion'
-import { StatusMark, requestLabel, sourceLabel, when } from '../components/request'
+import { StatusMark, requestLabel, sourceLabel, when as whenText } from '../components/request'
 
 const FILTERS = [
   { value: '', label: 'All', hint: 'Every request in the record' },
@@ -26,13 +28,48 @@ const SORT_OPTIONS = [
   { value: 'agent_desc', label: 'Agent: Z to A' },
 ]
 
-function nextSort(current: string, column: 'agent' | 'amount' | 'created'): string {
+/**
+ * The calendar ranges the queue offers. Days are the viewer's own, and the
+ * offset travels with the request so a capture after local midnight belongs to
+ * the right day.
+ */
+const WHEN_OPTIONS = [
+  { value: '', label: 'Any time' },
+  { value: 'today', label: 'Today' },
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
+  { value: 'month', label: 'This month' },
+]
+
+type Column = 'agent' | 'amount' | 'created'
+
+const pad = (value: number) => String(value).padStart(2, '0')
+const ymd = (date: Date) =>
+  `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+
+/** The two local calendar days a range covers, or null for "any time". */
+function rangeDays(kind: string): { from: string; to: string } | null {
+  if (!kind) return null
+  const now = new Date()
+  const to = ymd(now)
+  if (kind === 'today') return { from: to, to }
+  if (kind === 'month') {
+    return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to }
+  }
+  const start = new Date(now)
+  if (kind === '7d') start.setDate(start.getDate() - 6)
+  else if (kind === '30d') start.setDate(start.getDate() - 29)
+  else return null
+  return { from: ymd(start), to }
+}
+
+function nextSort(current: string, column: Column): string {
   if (column === 'agent') return current === 'agent' ? 'agent_desc' : 'agent'
   if (column === 'amount') return current === 'amount_desc' ? 'amount_asc' : 'amount_desc'
   return current === 'newest' ? 'oldest' : 'newest'
 }
 
-function sortLabel(current: string, column: 'agent' | 'amount' | 'created'): string {
+function sortLabel(current: string, column: Column): string {
   if (column === 'agent') {
     return current === 'agent_desc' ? 'Sort agent, Z to A' : 'Sort agent, A to Z'
   }
@@ -42,7 +79,7 @@ function sortLabel(current: string, column: 'agent' | 'amount' | 'created'): str
   return current === 'oldest' ? 'Sort oldest first' : 'Sort newest first'
 }
 
-function sortMark(current: string, column: 'agent' | 'amount' | 'created'): string {
+function sortMark(current: string, column: Column): string {
   if (column === 'agent' && current === 'agent') return '↑'
   if (column === 'agent' && current === 'agent_desc') return '↓'
   if (column === 'amount' && current === 'amount_desc') return '↓'
@@ -52,10 +89,20 @@ function sortMark(current: string, column: 'agent' | 'amount' | 'created'): stri
   return '↕'
 }
 
-function isSorted(current: string, column: 'agent' | 'amount' | 'created'): boolean {
+function isSorted(current: string, column: Column): boolean {
   if (column === 'agent') return current === 'agent' || current === 'agent_desc'
   if (column === 'amount') return current === 'amount_desc' || current === 'amount_asc'
   return current === 'newest' || current === 'oldest'
+}
+
+/** `aria-sort` belongs only on the column the list is actually ordered by. */
+function ariaSort(current: string, column: Column): 'ascending' | 'descending' | undefined {
+  if (!isSorted(current, column)) return undefined
+  const ascending =
+    (column === 'agent' && current === 'agent') ||
+    (column === 'amount' && current === 'amount_asc') ||
+    (column === 'created' && current === 'oldest')
+  return ascending ? 'ascending' : 'descending'
 }
 
 function emptyCopy(status: string): { title: string; note: string } {
@@ -92,14 +139,17 @@ function emptyCopy(status: string): { title: string; note: string } {
 
 /**
  * Inbox: the only list of requests. Filters live in the URL so a view can be
- * linked, and every row opens its full record.
+ * linked, and every row opens its full record. The queue is a real table with
+ * sortable column headers (a phone gets the same rows as a list instead).
  */
 export function Inbox() {
   const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
   const status = params.get('status') ?? ''
   const agentId = params.get('agent') ?? ''
   const sort = params.get('sort') ?? ''
   const q = params.get('q') ?? ''
+  const period = params.get('when') ?? ''
 
   const [rows, setRows] = useState<RequestSummary[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -109,7 +159,7 @@ export function Inbox() {
   const [error, setError] = useState<string | null>(null)
   const [moreBusy, setMoreBusy] = useState(false)
   const [search, setSearch] = useState(q)
-  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
+  const { tick, markLoaded } = useFreshness()
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
@@ -128,15 +178,25 @@ export function Inbox() {
     }
   }, [])
 
+  // a filter change starts a fresh view; a background refresh keeps the rows
+  useEffect(() => {
+    setRows(null)
+  }, [status, agentId, sort, q, period])
+
   useEffect(() => {
     let live = true
-    setRows(null)
     setError(null)
     const query = new URLSearchParams({ limit: '50' })
     if (status) query.set('status', status)
     if (agentId) query.set('agent_id', agentId)
     if (sort) query.set('sort', sort)
     if (q) query.set('q', q)
+    const days = rangeDays(period)
+    if (days) {
+      query.set('from', days.from)
+      query.set('to', days.to)
+      query.set('tz', String(-new Date().getTimezoneOffset()))
+    }
     api
       .requests(query.toString())
       .then((data) => {
@@ -144,7 +204,7 @@ export function Inbox() {
         setRows(data.requests)
         setTotal(data.total)
         setSumCents(data.sum_cents ?? 0)
-        setRefreshedAt(new Date())
+        markLoaded()
       })
       .catch(() => {
         if (live) setError('The request list did not load.')
@@ -152,30 +212,24 @@ export function Inbox() {
     return () => {
       live = false
     }
-  }, [status, agentId, sort, q, reloadTick])
-
-  // an approver leaves the tab open; the queue should not silently go stale
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') setReloadTick((value) => value + 1)
-    }, 30_000)
-    return () => window.clearInterval(timer)
-  }, [])
+  }, [status, agentId, sort, q, period, tick, reloadTick, markLoaded])
 
   const choose = useCallback(
-    (next: { status?: string; agent?: string; sort?: string; q?: string }) => {
+    (next: { status?: string; agent?: string; sort?: string; q?: string; when?: string }) => {
       const params = new URLSearchParams()
       const nextStatus = next.status ?? status
       const nextAgent = next.agent ?? agentId
       const nextSort = next.sort ?? sort
       const nextQuery = next.q ?? q
+      const nextWhen = next.when ?? period
       if (nextStatus) params.set('status', nextStatus)
       if (nextAgent) params.set('agent', nextAgent)
       if (nextSort) params.set('sort', nextSort)
       if (nextQuery) params.set('q', nextQuery)
+      if (nextWhen) params.set('when', nextWhen)
       setParams(params, { replace: true })
     },
-    [status, agentId, sort, q, setParams],
+    [status, agentId, sort, q, period, setParams],
   )
 
   // a search box writes the URL after a short pause, so the view stays linkable
@@ -196,6 +250,12 @@ export function Inbox() {
       if (agentId) query.set('agent_id', agentId)
       if (sort) query.set('sort', sort)
       if (q) query.set('q', q)
+      const days = rangeDays(period)
+      if (days) {
+        query.set('from', days.from)
+        query.set('to', days.to)
+        query.set('tz', String(-new Date().getTimezoneOffset()))
+      }
       const data = await api.requests(query.toString())
       setRows([...rows, ...data.requests])
     } catch {
@@ -211,8 +271,9 @@ export function Inbox() {
         note: 'Try a shorter fragment, or clear the search to see the whole record.',
       }
     : emptyCopy(status)
-  const filtered = Boolean(status || agentId || q)
+  const filtered = Boolean(status || agentId || q || period)
   const count = rows ? (filtered ? `${total} matching` : `${total} in the record`) : ''
+  const open = (id: string) => navigate(`/inbox/${id}`)
 
   return (
     <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
@@ -223,18 +284,7 @@ export function Inbox() {
         </div>
         <div className="head-tools">
           {count ? <span className="head-count mono">{count}</span> : null}
-          <button
-            type="button"
-            className="refresh-link mono"
-            onClick={() => setReloadTick((value) => value + 1)}
-          >
-            {refreshedAt
-              ? `Updated ${refreshedAt.toLocaleTimeString('en-US', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })} · Refresh`
-              : 'Refresh'}
-          </button>
+          <FreshnessButton />
         </div>
       </motion.header>
 
@@ -253,6 +303,18 @@ export function Inbox() {
             </button>
           ))}
         </div>
+        <div className="filter-controls">
+        <label className="filter-search">
+          <span className="filter-agent-label">Search</span>
+          <input
+            className="input"
+            type="search"
+            value={search}
+            aria-label="Search requests"
+            placeholder="Title, vendor, agent or requester"
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
         <label className="filter-agent">
           <span className="filter-agent-label">Agent</span>
           <select
@@ -264,6 +326,22 @@ export function Inbox() {
             {(agents ?? []).map((agent) => (
               <option key={agent.id} value={agent.id}>
                 {agent.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="filter-when">
+          <span className="filter-agent-label">When</span>
+          <select
+            className="select"
+            value={period}
+            aria-label="Filter by day"
+            title="Calendar days in your own time zone"
+            onChange={(event) => choose({ when: event.target.value })}
+          >
+            {WHEN_OPTIONS.map((option) => (
+              <option key={option.value || 'any'} value={option.value}>
+                {option.label}
               </option>
             ))}
           </select>
@@ -283,90 +361,74 @@ export function Inbox() {
             ))}
           </select>
         </label>
-        <label className="filter-search">
-          <span className="filter-agent-label">Search</span>
-          <input
-            className="input"
-            type="search"
-            value={search}
-            aria-label="Search requests"
-            placeholder="Title, agent or requester"
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
+        </div>
       </motion.div>
 
       {error ? (
-        <p className="inline-error inbox-error" role="alert">
+        <InlineError
+          className="inbox-error"
+          onRetry={() => setReloadTick((value) => value + 1)}
+        >
           {error}
-          <button
-            type="button"
-            className="btn btn-secondary btn-small"
-            onClick={() => setReloadTick((value) => value + 1)}
-          >
-            Retry
-          </button>
-        </p>
+        </InlineError>
       ) : null}
 
       <motion.section className="card card-flush" variants={m.riseIn}>
-        <div className="inbox-head">
-          <span>Request</span>
-          <span>
-            <button
-              type="button"
-              className={`inbox-sort${isSorted(sort, 'agent') ? ' is-on' : ''}`}
-              aria-label={sortLabel(sort, 'agent')}
-              title={sortLabel(sort, 'agent')}
-              onClick={() => choose({ sort: nextSort(sort, 'agent') })}
-            >
-              Agent
-              <span className="sort-mark" aria-hidden="true">
-                {sortMark(sort, 'agent')}
-              </span>
-            </button>
-          </span>
-          <span>Source</span>
-          <span className="num">
-            <button
-              type="button"
-              className={`inbox-sort${isSorted(sort, 'amount') ? ' is-on' : ''}`}
-              aria-label={sortLabel(sort, 'amount')}
-              title={sortLabel(sort, 'amount')}
-              onClick={() => choose({ sort: nextSort(sort, 'amount') })}
-            >
-              Amount
-              <span className="sort-mark" aria-hidden="true">
-                {sortMark(sort, 'amount')}
-              </span>
-            </button>
-          </span>
-          <span>Status</span>
-          <span className="num">
-            <button
-              type="button"
-              className={`inbox-sort${isSorted(sort, 'created') ? ' is-on' : ''}`}
-              aria-label={sortLabel(sort, 'created')}
-              title={sortLabel(sort, 'created')}
-              onClick={() => choose({ sort: nextSort(sort, 'created') })}
-            >
-              Created
-              <span className="sort-mark" aria-hidden="true">
-                {sortMark(sort, 'created')}
-              </span>
-            </button>
-          </span>
-        </div>
-
         {!rows && !error ? (
-          <div className="inbox-rows">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <div className="inbox-row inbox-row-skel" key={i}>
-                <span className="skel" style={{ width: '46%', height: 12 }} />
-                <span className="skel" style={{ width: '72%', height: 10 }} />
-              </div>
-            ))}
-          </div>
+          <>
+            <div className="inbox-table-wrap inbox-skel-table" aria-hidden="true">
+              <table className="inbox-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Request</th>
+                    <th scope="col">Agent</th>
+                    <th scope="col" className="col-source">
+                      Source
+                    </th>
+                    <th scope="col" className="num">
+                      Amount
+                    </th>
+                    <th scope="col">Status</th>
+                    <th scope="col" className="num col-created">
+                      Created
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <tr className="inbox-row" key={i}>
+                      <td>
+                        <span className="skel" style={{ width: '64%', height: 12 }} />
+                      </td>
+                      <td className="col-agent">
+                        <span className="skel" style={{ width: '72%', height: 10 }} />
+                      </td>
+                      <td className="col-source">
+                        <span className="skel" style={{ width: '54%', height: 10 }} />
+                      </td>
+                      <td className="num">
+                        <span className="skel" style={{ width: 52, height: 10 }} />
+                      </td>
+                      <td>
+                        <span className="skel" style={{ width: 68, height: 10 }} />
+                      </td>
+                      <td className="num col-created">
+                        <span className="skel" style={{ width: 58, height: 10 }} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="inbox-mobile inbox-skel-mobile" aria-hidden="true">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div className="inbox-mobile-row" key={i}>
+                  <span className="skel" style={{ width: '58%', height: 12 }} />
+                  <span className="skel" style={{ width: '34%', height: 10 }} />
+                </div>
+              ))}
+            </div>
+          </>
         ) : null}
 
         {rows && rows.length === 0 ? (
@@ -377,7 +439,10 @@ export function Inbox() {
               <button
                 type="button"
                 className="btn btn-secondary btn-small"
-                onClick={() => { setSearch(''); choose({ status: '', agent: '', sort: '', q: '' }) }}
+                onClick={() => {
+                  setSearch('')
+                  choose({ status: '', agent: '', sort: '', q: '', when: '' })
+                }}
               >
                 Show all requests
               </button>
@@ -386,42 +451,143 @@ export function Inbox() {
         ) : null}
 
         {rows && rows.length > 0 ? (
-          <ul className="inbox-rows">
-            {rows.map((row) => (
-              <li key={row.id}>
-                <Link className="inbox-row" to={`/inbox/${row.id}`} title={row.title}>
-                  <span className="inbox-request">
-                    <b>{row.title}</b>
-                    <span className="inbox-meta mono">
-                      {requestLabel(row.seq)} · {row.line_count}{' '}
-                      {row.line_count === 1 ? 'line' : 'lines'}
+          <>
+            <div className="inbox-table-wrap">
+              <table className="inbox-table">
+                <caption className="sr-only">
+                  Requests in the record. Every row opens its full record.
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Request</th>
+                    <th scope="col" aria-sort={ariaSort(sort, 'agent')}>
+                      <button
+                        type="button"
+                        className={`inbox-sort${isSorted(sort, 'agent') ? ' is-on' : ''}`}
+                        aria-label={sortLabel(sort, 'agent')}
+                        title={sortLabel(sort, 'agent')}
+                        onClick={() => choose({ sort: nextSort(sort, 'agent') })}
+                      >
+                        Agent
+                        <span className="sort-mark" aria-hidden="true">
+                          {sortMark(sort, 'agent')}
+                        </span>
+                      </button>
+                    </th>
+                    <th scope="col" className="col-source">
+                      Source
+                    </th>
+                    <th scope="col" className="num" aria-sort={ariaSort(sort, 'amount')}>
+                      <button
+                        type="button"
+                        className={`inbox-sort${isSorted(sort, 'amount') ? ' is-on' : ''}`}
+                        aria-label={sortLabel(sort, 'amount')}
+                        title={sortLabel(sort, 'amount')}
+                        onClick={() => choose({ sort: nextSort(sort, 'amount') })}
+                      >
+                        Amount
+                        <span className="sort-mark" aria-hidden="true">
+                          {sortMark(sort, 'amount')}
+                        </span>
+                      </button>
+                    </th>
+                    <th scope="col">Status</th>
+                    <th scope="col" className="num col-created" aria-sort={ariaSort(sort, 'created')}>
+                      <button
+                        type="button"
+                        className={`inbox-sort${isSorted(sort, 'created') ? ' is-on' : ''}`}
+                        aria-label={sortLabel(sort, 'created')}
+                        title={sortLabel(sort, 'created')}
+                        onClick={() => choose({ sort: nextSort(sort, 'created') })}
+                      >
+                        Created
+                        <span className="sort-mark" aria-hidden="true">
+                          {sortMark(sort, 'created')}
+                        </span>
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr
+                      className="inbox-row"
+                      key={row.id}
+                      onClick={(event) => {
+                        if ((event.target as HTMLElement).closest('a')) return
+                        open(row.id)
+                      }}
+                    >
+                      <td className="inbox-request">
+                        <Link
+                          className="inbox-row-link"
+                          to={`/inbox/${row.id}`}
+                          title={row.title}
+                        >
+                          <b>{row.title}</b>
+                        </Link>
+                        <span className="inbox-meta mono">
+                          {requestLabel(row.seq)} · {row.line_count}{' '}
+                          {row.line_count === 1 ? 'line' : 'lines'}
+                        </span>
+                      </td>
+                      <td className="col-agent inbox-agent">
+                        {row.agent.name}
+                        <span className="inbox-agent-tag mono">{row.agent.tag}</span>
+                      </td>
+                      <td className="col-source inbox-source">
+                        {sourceLabel(row.origin, row.routine_name)}
+                      </td>
+                      <td className="num inbox-amount">
+                        {row.line_count ? money(row.total_cents, row.currency) : '—'}
+                      </td>
+                      <td className="inbox-status">
+                        <StatusMark
+                          status={row.status}
+                          label={row.consent_expired ? 'Consent expired' : undefined}
+                        />
+                      </td>
+                      <td className="num col-created inbox-when mono">
+                        {whenText(row.created_at)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* the same rows as a list on a phone: title first, nothing invented */}
+            <ul className="inbox-mobile">
+              {rows.map((row) => (
+                <li key={row.id}>
+                  <Link className="inbox-mobile-row" to={`/inbox/${row.id}`} title={row.title}>
+                    <span className="inbox-mobile-main">
+                      <b>{row.title}</b>
+                      <span className="inbox-meta mono">
+                        {requestLabel(row.seq)} · {row.agent.name} ·{' '}
+                        {sourceLabel(row.origin, row.routine_name)}
+                      </span>
                     </span>
-                  </span>
-                  <span className="inbox-agent">
-                    {row.agent.name}
-                    <span className="inbox-agent-tag mono">{row.agent.tag}</span>
-                  </span>
-                  <span className="inbox-source">{sourceLabel(row.origin, row.routine_name)}</span>
-                  <span className="inbox-amount">
-                    {row.line_count ? money(row.total_cents, row.currency) : '—'}
-                  </span>
-                  <span className="inbox-status">
-                    <StatusMark
-                      status={row.status}
-                      label={row.consent_expired ? 'Consent expired' : undefined}
-                    />
-                  </span>
-                  <span className="inbox-when mono">{when(row.created_at)}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+                    <span className="inbox-mobile-side">
+                      <span className="inbox-amount">
+                        {row.line_count ? money(row.total_cents, row.currency) : '—'}
+                      </span>
+                      <StatusMark
+                        status={row.status}
+                        label={row.consent_expired ? 'Consent expired' : undefined}
+                      />
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </>
         ) : null}
 
         {rows && rows.length ? (
           <div className="inbox-summary">
             <span className="mono">
-              {filtered ? `1–${rows.length} of ${total}` : `1–${rows.length} of ${total}`}
+              1–{rows.length} of {total}
             </span>
             <span className="inbox-summary-total mono">{money(sumCents)} total</span>
           </div>

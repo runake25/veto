@@ -1172,12 +1172,19 @@ class Store:
         sort: str | None = None,
         q: str | None = None,
         consent_state: str | None = None,
+        created_from: str | None = None,
+        created_before: str | None = None,
     ) -> list[dict]:
         """Request summaries with the agent's name and tag joined in.
 
         ``sort`` is a closed set of orders (see ``REQUEST_SORTS``); an unknown
         value keeps the default so a URL cannot inject SQL. The default
         (``priority``) is the inbox order: waiting requests first, then newest.
+
+        ``q`` matches the request title/text, the agent name, the requester and
+        any line's vendor/title. ``created_from`` is inclusive and
+        ``created_before`` exclusive, both ISO instants, so a caller can hand in
+        a timezone-aware day window.
         """
         sql = (
             "SELECT r.id, r.seq, r.title, r.status, r.decision_outcome, r.total_cents, "
@@ -1189,31 +1196,20 @@ class Store:
             "(SELECT COUNT(*) FROM request_lines l WHERE l.request_id = r.id) AS line_count, "
             "(SELECT c.expires_at FROM consents c WHERE c.request_id = r.id "
             " ORDER BY c.issued_at DESC, c.rowid DESC LIMIT 1) AS consent_expires_at "
-            "FROM requests r LEFT JOIN agents a ON a.id = r.agent_id "
-            "WHERE r.workspace_id = ?"
         )
-        params: list[Any] = [workspace_id]
-        if status:
-            sql += " AND r.status = ?"
-            params.append(status)
-        if agent_id:
-            sql += " AND r.agent_id = ?"
-            params.append(agent_id)
+        where, params = self._request_filter(
+            workspace_id,
+            status=status,
+            agent_id=agent_id,
+            q=q,
+            consent_state=consent_state,
+            created_from=created_from,
+            created_before=created_before,
+        )
+        sql += where
         if before:
             sql += " AND r.created_at < ?"
             params.append(before)
-        needle = (q or "").strip().lower()
-        if needle:
-            like = f"%{needle}%"
-            sql += (
-                " AND (LOWER(r.title) LIKE ? OR LOWER(r.text) LIKE ? "
-                "OR LOWER(COALESCE(a.name, '')) LIKE ? "
-                "OR LOWER(COALESCE(r.requester, '')) LIKE ?)"
-            )
-            params.extend([like, like, like, like])
-        consent_sql, consent_params = _consent_filter("r", consent_state)
-        sql += consent_sql
-        params.extend(consent_params)
         orders = {
             "priority": (
                 "CASE r.status WHEN 'awaiting' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END "
@@ -1243,11 +1239,14 @@ class Store:
         *,
         q: str | None = None,
         consent_state: str | None = None,
+        created_from: str | None = None,
+        created_before: str | None = None,
     ) -> int:
         """Total of the filtered requests, so a list can reconcile its own money."""
         where, params = self._request_filter(
             workspace_id, status=status, agent_id=agent_id, q=q,
             consent_state=consent_state,
+            created_from=created_from, created_before=created_before,
         )
         row = self.one("SELECT COALESCE(SUM(r.total_cents), 0) AS n" + where, params)
         return int(row["n"]) if row else 0
@@ -1260,8 +1259,16 @@ class Store:
         agent_id: str | None = None,
         q: str | None = None,
         consent_state: str | None = None,
+        created_from: str | None = None,
+        created_before: str | None = None,
     ) -> tuple[str, list[Any]]:
-        """The WHERE shared by list, count and sum so a filtered list reconciles."""
+        """The WHERE shared by list, count and sum so a filtered list reconciles.
+
+        ``q`` is one lowercase substring needle applied to the request title,
+        its text, the agent name, the requester, and any line's vendor or title.
+        ``created_from`` (inclusive) and ``created_before`` (exclusive) are ISO
+        instants, so a caller can hand in a timezone-aware day window.
+        """
         sql = (
             " FROM requests r LEFT JOIN agents a ON a.id = r.agent_id "
             "WHERE r.workspace_id = ?"
@@ -1273,15 +1280,24 @@ class Store:
         if agent_id:
             sql += " AND r.agent_id = ?"
             params.append(agent_id)
+        if created_from:
+            sql += " AND r.created_at >= ?"
+            params.append(created_from)
+        if created_before:
+            sql += " AND r.created_at < ?"
+            params.append(created_before)
         needle = (q or "").strip().lower()
         if needle:
             like = f"%{needle}%"
             sql += (
                 " AND (LOWER(r.title) LIKE ? OR LOWER(r.text) LIKE ? "
                 "OR LOWER(COALESCE(a.name, '')) LIKE ? "
-                "OR LOWER(COALESCE(r.requester, '')) LIKE ?)"
+                "OR LOWER(COALESCE(r.requester, '')) LIKE ? "
+                "OR EXISTS (SELECT 1 FROM request_lines l WHERE l.request_id = r.id "
+                "AND (LOWER(COALESCE(l.vendor, '')) LIKE ? "
+                "OR LOWER(COALESCE(l.title, '')) LIKE ?)))"
             )
-            params.extend([like, like, like, like])
+            params.extend([like, like, like, like, like, like])
         consent_sql, consent_params = _consent_filter("r", consent_state)
         sql += consent_sql
         params.extend(consent_params)
@@ -1295,10 +1311,13 @@ class Store:
         *,
         q: str | None = None,
         consent_state: str | None = None,
+        created_from: str | None = None,
+        created_before: str | None = None,
     ) -> int:
         where, params = self._request_filter(
             workspace_id, status=status, agent_id=agent_id, q=q,
             consent_state=consent_state,
+            created_from=created_from, created_before=created_before,
         )
         row = self.one("SELECT COUNT(*) AS n" + where, params)
         return int(row["n"]) if row else 0
@@ -1416,6 +1435,14 @@ class Store:
             "WHERE r.workspace_id = ? ORDER BY r.created_at, r.rowid",
             (workspace_id,),
         )
+
+    def delete_routine(self, workspace_id: str, routine_id: str) -> bool:
+        """Remove an agent's standing job. Its runs cascade; requests never do."""
+        cur = self.execute(
+            "DELETE FROM routines WHERE workspace_id = ? AND id = ?",
+            (workspace_id, routine_id),
+        )
+        return cur.rowcount > 0
 
     def update_routine(
         self, workspace_id: str, routine_id: str, *, fields: dict

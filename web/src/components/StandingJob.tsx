@@ -14,26 +14,10 @@ import {
   type RoutineStreamFrame,
 } from '../api'
 import { Track } from './Bits'
+import { PipelineLive, type Live, type LiveItem } from './live'
 import { PressButton, Spinner } from './PressButton'
 import { requestLabel, when } from './request'
-
-const RUN_WORD: Record<RoutineOutcome, string> = {
-  captured: 'Ordered',
-  awaiting: 'Needs signature',
-  approved: 'Approved',
-  blocked: 'Blocked',
-  skipped: 'Skipped',
-  failed: 'Failed',
-}
-
-const RUN_TONE: Record<RoutineOutcome, string> = {
-  captured: 'is-pos',
-  awaiting: 'is-wait',
-  approved: 'is-wait',
-  blocked: 'is-neg',
-  skipped: 'is-cold',
-  failed: 'is-neg',
-}
+import { State, routineState, runState } from './state'
 
 const dollars = (cents: number | null | undefined): string =>
   cents === null || cents === undefined || cents === 0 ? '' : (cents / 100).toFixed(2)
@@ -43,19 +27,6 @@ const cents = (value: string): number | null => {
   if (!clean) return null
   const n = Number(clean)
   return Number.isFinite(n) ? Math.round(n * 100) : null
-}
-
-type LiveStep = { kind: string; label: string; detail?: string | null }
-type LiveItem = { index: number; name: string; ok: boolean; title?: string | null }
-type Live = { steps: LiveStep[]; items: LiveItem[] }
-
-function liveNextLabel(steps: LiveStep[]): string {
-  if (!steps.length) return 'Reading the instruction…'
-  const last = steps[steps.length - 1]?.kind
-  if (last === 'extract') return 'Searching and choosing…'
-  if (last === 'catalogue') return 'Pricing the cart…'
-  if (last === 'price') return 'Applying the rules…'
-  return 'Finishing…'
 }
 
 /** What a finished run did, in the same words a record would use. A skip or a
@@ -232,7 +203,7 @@ export function StandingJob({
   runs: RoutineRun[]
   role: string
   defaultInstruction: string
-  onRoutineChange: (routine: Routine) => void
+  onRoutineChange: (routine: Routine | null) => void
   onRefresh: () => Promise<void>
 }) {
   const canWrite = role === 'admin' || role === 'approver'
@@ -245,6 +216,9 @@ export function StandingJob({
   const [running, setRunning] = useState(false)
   const [live, setLive] = useState<Live | null>(null)
   const [result, setResult] = useState<RoutineRunResult | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const runAbort = useRef<AbortController | null>(null)
 
   useEffect(() => () => runAbort.current?.abort(), [])
@@ -280,6 +254,30 @@ export function StandingJob({
       setError(err instanceof ApiError ? err.message : 'The job state did not change.')
     } finally {
       setStatusBusy(false)
+    }
+  }
+
+  const deleteJob = async () => {
+    if (!routine) return
+    setDeleteBusy(true)
+    setDeleteError(null)
+    try {
+      await api.deleteRoutine(agent.id)
+      setConfirmDelete(false)
+      setResult(null)
+      setEditing(false)
+      onRoutineChange(null)
+      try {
+        await onRefresh()
+      } catch {
+        // the job is gone; the page can be re-read on the next visit
+      }
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError ? err.message : 'The job was not deleted. Nothing changed.',
+      )
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -352,10 +350,7 @@ export function StandingJob({
             <div className="routine-ident">
               <h3 className="routine-name">{routine.name}</h3>
               <p className="routine-line">
-                <span className={`agent-state${active ? ' is-live' : ''}`}>
-                  <span className="agent-dot" aria-hidden="true" />
-                  {routine.status}
-                </span>
+                <State tone={routineState(routine).tone}>{routineState(routine).label}</State>
                 <span className="routine-line-sep" aria-hidden="true" />
                 <span>Runs {routine.cadence_word}</span>
                 <span className="routine-line-sep" aria-hidden="true" />
@@ -412,6 +407,9 @@ export function StandingJob({
                 <PressButton variant="quiet" onClick={() => setEditing((v) => !v)}>
                   {editing ? 'Close editor' : 'Edit job'}
                 </PressButton>
+                <PressButton variant="quiet" onClick={() => setConfirmDelete(true)}>
+                  Delete job
+                </PressButton>
               </div>
             ) : (
               <span className="card-note">viewer — read only</span>
@@ -422,6 +420,45 @@ export function StandingJob({
             <p className="routine-confirm">
               A run creates a real request now and can capture money. It uses the same rules,
               consent and PayPal path as any other request.
+            </p>
+          ) : null}
+
+          {confirmDelete ? (
+            <div className="danger-confirm">
+              <p className="danger-copy">
+                Delete this standing job and its run history? The requests it already made stay
+                in the record. The agent keeps its rules and can still buy when something asks
+                it to.
+              </p>
+              {deleteError ? (
+                <p className="inline-error" role="alert">
+                  {deleteError}
+                </p>
+              ) : null}
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => void deleteJob()}
+                  disabled={deleteBusy || running}
+                >
+                  {deleteBusy ? 'Deleting…' : 'Confirm delete'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={deleteBusy || running}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {!confirmDelete && deleteError ? (
+            <p className="inline-error" role="alert">
+              {deleteError}
             </p>
           ) : null}
 
@@ -445,49 +482,20 @@ export function StandingJob({
           ) : null}
 
           {running && live ? (
-            <div className="dry-live routine-live" aria-live="polite">
-              <div className="dry-live-head">
-                <span className="live-dot" aria-hidden />
-                <span>Running the job</span>
-                <span className="dry-live-note">real request · may capture</span>
-              </div>
-              {live.items.length ? (
-                <ul className="live-items">
-                  {live.items.map((item) => (
-                    <li key={item.index} className={item.ok ? 'is-ok' : 'is-miss'}>
-                      <span className="mono live-index">
-                        {String(item.index + 1).padStart(2, '0')}
-                      </span>
-                      <span className="live-name">{item.ok ? item.title : item.name}</span>
-                      <span className="live-state">{item.ok ? 'found' : 'no match'}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              <ol className="mini-rail">
-                {live.steps.map((step, i) => (
-                  <li key={`${step.kind}-${i}`}>
-                    <span className="mini-step mono">{String(i + 1).padStart(2, '0')}</span>
-                    <span className="mini-label">{step.label}</span>
-                    {step.detail ? <span className="mini-detail mono">{step.detail}</span> : null}
-                  </li>
-                ))}
-                <li className="is-pending">
-                  <span className="mini-step mono">
-                    {String(live.steps.length + 1).padStart(2, '0')}
-                  </span>
-                  <span className="mini-label">{liveNextLabel(live.steps)}</span>
-                </li>
-              </ol>
-            </div>
+            <PipelineLive
+              steps={live.steps}
+              items={live.items}
+              title="Running the job"
+              note="real request · may capture"
+            />
           ) : null}
 
           {result && !running ? (
-            <div className={`routine-result ${RUN_TONE[result.run.outcome]}`}>
+            <div className="routine-result">
               <div className="routine-result-main">
-                <span className={`run-outcome ${RUN_TONE[result.run.outcome]}`}>
-                  {RUN_WORD[result.run.outcome]}
-                </span>
+                <State tone={runState(result.run.outcome).tone}>
+                  {runState(result.run.outcome).label}
+                </State>
                 <p className="routine-result-head">{runHeadline(result)}</p>
               </div>
               {result.request ? (
@@ -559,8 +567,10 @@ export function StandingJob({
                       <span className="routine-run-when mono">
                         {when(run.started_at ?? run.due_at)}
                       </span>
-                      <span className={`run-outcome ${RUN_TONE[run.outcome]}`}>
-                        {RUN_WORD[run.outcome]}
+                      <span className="routine-run-state">
+                        <State tone={runState(run.outcome).tone}>
+                          {runState(run.outcome).label}
+                        </State>
                       </span>
                       <span className="routine-run-money mono">
                         {run.amount_cents
