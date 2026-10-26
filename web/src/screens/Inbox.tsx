@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, money, type Agent, type RequestSummary } from '../api'
 import { motionSet } from '../components/motion'
-import { StatusMark, originLabel, requestLabel, when } from '../components/request'
+import { StatusMark, requestLabel, sourceLabel, when } from '../components/request'
 
 const FILTERS = [
   { value: '', label: 'All', hint: 'Every request in the record' },
@@ -401,7 +401,7 @@ export function Inbox() {
                     {row.agent.name}
                     <span className="inbox-agent-tag mono">{row.agent.tag}</span>
                   </span>
-                  <span className="inbox-source">{originLabel(row.origin)}</span>
+                  <span className="inbox-source">{sourceLabel(row.origin, row.routine_name)}</span>
                   <span className="inbox-amount">
                     {row.line_count ? money(row.total_cents, row.currency) : '—'}
                   </span>

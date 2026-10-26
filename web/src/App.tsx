@@ -79,7 +79,7 @@ export default function App() {
         <Route path="inbox/:id" element={<RequestRecord me={boot.me} />} />
         <Route path="agents" element={<Agents />} />
         <Route path="agents/new" element={<NewAgent />} />
-        <Route path="agents/:id" element={<AgentDetail />} />
+        <Route path="agents/:id" element={<AgentDetail me={boot.me} />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="integrations" element={<Integrations me={boot.me} />} />
         <Route path="*" element={<Overview />} />

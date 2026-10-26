@@ -149,9 +149,13 @@ def route_request(
     default agent — a channel is never consulted here.
     """
     agents = store.list_agents(workspace["id"])
-    decision = choose_agent(agents, text, llm=llm)
+    # A paused agent is not a candidate: it cannot spend. When every agent is
+    # paused the fallback still names one, and the intake refuses it in words.
+    active = [agent for agent in agents if (agent.get("status") or "active") == "active"]
+    candidates = active or agents
+    decision = choose_agent(candidates, text, llm=llm)
     chosen = next(
-        (agent for agent in agents if agent.get("id") == decision.get("agent_id")),
+        (agent for agent in candidates if agent.get("id") == decision.get("agent_id")),
         None,
     )
     if chosen is not None:
@@ -160,8 +164,8 @@ def route_request(
 
     default_id = workspace.get("default_agent_id")
     fallback = next(
-        (agent for agent in agents if agent.get("id") == default_id),
-        agents[0] if agents else None,
+        (agent for agent in candidates if agent.get("id") == default_id),
+        candidates[0] if candidates else None,
     )
     if fallback is None:
         return None, decision

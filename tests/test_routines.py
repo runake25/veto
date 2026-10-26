@@ -125,12 +125,25 @@ class RunTests(RoutineTestCase):
         self.assertEqual(len(self.requests()), 1)
         self.assertEqual(self.settlement.calls and len(self.settlement.calls), 1)
 
+    def test_a_paused_agent_skips_the_job_instead_of_ordering(self) -> None:
+        routine = self.make_routine()
+        self.store.update_agent(
+            self.workspace["id"], self.agent["id"], fields={"status": "paused"}
+        )
+        run = self.run_once(routine)
+        self.assertEqual(run["outcome"], "skipped")
+        self.assertIn("paused", run["note"])
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.settlement.calls, [])
+
     def test_an_used_envelope_skips_the_run(self) -> None:
         routine = self.make_routine(envelope_cents=2_000, dedupe_days=0)
         self.assertEqual(self.run_once(routine)["outcome"], "captured")
         skipped = self.run_once(routine)
         self.assertEqual(skipped["outcome"], "skipped")
         self.assertIn("envelope", skipped["note"])
+        # a skip moved no money, so it cannot be shown with an amount
+        self.assertEqual(skipped["amount_cents"], 0)
         self.assertEqual(len(self.requests()), 1)
 
     def test_a_cart_past_the_envelope_escalates_instead_of_capturing(self) -> None:
@@ -160,6 +173,9 @@ class RunTests(RoutineTestCase):
         self.assertEqual(view["envelope_cents"], 25_000)
         self.assertEqual(view["remaining_cents"], 23_000)
         self.assertEqual(view["cadence_word"], "every week")
+        # the dedupe window is part of the public job: a skipped run has to be
+        # explainable in the app, not only in the scheduler
+        self.assertEqual(view["dedupe_days"], 10)
         self.assertEqual(view["last_run_at"], stamp(FIXED))
 
 

@@ -159,6 +159,20 @@ class RouteRequestTests(unittest.TestCase):
         self.assertEqual(decision["agent_name"], "Desk kit")
         self.assertEqual(decision["source"], "model")
 
+    def test_a_paused_agent_is_not_offered_to_the_model(self) -> None:
+        # It cannot spend anyway, so it must not win the routing round either.
+        agents = [{**AGENTS[0]}, {**AGENTS[1], "status": "paused"}]
+        store = FakeStore(agents)
+        llm = llm_returning(agent_id="agt_desk", confidence=0.9, reason="equipment")
+        agent, decision = veto_routing.route_request(
+            store, {"id": "ws_1", "default_agent_id": "agt_pantry"},
+            "a monitor for the studio", llm=llm,
+        )
+        # one active agent left: deterministic single-agent routing, no model call
+        self.assertEqual(llm.calls, [])
+        self.assertEqual(agent["id"], "agt_pantry")
+        self.assertEqual(decision["source"], "single")
+
     def test_fallback_is_the_workspace_default_never_a_channel(self) -> None:
         store = FakeStore(AGENTS)
         workspace = {"id": "ws_1", "default_agent_id": "agt_pantry"}

@@ -77,6 +77,18 @@ export function originLabel(origin: string | null | undefined, channel?: string 
   return ORIGIN[origin] ?? origin
 }
 
+/**
+ * Where a request came from. A standing job outranks the transport that carried
+ * it: a routine run is a routine run even though the runner posts it over HTTP.
+ */
+export function sourceLabel(
+  origin: string | null | undefined,
+  routineName?: string | null,
+): string {
+  if (routineName) return 'Routine'
+  return originLabel(origin)
+}
+
 export function requestLabel(seq: number): string {
   return `REQ-${seq}`
 }

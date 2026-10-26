@@ -7,7 +7,7 @@ import {
   RuleFlag,
   StatusMark,
   STATUS,
-  originLabel,
+  sourceLabel,
   requestLabel,
   when,
   whenFull,
@@ -372,8 +372,12 @@ export function Record({ me }: { me: Me }) {
           <motion.header className="record-head" variants={m.riseIn}>
             <div className="record-ident">
               <span className="record-kicker mono">
-                {requestLabel(record.seq)} · {originLabel(record.origin)}
-                {record.channel ? ` · ${record.channel}` : ''}
+                {requestLabel(record.seq)} · {sourceLabel(record.origin, record.routine?.name)}
+                {record.routine
+                  ? ` · ${record.routine.name}`
+                  : record.channel
+                    ? ` · ${record.channel}`
+                    : ''}
               </span>
               <h1>{record.title}</h1>
               <p className="record-meta">

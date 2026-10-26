@@ -235,6 +235,15 @@ def create(
         raise RequestError(400, "missing_text", "A request needs something to buy.")
     body = body[:MAX_TEXT_CHARS]
 
+    # Paused is a brake on spending, not a badge: an agent that is not active
+    # cannot reach consent or capture through any door (web, Slack, key, job).
+    if (agent.get("status") or "active") != "active":
+        raise RequestError(
+            409,
+            "agent_paused",
+            "This agent is paused. Resume it before it can buy again.",
+        )
+
     month_start = month_start_iso()
     month_spent = store.spent_cents(
         workspace["id"], agent_id=agent["id"], since=month_start

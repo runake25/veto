@@ -7,8 +7,12 @@ import {
   capMoney,
   money,
   type Agent,
+  type AgentDetailData,
   type AgentInput,
+  type Me,
   type Reason,
+  type Routine,
+  type RoutineRun,
   type ScopedSearch,
   type SimulateResult,
   type SimulateStreamFrame,
@@ -17,6 +21,7 @@ import { AgentForm } from '../components/AgentForm'
 import { OutcomePill, Track } from '../components/Bits'
 import { PressButton, Spinner } from '../components/PressButton'
 import { motionSet } from '../components/motion'
+import { StandingJob } from '../components/StandingJob'
 
 /* What each rule is called when a person reads it, not when the engine does. */
 const RULE_WORD: Record<string, string> = {
@@ -616,9 +621,11 @@ function FindProduct({ agent }: { agent: Agent }) {
   )
 }
 
-export function AgentDetail() {
+export function AgentDetail({ me }: { me: Me }) {
   const { id = '' } = useParams()
   const [agent, setAgent] = useState<Agent | null>(null)
+  const [routine, setRoutine] = useState<Routine | null>(null)
+  const [runs, setRuns] = useState<RoutineRun[]>([])
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -629,26 +636,40 @@ export function AgentDetail() {
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
+  const applyDetail = (detail: AgentDetailData) => {
+    setAgent(detail.agent)
+    setRoutine(detail.routine)
+    setRuns(detail.runs)
+  }
+
   useEffect(() => {
     let live = true
     setAgent(null)
     setError(null)
     api
-      .agent(id)
-      .then((a) => live && setAgent(a))
+      .agentDetail(id)
+      .then((detail) => live && applyDetail(detail))
       .catch(() => live && setError('That agent does not exist, or it belongs to another workspace.'))
     return () => {
       live = false
     }
+    // applyDetail only sets state; the fetch is the effect's only dependency
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+
+  const refresh = async () => {
+    applyDetail(await api.agentDetail(id))
+  }
 
   const setStatus = async (status: 'active' | 'paused') => {
     if (!agent) return
     setStatusBusy(true)
     setEditError(null)
     try {
-      const updated = await api.updateAgent(agent.id, { status })
-      setAgent(updated)
+      // PATCH returns the rules row, not this month's money: re-read the whole
+      // agent so the guardrail track and the job card keep their figures.
+      await api.updateAgent(agent.id, { status })
+      await refresh()
       setConfirmStatus(false)
     } catch (err) {
       setEditError(err instanceof ApiError ? err.message : 'Could not change the agent state.')
@@ -662,8 +683,8 @@ export function AgentDetail() {
     setBusy(true)
     setEditError(null)
     try {
-      const updated = await api.updateAgent(agent.id, input)
-      setAgent(updated)
+      await api.updateAgent(agent.id, input)
+      await refresh()
       setSaved(true)
       window.setTimeout(() => {
         setSaved(false)
@@ -722,42 +743,46 @@ export function AgentDetail() {
             </span>
           </div>
         </div>
-        <div className="agent-actions">
-          <PressButton
-            variant={editing ? 'quiet' : 'secondary'}
-            onClick={() => setEditing((v) => !v)}
-          >
-            {editing ? 'Close editor' : 'Edit rules'}
-          </PressButton>
-          {agent.status === 'active' ? (
-            confirmStatus ? (
-              <>
-                <PressButton
-                  variant="quiet"
-                  loading={statusBusy}
-                  onClick={() => void setStatus('paused')}
-                >
-                  Confirm pause
-                </PressButton>
-                <PressButton variant="quiet" onClick={() => setConfirmStatus(false)}>
-                  Cancel
-                </PressButton>
-              </>
-            ) : (
-              <PressButton variant="quiet" onClick={() => setConfirmStatus(true)}>
-                Pause agent
-              </PressButton>
-            )
-          ) : (
+        {me.user.role === 'viewer' ? (
+          <span className="card-note">viewer — read only</span>
+        ) : (
+          <div className="agent-actions">
             <PressButton
-              variant="secondary"
-              loading={statusBusy}
-              onClick={() => void setStatus('active')}
+              variant={editing ? 'quiet' : 'secondary'}
+              onClick={() => setEditing((v) => !v)}
             >
-              Resume agent
+              {editing ? 'Close editor' : 'Edit rules'}
             </PressButton>
-          )}
-        </div>
+            {agent.status === 'active' ? (
+              confirmStatus ? (
+                <>
+                  <PressButton
+                    variant="quiet"
+                    loading={statusBusy}
+                    onClick={() => void setStatus('paused')}
+                  >
+                    Confirm pause
+                  </PressButton>
+                  <PressButton variant="quiet" onClick={() => setConfirmStatus(false)}>
+                    Cancel
+                  </PressButton>
+                </>
+              ) : (
+                <PressButton variant="quiet" onClick={() => setConfirmStatus(true)}>
+                  Pause agent
+                </PressButton>
+              )
+            ) : (
+              <PressButton
+                variant="secondary"
+                loading={statusBusy}
+                onClick={() => void setStatus('active')}
+              >
+                Resume agent
+              </PressButton>
+            )}
+          </div>
+        )}
       </motion.header>
 
       <AnimatePresence initial={false}>
@@ -790,6 +815,18 @@ export function AgentDetail() {
 
       <motion.div variants={m.riseIn}>
         <Guardrails agent={agent} />
+      </motion.div>
+
+      <motion.div variants={m.riseIn}>
+        <StandingJob
+          agent={agent}
+          routine={routine}
+          runs={runs}
+          role={me.user.role}
+          defaultInstruction={defaultCart(agent)}
+          onRoutineChange={setRoutine}
+          onRefresh={refresh}
+        />
       </motion.div>
 
       <div className="cols cols-tools">

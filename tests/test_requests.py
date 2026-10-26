@@ -177,6 +177,21 @@ class LifecycleTestCase(unittest.TestCase):
         self.assertEqual(first["seq"] + 1, second["seq"])
         self.assertNotEqual(first["id"], second["id"])
 
+    def test_a_paused_agent_cannot_buy(self) -> None:
+        # The brake has to hold at the money door, not only in the UI: no
+        # request row, no consent, no PayPal object.
+        self.store.update_agent(
+            self.workspace["id"], self.agent["id"], fields={"status": "paused"}
+        )
+        paused = self.store.agent(self.workspace["id"], self.agent["id"])
+        settlement = FakeSettlement()
+        with self.assertRaises(veto_requests.RequestError) as caught:
+            self.create(agent=paused, settlement=settlement)
+        self.assertEqual(caught.exception.code, "agent_paused")
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(self.store.list_requests(self.workspace["id"]), [])
+        self.assertEqual(settlement.calls, [])
+
     def test_consent_hash_is_the_cart_not_the_text(self) -> None:
         one = self.create(text="2 packs of toilet paper")
         two = self.create(text="please get 2 packs of toilet paper")

@@ -56,7 +56,9 @@ block   → (no consent, no PayPal object)                        status: blocke
 - **Agents are standing jobs**: an agent can own one routine — a standing instruction, a
   cadence, a monthly envelope and a dedupe window. The runner's scheduler claims each due
   slot once, runs it through the same pipeline, records the run, and escalates a cart that
-  crosses the envelope instead of capturing it.
+  crosses the envelope instead of capturing it. The agent page shows the job in full: next
+  run, the month's envelope track, the recorded runs, and a **Run now** that streams the
+  real pipeline. A pause on either the agent or the job stops spending at the money door.
 - **Routing** is semantic: a request that does not name an agent is read by the model and
   matched to the agent whose categories and approved merchants fit it. The channel is only
   provenance; the routing decision is the first step of the record's trail.
@@ -75,7 +77,7 @@ block   → (no consent, no PayPal object)                        status: blocke
 | **Overview** (`/`) | needs-you count, committed-unsigned, settled this month, the agent roster, the oldest pending requests as links |
 | **Inbox** (`/inbox`) | the only request list; status/agent/order/search live in the URL, with a filtered total and a retryable error state |
 | **Record** (`/inbox/REQ-1043`) | the cart, the rule reasons, the consent hash, the PayPal ids, the trail and approve / veto / void |
-| **Agents** (`/agents`) | one plate per agent; the agent page carries the real month track (spent / unsigned / left), a dry run that can be sent as a real request, and a scoped catalogue search |
+| **Agents** (`/agents`) | one plate per agent, with its standing job on the plate; the agent page carries the real month track (spent / unsigned / left), the **standing job** (schedule, envelope, run history, run now, pause, edit), a dry run that can be sent as a real request, and a scoped catalogue search |
 | **Analytics** (`/analytics`) | captured money by day, agent, vendor, category and rule over one range, linking into the filtered Inbox |
 | **Integrations** (`/integrations`) | Slack endpoints and model routing, the PayPal wallet, and agent API keys |
 
@@ -133,9 +135,9 @@ shots/               screenshots used as delivery evidence
 ## Verify it
 
 ```bash
-python3 -m unittest discover -s tests    # 265 backend tests
+python3 -m unittest discover -s tests    # 269 backend tests
 python3 tools/check_m3.py                # 19 checks: the request loop over HTTP (real pipeline)
-python3 tools/check_m4.py                # 37 checks: read models, read-only, no money moves
+python3 tools/check_m4.py                # 42 checks: read models, read-only, no money moves
 cd web && npm run build && npx tsc --noEmit
 ```
 

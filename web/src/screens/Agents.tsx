@@ -111,6 +111,19 @@ function Plate({ agent }: { agent: Agent }) {
                 · {exceptions} category exception{exceptions === 1 ? '' : 's'}
               </span>
             ) : null}
+            {agent.routine ? (
+              <span
+                className={`agent-plate-job${
+                  agent.routine.status === 'paused' ? ' is-paused' : ''
+                }`}
+              >
+                {' '}
+                ·{' '}
+                {agent.routine.status === 'paused'
+                  ? 'job paused'
+                  : `runs ${agent.routine.cadence_word}`}
+              </span>
+            ) : null}
           </span>
         </p>
         <span className="agent-plate-arrow" aria-hidden="true">

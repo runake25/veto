@@ -50,6 +50,8 @@ export interface RequestSummary {
   intent?: string | null
   consent_expires_at?: string | null
   consent_expired?: boolean
+  /** Set when a standing job raised this request. */
+  routine_name?: string | null
   agent: { id: string; name: string; tag: string }
 }
 
@@ -128,6 +130,8 @@ export interface RequestDetail extends Omit<RequestSummary, 'status'> {
   payment: Payment | null
   events: RequestEvent[]
   approver_user_id: string | null
+  /** The standing job that raised this request, when one did. */
+  routine?: { id: string; name: string; cadence: string; run_id: string } | null
 }
 
 export interface ApiKey {
@@ -394,6 +398,78 @@ export interface Agent {
   spent_month_cents?: number
   /** This month, awaiting a signature or approved with capture owed. */
   committed_month_cents?: number
+  /** The standing job, summarised on the agent list. Full view on the agent. */
+  routine?: RoutineSummary | null
+}
+
+/** The routine as the agent list carries it: enough for one line, no month maths. */
+export interface RoutineSummary {
+  id: string
+  name: string
+  cadence: 'daily' | 'weekly' | 'monthly'
+  cadence_word: string
+  status: 'active' | 'paused'
+  next_run_at: string | null
+}
+
+export interface Routine extends RoutineSummary {
+  agent_id: string
+  instruction: string
+  envelope_cents: number
+  /** Captured by runs of this routine this month. */
+  spent_cents: number
+  /** Awaiting a signature or approved with capture owed, this month. */
+  committed_cents: number
+  /** Envelope minus spent and committed, or null when there is no envelope. */
+  remaining_cents: number | null
+  dedupe_days: number
+  last_run_at: string | null
+  created_at: string | null
+}
+
+export type RoutineOutcome =
+  | 'captured'
+  | 'awaiting'
+  | 'approved'
+  | 'blocked'
+  | 'skipped'
+  | 'failed'
+
+/** One recorded run: what the schedule did, and the request it made. */
+export interface RoutineRun {
+  id: string
+  routine_id: string
+  due_at: string | null
+  started_at: string | null
+  finished_at: string | null
+  outcome: RoutineOutcome
+  request_id: string | null
+  amount_cents: number
+  note: string | null
+}
+
+export interface AgentDetailData {
+  agent: Agent
+  routine: Routine | null
+  runs: RoutineRun[]
+}
+
+export interface RoutineInput {
+  name?: string
+  instruction: string
+  cadence: 'daily' | 'weekly' | 'monthly'
+  envelope_cents: number
+  dedupe_days: number
+}
+
+/** Everything a run emits before the run row: the same frames as a dry run. */
+export type RoutineStreamFrame =
+  | SimulateStreamFrame
+  | { type: 'run'; run: RoutineRun; request: RequestSummary | null }
+
+export interface RoutineRunResult {
+  run: RoutineRun
+  request: RequestSummary | null
 }
 
 export class ApiError extends Error {
@@ -454,23 +530,24 @@ function post<T>(path: string, payload?: unknown): Promise<T> {
 }
 
 /**
- * The same dry run as `simulate`, read as it happens: the server sends one
- * `data:` frame per pipeline stage, plus one per cart item as it resolves.
- * Resolves with the final result; `onFrame` sees every step on the way.
+ * Read one server-sent stream to the end. Every `data:` frame is handed to
+ * `onFrame`; an `error` frame becomes the thrown ApiError. Returns every frame
+ * in order, so a caller can pick the final one it expects.
  */
-export async function streamSimulate(
-  text: string,
-  agentId: string | undefined,
-  onFrame: (frame: SimulateStreamFrame) => void,
-  signal?: AbortSignal,
-): Promise<SimulateResult> {
+async function readStream<T extends { type: string }>(
+  path: string,
+  body: unknown,
+  onFrame: (frame: T) => void,
+  signal: AbortSignal | undefined,
+  failure: string,
+): Promise<T[]> {
   let res: Response
   try {
-    res = await fetch('/api/v1/simulate/stream', {
+    res = await fetch(path, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, agent_id: agentId ?? null }),
+      body: JSON.stringify(body),
       signal,
     })
   } catch (err) {
@@ -483,23 +560,23 @@ export async function streamSimulate(
   }
 
   if (!res.ok || !res.body) {
-    let body: Envelope<unknown> | null = null
+    let payload: Envelope<unknown> | null = null
     try {
-      body = (await res.json()) as Envelope<unknown>
+      payload = (await res.json()) as Envelope<unknown>
     } catch {
-      body = null
+      payload = null
     }
     throw new ApiError(
-      body?.error?.code ?? `http_${res.status}`,
-      body?.error?.message ?? `The dry run failed (${res.status}).`,
+      payload?.error?.code ?? `http_${res.status}`,
+      payload?.error?.message ?? `${failure} (${res.status}).`,
       res.status,
     )
   }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
+  const frames: T[] = []
   let buffer = ''
-  let result: SimulateResult | null = null
 
   for (;;) {
     const { done, value } = await reader.read()
@@ -507,34 +584,84 @@ export async function streamSimulate(
     buffer += decoder.decode(value, { stream: true })
     let cut = buffer.indexOf('\n\n')
     while (cut >= 0) {
-      const frame = buffer.slice(0, cut)
+      const chunk = buffer.slice(0, cut)
       buffer = buffer.slice(cut + 2)
-      const line = frame.split('\n').find((row) => row.startsWith('data:'))
+      const line = chunk.split('\n').find((row) => row.startsWith('data:'))
       if (line) {
-        let payload: SimulateStreamFrame | null = null
+        let frame: T | null = null
         try {
-          payload = JSON.parse(line.slice(5).trim()) as SimulateStreamFrame
+          frame = JSON.parse(line.slice(5).trim()) as T
         } catch {
-          payload = null
+          frame = null
         }
-        if (payload) {
-          if (payload.type === 'error') {
+        if (frame) {
+          if (frame.type === 'error') {
+            const fault = frame as unknown as {
+              error?: { code?: string; message?: string }
+            }
             throw new ApiError(
-              payload.error?.code ?? 'stream_error',
-              payload.error?.message ?? 'The dry run failed.',
+              fault.error?.code ?? 'stream_error',
+              fault.error?.message ?? failure,
               0,
             )
           }
-          if (payload.type === 'result') result = payload.result
-          onFrame(payload)
+          frames.push(frame)
+          onFrame(frame)
         }
       }
       cut = buffer.indexOf('\n\n')
     }
   }
 
-  if (!result) throw new ApiError('stream_error', 'The dry run ended without a result.', 0)
-  return result
+  return frames
+}
+
+/**
+ * The same dry run as `simulate`, read as it happens: the server sends one
+ * `data:` frame per pipeline stage, plus one per cart item as it resolves.
+ * Resolves with the final result; `onFrame` sees every step on the way.
+ */
+export async function streamSimulate(
+  text: string,
+  agentId: string | undefined,
+  onFrame: (frame: SimulateStreamFrame) => void,
+  signal?: AbortSignal,
+): Promise<SimulateResult> {
+  const frames = await readStream<SimulateStreamFrame>(
+    '/api/v1/simulate/stream',
+    { text, agent_id: agentId ?? null },
+    onFrame,
+    signal,
+    'The dry run failed',
+  )
+  const final = frames.find((frame) => frame.type === 'result')
+  if (!final || final.type !== 'result') {
+    throw new ApiError('stream_error', 'The dry run ended without a result.', 0)
+  }
+  return final.result
+}
+
+/**
+ * Run a routine now, streaming the pipeline while it works. The last frame is
+ * the recorded run (and the request it created, if any).
+ */
+export async function streamRoutineRun(
+  agentId: string,
+  onFrame: (frame: RoutineStreamFrame) => void,
+  signal?: AbortSignal,
+): Promise<RoutineRunResult> {
+  const frames = await readStream<RoutineStreamFrame>(
+    `/api/v1/agents/${encodeURIComponent(agentId)}/routine/run/stream`,
+    {},
+    onFrame,
+    signal,
+    'The run failed',
+  )
+  const final = frames.find((frame) => frame.type === 'run')
+  if (!final || final.type !== 'run') {
+    throw new ApiError('stream_error', 'The run ended without a result.', 0)
+  }
+  return { run: final.run, request: final.request }
 }
 
 export interface SignupPayload {
@@ -587,6 +714,7 @@ export const api = {
     ),
   agents: () => request<{ agents: Agent[] }>('/api/v1/agents').then((d) => d.agents),
   agent: (id: string) => request<{ agent: Agent }>(`/api/v1/agents/${id}`).then((d) => d.agent),
+  agentDetail: (id: string) => request<AgentDetailData>(`/api/v1/agents/${id}`),
   createAgent: (input: AgentInput) =>
     post<{ agent: Agent }>('/api/v1/agents', input).then((d) => d.agent),
   updateAgent: (id: string, input: Partial<AgentInput>) =>
@@ -594,6 +722,16 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(input),
     }).then((d) => d.agent),
+  saveRoutine: (agentId: string, input: RoutineInput) =>
+    post<{ routine: Routine }>(
+      `/api/v1/agents/${encodeURIComponent(agentId)}/routine`,
+      input,
+    ).then((d) => d.routine),
+  setRoutineStatus: (agentId: string, action: 'pause' | 'resume') =>
+    post<{ routine: Routine }>(
+      `/api/v1/agents/${encodeURIComponent(agentId)}/routine/${action}`,
+    ).then((d) => d.routine),
+  runRoutineStream: streamRoutineRun,
   searchAgent: (id: string, q: string, qty = 1) =>
     request<ScopedSearch>(
       `/api/v1/agents/${id}/search?q=${encodeURIComponent(q)}&qty=${qty}`,

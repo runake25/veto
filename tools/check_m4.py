@@ -248,6 +248,57 @@ def run_checks() -> bool:
           status == 200 and found.get("total") == 0 and found.get("sum_cents") == 0,
           f"total={found.get('total')}")
 
+    # --- the standing job -------------------------------------------------
+    status, payload = client.call("GET", "/api/v1/routines")
+    routines = (data(payload) or {}).get("routines") or []
+    check("every standing job carries its schedule and its month",
+          status == 200 and bool(routines) and all(
+              {"cadence_word", "status", "envelope_cents", "spent_cents",
+               "committed_cents", "remaining_cents", "dedupe_days", "next_run_at"}
+              <= set(row) for row in routines),
+          f"{len(routines)} routines")
+    status, payload = client.call("GET", "/api/v1/agents")
+    roster = (data(payload) or {}).get("agents") or []
+    check("the roster carries each job as one line",
+          all(row.get("routine") is None
+              or {"cadence_word", "status", "next_run_at"} <= set(row["routine"])
+              for row in roster),
+          f"{len(roster)} agents")
+    if routines:
+        job = routines[0]
+        status, payload = client.call(
+            "GET", f"/api/v1/agents/{urllib.parse.quote(job['agent_id'])}")
+        detail = data(payload) or {}
+        view = detail.get("routine") or {}
+        runs = detail.get("runs") or []
+        check("an agent reads its job and the runs that prove it",
+              status == 200 and view.get("id") == job["id"]
+              and all({"outcome", "due_at", "started_at", "note"} <= set(run)
+                      for run in runs),
+              f"{len(runs)} recorded runs")
+        skipped = [run for run in runs if run.get("outcome") == "skipped"]
+        check("a skipped run never reports an amount",
+              all(int(run.get("amount_cents") or 0) == 0 for run in skipped),
+              f"{len(skipped)} skipped")
+    else:
+        check("an agent reads its job and the runs that prove it", False, "no routines")
+
+    status, payload = client.call("GET", "/api/v1/requests?limit=200")
+    every = (data(payload) or {}).get("requests") or []
+    from_job = next((row for row in every if row.get("routine_name")), None)
+    if from_job:
+        status, payload = client.call(
+            "GET", f"/api/v1/requests/{urllib.parse.quote(from_job['id'])}")
+        record = (data(payload) or {}).get("request") or {}
+        job = record.get("routine") or {}
+        check("a job's request names the job on its record",
+              job.get("name") == from_job["routine_name"]
+              and job.get("cadence") in ("daily", "weekly", "monthly"),
+              f"{from_job['id']} · {job.get('name')}")
+    else:
+        check("a job's request names the job on its record", True,
+              "no job has raised a request in this store yet")
+
     # --- a record is a document -------------------------------------------
     status, payload = client.call("GET", "/api/v1/requests?status=captured&limit=1")
     captured = ((data(payload) or {}).get("requests") or [None])[0]

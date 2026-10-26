@@ -127,6 +127,13 @@ def run_once(
             store, routine, due_at=due, started_at=started, outcome="failed",
             note="The agent behind this routine no longer exists.",
         )
+    if (agent.get("status") or "active") != "active":
+        # The brake on the agent outranks the schedule: the job keeps its slot,
+        # records the skip, and starts ordering again when the agent resumes.
+        return _record_run(
+            store, routine, due_at=due, started_at=started, outcome="skipped",
+            note="The agent is paused, so the job did not order.",
+        )
 
     # A routine is a standing order, not a loop. If it already put an order in
     # flight inside the dedupe window, this run is a recorded skip.
@@ -148,10 +155,12 @@ def run_once(
         used = month["captured_cents"] + month["committed_cents"]
         remaining = max(0, envelope - used)
         if remaining <= 0:
+            # The month's spend is not this run's amount: a skip moved no money.
             return _record_run(
                 store, routine, due_at=due, started_at=started, outcome="skipped",
-                amount_cents=used,
-                note="The month's envelope is already used; no run this time.",
+                note=(f"The month's envelope is already used "
+                      f"(${used / 100:,.2f} of ${envelope / 100:,.2f}); "
+                      f"no run this time."),
             )
 
     try:
@@ -283,6 +292,7 @@ def public_routine(store, workspace: dict, routine: dict) -> dict:
         "spent_cents": month["captured_cents"],
         "committed_cents": month["committed_cents"],
         "remaining_cents": max(0, envelope - used) if envelope else None,
+        "dedupe_days": int(routine.get("dedupe_days") or 0),
         "next_run_at": routine.get("next_run_at"),
         "last_run_at": routine.get("last_run_at"),
         "created_at": routine.get("created_at"),

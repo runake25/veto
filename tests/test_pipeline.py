@@ -724,6 +724,14 @@ class ResolveAgentTests(unittest.TestCase):
             first["id"],
         )
 
+    def test_a_paused_default_does_not_win_over_an_active_agent(self) -> None:
+        paused = self.make_agent("Paused", status="paused")
+        active = self.make_agent("Active")
+        self.store.update_workspace(self.workspace["id"], default_agent_id=paused["id"])
+        self.assertEqual(
+            pipeline.resolve_agent(self.store, self.workspace["id"])["id"], active["id"]
+        )
+
     def test_explicit_unknown_or_cross_workspace_agent_raises(self) -> None:
         pipeline_agent = self.make_agent("Known")
         other = self.store.create_workspace("Other")

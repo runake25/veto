@@ -832,7 +832,7 @@ def resolve_agent(store, workspace_id: str, agent_id: str | None = None) -> dict
     default_id = (workspace or {}).get("default_agent_id")
     if default_id:
         agent = store.agent(workspace_id, default_id)
-        if agent is not None:
+        if agent is not None and (agent.get("status") or "active") == "active":
             return agent
     agents = store.list_agents(workspace_id)
     for agent in agents:

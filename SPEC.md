@@ -244,7 +244,16 @@ through the same `requests.create` path as any other request:
 - a cart that would cross the routine's remaining envelope is escalated (reason
   `routine_envelope`) instead of captured; an exhausted envelope skips the run;
 - each run is a `routine_runs` row (`captured`, `awaiting`, `approved`, `blocked`,
-  `skipped`, `failed`) linked to its request; `public_request` carries the routine name.
+  `skipped`, `failed`) linked to its request; `public_request` carries the routine name;
+- pausing the agent outranks the schedule: a due run records a `skipped` row instead of
+  ordering, and `requests.create` refuses a paused agent from every door (web, Slack, agent
+  key, job), so the brake is a money rule, not a badge.
+
+The agent page owns the UI: the standing job card shows next run, cadence, envelope track
+(spent / unsigned / left), the recorded runs with their outcome and request link, a
+**Run now** that streams the same pipeline (real request, confirm first), pause/resume and
+an edit form for instruction, cadence, envelope and dedupe window. A routine's request is
+labelled **Routine** in the Inbox and on its record.
 
 Tables: `routines` (one per agent, `next_run_at`, `last_run_at`, envelope, dedupe) and
 `routine_runs` (due/start/finish, outcome, request, amount, note).
@@ -259,7 +268,7 @@ surfaces may show a count or a link. `/` opens the app; a hash router owns the r
 | **Overview** | needs-me count · committed-unsigned · settled this month · agent count · top-3 pending, linked |
 | **Inbox** | the only request list; status/agent/order/search live in the URL, with a filtered total; expired consents are their own tab |
 | **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void, expired-consent state |
-| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, the real month track (spent / unsigned / left), **test a request** (extract → choose → price → judge), **send it as a real request**, and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
+| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, the real month track (spent / unsigned / left), the **standing job** (schedule, envelope, run history, run now, pause, edit), **test a request** (extract → choose → price → judge), **send it as a real request**, and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
 | **Analytics** | captured money by day, agent, vendor, category and rule, over one range; links into the filtered Inbox |
 | **Integrations** | Slack endpoints + model routing, PayPal wallet, agent API keys (mint once, revoke immediately) |
 
@@ -300,7 +309,7 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 | M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | **done (2026-10-23)** |
 | M4 | Inbox, Record, Analytics, Integrations; Overview rewritten; palette retuned to the ledger tone; old console deleted; `/` flips to the app; model routing for Slack | **done (2026-10-24)** |
 | M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | **in progress (2026-10-26)** — rate limits, real agent budget track, send-from-dry-run, parallel item search and the streamed dry run are done; UI smoke test and hosting next |
-| M6 | routines (standing jobs) + Slack command surface + veto-check, UI smoke test, hosting, video, Devpost | **in progress (2026-10-26)** — routine schema, scheduler, envelope, run history, veto-check and the six Slack commands are live; routine UI, smoke test, hosting and video next |
+| M6 | routines (standing jobs) + Slack command surface + veto-check, UI smoke test, hosting, video, Devpost | **in progress (2026-10-26)** — routine schema, scheduler, envelope, run history, veto-check, the six Slack commands and the routine UI are live; smoke test, hosting, video and Devpost next |
 
 ## 9. Running it
 
@@ -308,9 +317,9 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (265)
+python3 -m unittest discover -s tests    # backend tests (269)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
-python3 tools/check_m4.py                # 37 checks: screens' data, read-only (~1s)
+python3 tools/check_m4.py                # 42 checks: screens' data, read-only (~1s)
 ```
 
 M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
@@ -332,7 +341,7 @@ history in the demo workspace, which is what Overview and Inbox read.
 
 M4 adds the read models the screens consume and a read-only harness:
 
-    python3 tools/check_m4.py                          # 37 checks, no money moved
+    python3 tools/check_m4.py                          # 42 checks, no money moved
 
 It proves Analytics reconciles with Overview (series sum = captured total = by-agent
 sum = by-vendor sum), Integrations reports Slack routing/wallet/keys, a record carries

@@ -4276,3 +4276,294 @@ a.agg-row:hover .agg-name b {
     justify-content: flex-start;
   }
 }
+
+/* the standing job: a routine the agent owns, and the runs that prove it */
+
+.routine-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--rule);
+  padding-top: 14px;
+}
+
+.routine-ident {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.routine-name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.routine-line {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.routine-line-sep {
+  width: 1px;
+  height: 11px;
+  background: var(--border);
+}
+
+.routine-next {
+  color: var(--faint);
+}
+
+.routine-confirm {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-control);
+  background: var(--hold-soft);
+  color: var(--hold-ink);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.routine-editor {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.routine-form {
+  display: grid;
+  gap: 12px;
+}
+
+.routine-form-row {
+  margin: 0;
+}
+
+.routine-result {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 11px 13px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--wash);
+}
+
+.routine-result-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.routine-result-head {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.routine-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 26px;
+  margin-top: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.routine-spec {
+  display: grid;
+  gap: 11px;
+  align-content: start;
+  min-width: 0;
+}
+
+.routine-quote {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--accent-soft);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.routine-envelope {
+  display: grid;
+  gap: 8px;
+}
+
+.routine-envelope-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.routine-envelope-figure {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.routine-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.routine-runs {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+
+.routine-runs-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.routine-runs-head h3 {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.routine-run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.routine-run {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 3px 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.routine-run:first-child {
+  padding-top: 2px;
+  border-top: 0;
+}
+
+.routine-run-when {
+  font-size: 10.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.run-outcome {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.run-outcome.is-pos {
+  color: var(--positive);
+}
+
+.run-outcome.is-wait {
+  color: var(--hold-ink);
+}
+
+.run-outcome.is-neg {
+  color: var(--negative-ink);
+}
+
+.run-outcome.is-cold {
+  color: var(--faint);
+}
+
+.routine-run-money {
+  font-size: 10.5px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.routine-run-link {
+  font-size: 10.5px;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.routine-run-link:hover {
+  text-decoration: underline;
+}
+
+.routine-run-link.is-void {
+  color: var(--faint);
+}
+
+.routine-run-note {
+  grid-column: 1 / -1;
+  margin: 1px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.routine-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px 14px;
+  flex-wrap: wrap;
+}
+
+.routine-empty .fineprint {
+  margin: 0;
+  max-width: 52ch;
+}
+
+/* the roster line: a plate says whether the job is running */
+.agent-plate-job {
+  color: var(--faint);
+}
+
+.agent-plate-job.is-paused {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+@media (max-width: 860px) {
+  .routine-body {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .routine-top {
+    gap: 12px;
+  }
+}
+
+@media (max-width: 560px) {
+  /* one line per fact is enough on a phone; a dangling separator is not */
+  .routine-line-sep {
+    display: none;
+  }
+
+  .routine-line {
+    gap: 3px 8px;
+  }
+}
