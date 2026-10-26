@@ -95,7 +95,9 @@ company *Bracken & Field* signs you in as its approver).
   pings `/api/health` every 5 minutes (retried) so the demo stays warm inside the 750 free
   instance hours a month.
 - **Data:** the instance seeds the demo workspace on boot; the history there is real sandbox
-  activity created through the product (captured carts, a blocked cart, a vetoed cart).
+  activity created through the product (captured carts, a blocked cart, a vetoed cart, real
+  routine runs). `python3 tools/demo_history.py --base <url>` recreates that history through
+  the public API — every request runs the live pipeline and captures through PayPal sandbox.
 - **Live board:** approvals taken from Slack land on any open console tab through the change
   feed; the Inbox, the record and the agent pages re-read themselves, and the header says
   `Live` while the stream is connected.
@@ -164,6 +166,7 @@ web/src/             React app: screens/, components/, styles/tokens.css
 app/                 the built web app (served at / and /app/)
 tools/               check_m3.py (request board, ~60s) · check_m4.py (read models, ~1s)
                      check_polish.py (live feed, filters, delete guard, built controls, ~2s)
+                     demo_history.py (fill a demo workspace with real sandbox history)
 veto/routing.py      model routing for requests that do not name an agent
 veto/ratelimit.py    per-door minute limit; 429 + Retry-After
 tests/               stdlib unittest suite
