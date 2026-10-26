@@ -10,12 +10,15 @@ PayPal moves money only against that signature.
 [![ci](https://github.com/runake25/veto/actions/workflows/ci.yml/badge.svg?branch=v2)](https://github.com/runake25/veto/actions/workflows/ci.yml)
 [![PayPal](https://img.shields.io/badge/PayPal-Orders%20v2%20sandbox-003087?style=flat-square&logo=paypal&logoColor=white)](#paypal)
 [![Channel3](https://img.shields.io/badge/catalogue-Channel3-1b3f63?style=flat-square)](#channel3)
+[![Slack](https://img.shields.io/badge/Slack-join%20the%20demo-4A154B?style=flat-square&logo=slack&logoColor=white)](https://join.slack.com/t/vetollc/shared_invite/zt-4drdephaf-2GOX~63llMwFmLJPM7XFRQ)
 
 ### [Open the live demo →](https://veto-bracken-field.onrender.com)
 
 `caroline@brackenfield.demo` · `veto-demo-2026` · or press **Open the demo workspace**
 
 <sub>Built for the PayPal AI Hackathon · sandbox money only</sub>
+
+**Try it in Slack:** [join the Veto llc workspace](https://join.slack.com/t/vetollc/shared_invite/zt-4drdephaf-2GOX~63llMwFmLJPM7XFRQ) · type `/veto 2 packs of bamboo toilet paper` · approvals land in the console live
 
 <img src="shots/hosted3-overview-1440.png" width="100%" alt="Veto console: a cart waiting for a signature, the month's money, the agent fleet">
 
