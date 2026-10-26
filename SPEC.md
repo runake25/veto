@@ -232,6 +232,18 @@ The command metadata lives in `veto/slack_commands.py`; `slack/link.py`,
 UI cannot drift. Every command shares `SLACK_SIGNING_SECRET` verification and the per-user
 Slack rate limit.
 
+### Hosting
+
+The public demo is a Docker web service on Render's free plan:
+`https://veto-bracken-field.onrender.com`. The image is built from the repository
+`Dockerfile` and contains no secrets or state; the platform injects the env vars in
+`render.yaml`, and `PAYPAL_VAULT_ID` hands the already-approved sandbox wallet in so a
+hosted process captures without a browser. A fresh instance seeds the demo workspace on
+boot, so the service is self-starting; the `.github/workflows/keepalive.yml` cron pings
+`/api/health` every 5 minutes to keep the free instance awake (a free instance sleeps after
+15 idle minutes and resets its ephemeral disk). The public URL is permanent, so the Slack
+app is pointed at it once.
+
 ### Routines
 
 An agent owns at most one routine: a standing instruction, a cadence (`daily`, `weekly`,
@@ -309,7 +321,7 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 | M3 | requests/consent/payments/void/events, Overview live, Slack rewired, API keys | **done (2026-10-23)** |
 | M4 | Inbox, Record, Analytics, Integrations; Overview rewritten; palette retuned to the ledger tone; old console deleted; `/` flips to the app; model routing for Slack | **done (2026-10-24)** |
 | M5 | parallel search, streamed pipeline, rate limits, hosting, UI smoke test | **in progress (2026-10-26)** — rate limits, real agent budget track, send-from-dry-run, parallel item search and the streamed dry run are done; UI smoke test and hosting next |
-| M6 | routines (standing jobs) + Slack command surface + veto-check, UI smoke test, hosting, video, Devpost | **in progress (2026-10-26)** — routine schema, scheduler, envelope, run history, veto-check, the six Slack commands and the routine UI are live; smoke test, hosting, video and Devpost next |
+| M6 | routines (standing jobs) + Slack command surface + veto-check, UI smoke test, hosting, video, Devpost | **in progress (2026-10-26)** — routine schema, scheduler, envelope, run history, veto-check, the six Slack commands and the routine UI are live; the hosted demo is live on Render's free plan; smoke test, video and Devpost next |
 
 ## 9. Running it
 

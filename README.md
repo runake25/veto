@@ -70,6 +70,31 @@ block   → (no consent, no PayPal object)                        status: blocke
   merchant allowlist and category allowlist, plus category exceptions. Every fired rule is
   stored with its observed value and limit, so a record can explain itself.
 
+## Hosted demo
+
+The public demo runs on Render's free plan:
+
+**https://veto-bracken-field.onrender.com** — open it and use the demo button (the seeded
+company *Bracken & Field* signs you in as its approver).
+
+- **Slack:** point every command's Request URL at
+  `https://veto-bracken-field.onrender.com/api/slack/veto` and Interactivity at
+  `https://veto-bracken-field.onrender.com/api/slack/interact`. One URL serves all six
+  commands.
+- **Sleep:** a free instance spins down after 15 minutes without traffic and loses its
+  ephemeral filesystem, which would reset a judging session. `.github/workflows/keepalive.yml`
+  pings `/api/health` every 5 minutes (retried) so the demo stays warm inside the 750 free
+  instance hours a month.
+- **Data:** the instance seeds the demo workspace on boot; the history there is real sandbox
+  activity created through the product (captured carts, a blocked cart, a vetoed cart).
+- **Power:** PayPal sandbox only. `PAYPAL_VAULT_ID` re-attaches the already-approved sandbox
+  wallet on boot, so a hosted request captures exactly like a local one.
+
+Deploy or redeploy with the blueprint in `render.yaml`, or create the service with the Render
+CLI and inject the same env vars (`render.yaml` lists them; secrets are never in the repo).
+The image is built from `Dockerfile` (runtime files only: `server.py`, `veto/`, `spike/`,
+`app/`), and serves the built app on `$PORT`.
+
 ## The six screens
 
 | Screen | It owns |
