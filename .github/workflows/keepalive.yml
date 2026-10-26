@@ -1,12 +1,12 @@
-# Keeps the free Render demo warm.
+# Keeps the free hosted demo warm.
 #
-# Render's free plan spins a web service down after 15 minutes with no traffic,
-# and a spun-down service loses its ephemeral filesystem (so the demo history
-# would reset). This scheduled ping counts as traffic and keeps the instance
-# running, which is what makes a $0 public URL usable for judging.
+# The demo runs on a free Hugging Face Docker Space. Free CPU Spaces sleep after a
+# long idle window (and a restart loses the ephemeral filesystem, so a judging
+# session's history would reset). This scheduled ping counts as a visit and keeps
+# the Space awake around the clock at no cost.
 #
 # Set the repository variable VETO_URL to the public origin, e.g.
-#   gh variable set VETO_URL --body "https://veto-bracken-field.onrender.com"
+#   gh variable set VETO_URL --body "https://<owner>-veto.hf.space"
 #
 # Retries because the first ping after a sleep has to wait for the container to boot.
 
@@ -14,7 +14,7 @@ name: keep-alive
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions: {}

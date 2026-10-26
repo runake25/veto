@@ -21,7 +21,7 @@ COPY veto ./veto
 COPY spike ./spike
 COPY app ./app
 
-RUN mkdir -p /data
+RUN mkdir -p /data && chmod 777 /data
 
 EXPOSE 8787
 
