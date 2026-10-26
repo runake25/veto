@@ -14,6 +14,9 @@ name: keep-alive
 
 on:
   schedule:
+    # GitHub only registers schedules for workflows on the default branch. The
+    # repository's default branch moved to v2 on 2026-10-26; this file was
+    # re-touched so the scheduler registers it again.
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
