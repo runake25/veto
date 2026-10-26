@@ -1,31 +1,29 @@
-# A long-running bridge that keeps the free Render demo awake.
+# Keeps the free Render demo awake when GitHub's cron scheduler is slow.
 #
-# GitHub's cron scheduler can register a new schedule slowly (and this repo's
-# default branch moved to v2 on the day the keep-alive was added). This job is
-# dispatched by hand when we need guaranteed warmth *now*: it pings /api/health
-# every four minutes for up to five hours and fifty minutes, which is under
-# GitHub's six-hour job limit. Public-repo Actions minutes are free.
+# A free Render web service sleeps after 15 idle minutes, so the "no sleep for
+# judging week" guarantee cannot depend on one registration. This workflow is a
+# self-renewing bridge: it pings /api/health every four minutes for ~5.5 hours
+# and, before its window closes, dispatches the next window with the workflow
+# token. Each window is under GitHub's six-hour job limit, and Actions minutes
+# are free for a public repository — so the chain can run indefinitely at $0.
 #
-# Dispatch with:
-#   gh workflow run keepalive-bridge.yml
+# It coexists with the ordinary `*/5` scheduled workflow (keepalive.yml): if the
+# cron registers, that is the permanent pinger; if not, the bridge carries the
+# demo. The job also tries a `keepalive.yml` dispatch at renewal as a nudge.
 #
-# The short scheduled workflow (keepalive.yml) is the permanent answer and does
-# the same ping every five minutes once GitHub registers its cron.
+# Dispatch the chain with:
+#   gh workflow run keepalive-bridge.yml --repo runake25/veto --ref v2
 
 name: keep-alive-bridge
 
 on:
   workflow_dispatch:
-    inputs:
-      minutes:
-        description: "How long to keep pinging (max 350)"
-        required: false
-        default: "350"
 
-permissions: {}
+permissions:
+  actions: write # the renewal step dispatches the next bridge window
 
 concurrency:
-  group: keep-alive-bridge
+  group: keep-alive-bridge-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -33,21 +31,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
-      - name: Ping the hosted demo until the window closes
+      - name: Ping the hosted demo and renew the window
         env:
           VETO_URL: ${{ vars.VETO_URL }}
-          MINUTES: ${{ inputs.minutes }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
         run: |
           if [ -z "${VETO_URL}" ]; then
             echo "::error::VETO_URL repository variable is not set"
             exit 1
           fi
-          minutes="${MINUTES:-350}"
-          end=$(( $(date +%s) + minutes * 60 ))
-          echo "keeping ${VETO_URL} warm for ${minutes} minutes"
+          start=$(date +%s)
+          renew_at=$(( start + 290 * 60 ))
+          end=$(( start + 330 * 60 ))
+          renewed=0
+          echo "keeping ${VETO_URL} warm until $(date -u -d "@$end" +%H:%M:%SZ)"
           while [ "$(date +%s)" -lt "$end" ]; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "${VETO_URL}/api/health" || true)
-            echo "$(date -u +%H:%M:%S)Z /api/health -> ${code}"
+            echo "$(date -u +%H:%M:%SZ) /api/health -> ${code}"
+            now=$(date +%s)
+            if [ "$now" -ge "$renew_at" ] && [ "$renewed" -eq 0 ]; then
+              if gh workflow run keepalive-bridge.yml --repo "$REPO" --ref "$REF"; then
+                echo "::notice::next keep-alive window dispatched"
+                renewed=1
+              else
+                echo "::warning::renewal dispatch failed; retrying on the next ping"
+              fi
+              gh workflow run keepalive.yml --repo "$REPO" --ref "$REF" \
+                && echo "scheduled keepalive nudged" \
+                || true
+            fi
             sleep 240
           done
-          echo "bridge window closed"
+          if [ "$renewed" -eq 0 ]; then
+            echo "::error::this window never managed to dispatch its successor"
+            exit 1
+          fi
+          echo "window handed over"
