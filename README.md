@@ -91,9 +91,12 @@ company *Bracken & Field* signs you in as its approver).
   `https://veto-bracken-field.onrender.com/api/slack/interact`. One URL serves all six
   commands.
 - **Sleep:** a free instance spins down after 15 minutes without traffic and loses its
-  ephemeral filesystem, which would reset a judging session. `.github/workflows/keepalive.yml`
-  pings `/api/health` every 5 minutes (retried) so the demo stays warm inside the 750 free
-  instance hours a month.
+  ephemeral filesystem, which would reset a judging session. Three independent warmers keep
+  it awake, all free: the `*/5` schedule in `.github/workflows/keepalive.yml`; a second
+  schedule in the tiny public `runake25/veto-wake` repository (so one slow cron registration
+  cannot matter); and `keepalive-bridge.yml`, a self-renewing job that pings every four
+  minutes for ~5.5 hours and dispatches its own successor before it exits. Public-repo
+  Actions minutes are unlimited, so the total bill stays nothing.
 - **Data:** the instance seeds the demo workspace on boot; the history there is real sandbox
   activity created through the product (captured carts, a blocked cart, a vetoed cart, real
   routine runs). `python3 tools/demo_history.py --base <url>` recreates that history through
@@ -167,6 +170,8 @@ app/                 the built web app (served at / and /app/)
 tools/               check_m3.py (request board, ~60s) · check_m4.py (read models, ~1s)
                      check_polish.py (live feed, filters, delete guard, built controls, ~2s)
                      demo_history.py (fill a demo workspace with real sandbox history)
+.github/workflows/   keepalive.yml (the */5 ping) · keepalive-bridge.yml (a self-renewing
+                     warm window for when a cron registration is slow)
 veto/routing.py      model routing for requests that do not name an agent
 veto/ratelimit.py    per-door minute limit; 429 + Retry-After
 tests/               stdlib unittest suite

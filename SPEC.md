@@ -242,10 +242,14 @@ The public demo is a Docker web service on Render's free plan:
 `Dockerfile` and contains no secrets or state; the platform injects the env vars in
 `render.yaml`, and `PAYPAL_VAULT_ID` hands the already-approved sandbox wallet in so a
 hosted process captures without a browser. A fresh instance seeds the demo workspace on
-boot, so the service is self-starting; the `.github/workflows/keepalive.yml` cron pings
-`/api/health` every 5 minutes to keep the free instance awake (a free instance sleeps after
-15 idle minutes and resets its ephemeral disk). The public URL is permanent, so the Slack
-app is pointed at it once.
+boot, so the service is self-starting. A free instance sleeps after 15 idle minutes and
+resets its ephemeral disk, so three independent warmers ping `/api/health`, all at $0:
+`keepalive.yml` on a `*/5` schedule; a second schedule in the small public
+`runake25/veto-wake` repository; and `keepalive-bridge.yml`, a self-renewing job that pings
+every four minutes for ~5.5 hours and dispatches its own successor before it exits (public
+repository Actions minutes are unlimited, and the job is under GitHub's six-hour limit).
+The bridge makes "never sleeps" independent of how slowly GitHub registers a new cron. The
+public URL is permanent, so the Slack app is pointed at it once.
 
 ### Routines
 
