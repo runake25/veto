@@ -47,6 +47,12 @@ jobs:
           end=$(( start + 330 * 60 ))
           renewed=0
           echo "keeping ${VETO_URL} warm until $(date -u -d "@$end" +%H:%M:%SZ)"
+          # prove the workflow token can dispatch before relying on it at handover
+          if gh workflow run keepalive.yml --repo "$REPO" --ref "$REF"; then
+            echo "::notice::workflow token can dispatch (renewal will work)"
+          else
+            echo "::warning::workflow token cannot dispatch (renewal would fail)"
+          fi
           while [ "$(date +%s)" -lt "$end" ]; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "${VETO_URL}/api/health" || true)
             echo "$(date -u +%H:%M:%SZ) /api/health -> ${code}"
