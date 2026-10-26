@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
 from veto.prompts import SYSTEM
 from veto.channel3 import Channel3, Channel3Error, rank, relevant, to_line  # noqa: E402
 
-from spike.paypal_client import PayPalClient, PayPalError  # noqa: E402
+from veto.paypal_client import PayPalClient, PayPalError  # noqa: E402
 
 CURRENCY = "USD"
 MOCK_CLIENT_ID = "mock-client-id"
@@ -261,7 +261,7 @@ class Engine:
     def _build_paypal(self):
         if self.live:
             return PayPalClient.from_env()
-        from spike.mock_paypal import MockPayPal
+        from veto.mock_paypal import MockPayPal
         self.mock = MockPayPal().start()
         return PayPalClient(
             MOCK_CLIENT_ID, MOCK_CLIENT_SECRET, self.mock.base_url,

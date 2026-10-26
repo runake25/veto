@@ -19,3 +19,7 @@ slack/manifest.json
 
 # frontend build metadata
 *.tsbuildinfo
+
+# local planning/session artefacts
+.planning/
+.archify/

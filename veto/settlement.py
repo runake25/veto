@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from spike.paypal_client import PayPalClient, PayPalError  # noqa: E402
+from veto.paypal_client import PayPalClient, PayPalError  # noqa: E402
 
 CURRENCY = "USD"
 MOCK_CLIENT_ID = "mock-client-id"
@@ -60,7 +60,7 @@ class Settlement:
     def _build_paypal(self) -> PayPalClient:
         if self.live:
             return PayPalClient.from_env()
-        from spike.mock_paypal import MockPayPal
+        from veto.mock_paypal import MockPayPal
 
         self.mock = MockPayPal().start()
         return PayPalClient(

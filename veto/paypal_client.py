@@ -1,4 +1,4 @@
-"""Minimal PayPal REST client for the Veto capability spike.
+"""Minimal PayPal REST client for Veto.
 
 Standard library only.  The client deliberately implements a small, explicit
 subset of the PayPal REST API:

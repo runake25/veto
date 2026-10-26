@@ -111,8 +111,8 @@ company *Bracken & Field* signs you in as Caroline Hayes, its approver).
 
 Deploy or redeploy with the blueprint in `render.yaml`, or create the service with the Render
 CLI and inject the same env vars (`render.yaml` lists them; secrets are never in the repo).
-The image is built from `Dockerfile` (runtime files only: `server.py`, `veto/`, `spike/`,
-`app/`), and serves the built app on `$PORT`.
+The image is built from `Dockerfile` (runtime files only: `server.py`, `veto/`, `app/`),
+and serves the built app on `$PORT`.
 
 ## The seven screens
 

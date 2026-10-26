@@ -1,4 +1,4 @@
-"""A tiny, explicit local fake of the PayPal endpoints used by the spike.
+"""A tiny, explicit local fake of the PayPal endpoints Veto uses.
 
 This is not PayPal and it is not a simulator of PayPal's risk engine.  It
 implements the request/response *shape* of the small API surface in
