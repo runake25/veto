@@ -1,0 +1,53 @@
+# A long-running bridge that keeps the free Render demo awake.
+#
+# GitHub's cron scheduler can register a new schedule slowly (and this repo's
+# default branch moved to v2 on the day the keep-alive was added). This job is
+# dispatched by hand when we need guaranteed warmth *now*: it pings /api/health
+# every four minutes for up to five hours and fifty minutes, which is under
+# GitHub's six-hour job limit. Public-repo Actions minutes are free.
+#
+# Dispatch with:
+#   gh workflow run keepalive-bridge.yml
+#
+# The short scheduled workflow (keepalive.yml) is the permanent answer and does
+# the same ping every five minutes once GitHub registers its cron.
+
+name: keep-alive-bridge
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "How long to keep pinging (max 350)"
+        required: false
+        default: "350"
+
+permissions: {}
+
+concurrency:
+  group: keep-alive-bridge
+  cancel-in-progress: false
+
+jobs:
+  keep-warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - name: Ping the hosted demo until the window closes
+        env:
+          VETO_URL: ${{ vars.VETO_URL }}
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          if [ -z "${VETO_URL}" ]; then
+            echo "::error::VETO_URL repository variable is not set"
+            exit 1
+          fi
+          minutes="${MINUTES:-350}"
+          end=$(( $(date +%s) + minutes * 60 ))
+          echo "keeping ${VETO_URL} warm for ${minutes} minutes"
+          while [ "$(date +%s)" -lt "$end" ]; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "${VETO_URL}/api/health" || true)
+            echo "$(date -u +%H:%M:%S)Z /api/health -> ${code}"
+            sleep 240
+          done
+          echo "bridge window closed"
