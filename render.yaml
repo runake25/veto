@@ -1,14 +1,27 @@
-# One-click deploy on Render (free plan, Docker). Secrets are set in the dashboard,
-# never in this file. Health check keeps the service awake while a demo is running.
+# One-click deploy on Render (free plan, Docker). Secrets are set in the dashboard
+# (or by the Render CLI, which is how this deployment is created), never in this file.
+#
+# Free-plan facts this file is written around:
+#   * the instance has no persistent disk; /data is ephemeral and the runner reseeds
+#     the demo workspace on every boot. The .github/workflows/keepalive.yml cron keeps
+#     the instance awake so a judging session does not lose its history;
+#   * a cold boot takes ~20-40s, which is why the keep-alive ping retries;
+#   * the URL (https://<name>.onrender.com) is permanent — Slack is pointed at it once.
 services:
   - type: web
-    name: veto
+    name: veto-bracken-field
     runtime: docker
     plan: free
-    region: oregon
+    region: singapore
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: VETO_DB
+        value: /data/veto.db
+      - key: VETO_SEED_DEMO
+        value: "1"
       - key: PAYPAL_LIVE
         value: "1"
       - key: PAYPAL_BASE
@@ -30,7 +43,8 @@ services:
         value: US
       - key: CHANNEL3_CURRENCY
         value: USD
-      # public hostname, e.g. https://veto.onrender.com — used for the Slack callback links
+      # public hostname, e.g. https://veto-bracken-field.onrender.com — used for the
+      # Slack callback links and the model's system context
       - key: VETO_PUBLIC_URL
         sync: false
       - key: SLACK_SIGNING_SECRET

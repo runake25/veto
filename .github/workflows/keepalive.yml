@@ -1,0 +1,48 @@
+# Keeps the free Render demo warm.
+#
+# Render's free plan spins a web service down after 15 minutes with no traffic,
+# and a spun-down service loses its ephemeral filesystem (so the demo history
+# would reset). This scheduled ping counts as traffic and keeps the instance
+# running, which is what makes a $0 public URL usable for judging.
+#
+# Set the repository variable VETO_URL to the public origin, e.g.
+#   gh variable set VETO_URL --body "https://veto-bracken-field.onrender.com"
+#
+# Retries because the first ping after a sleep has to wait for the container to boot.
+
+name: keep-alive
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: keep-alive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wake the hosted demo
+        env:
+          VETO_URL: ${{ vars.VETO_URL }}
+        run: |
+          if [ -z "${VETO_URL}" ]; then
+            echo "::error::VETO_URL repository variable is not set"
+            exit 1
+          fi
+          for attempt in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "${VETO_URL}/api/health" || true)
+            echo "attempt ${attempt}: HTTP ${code}"
+            if [ "${code}" = "200" ]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::the hosted demo did not answer /api/health"
+          exit 1
