@@ -7,7 +7,7 @@ A control layer between AI agents and the company PayPal wallet — every agent 
 signed charter, a human signs when it matters, and money moves only against that consent.
 
 [![ci](https://github.com/runake25/veto/actions/workflows/ci.yml/badge.svg?branch=v2)](https://github.com/runake25/veto/actions/workflows/ci.yml)
-[![live demo](https://img.shields.io/website?url=https%3A%2F%2Fveto-bracken-field.onrender.com%2Fapi%2Fhealth&label=live%20demo&style=flat-square&up_message=online&down_message=asleep)](https://veto-bracken-field.onrender.com)
+[![live demo](https://img.shields.io/website?url=https%3A%2F%2Fveto-bracken-field.onrender.com%2Fapi%2Fhealth&label=live%20demo&style=flat-square&up_message=online&down_message=asleep&cacheSeconds=300)](https://veto-bracken-field.onrender.com)
 [![PayPal](https://img.shields.io/badge/PayPal-sandbox-003087?style=flat-square&logo=paypal&logoColor=white)](#how-the-money-moves)
 [![Channel3](https://img.shields.io/badge/catalogue-Channel3-1b3f63?style=flat-square)](https://trychannel3.com)
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#run-it-locally)
