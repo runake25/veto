@@ -10,6 +10,7 @@ import { Inbox } from './screens/Inbox'
 import { Record as RequestRecord } from './screens/Record'
 import { Analytics } from './screens/Analytics'
 import { Integrations } from './screens/Integrations'
+import { Settings } from './screens/Settings'
 import { Shell } from './screens/Shell'
 import { BootFailure, BootSheet } from './components/BootSheet'
 
@@ -108,6 +109,16 @@ export default function App() {
         <Route path="agents/:id" element={<AgentDetail me={boot.me} />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="integrations" element={<Integrations me={boot.me} />} />
+        <Route
+          path="settings"
+          element={
+            <Settings
+              me={boot.me}
+              onMeChange={(next) => setBoot({ state: 'ready', me: next })}
+              onSignOut={() => void signOut()}
+            />
+          }
+        />
         <Route path="*" element={<Overview />} />
       </Route>
     </Routes>

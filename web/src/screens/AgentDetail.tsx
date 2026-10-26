@@ -18,6 +18,7 @@ import {
   type SimulateStreamFrame,
 } from '../api'
 import { AgentForm } from '../components/AgentForm'
+import { AgentAvatar } from '../components/AgentAvatar'
 import { InlineError, Track } from '../components/Bits'
 import { FreshnessButton, useFreshness } from '../components/freshness'
 import { PipelineLive, type Live, type LiveItem } from '../components/live'
@@ -82,8 +83,8 @@ function Guardrails({ agent }: { agent: Agent }) {
   return (
     <section className="card guardrails">
       <header className="card-head">
-        <h2>Guardrails</h2>
-        <span className="card-note">what this agent may do</span>
+        <h2>Charter</h2>
+        <span className="card-note">what it may buy</span>
       </header>
 
       <div className="spec-band">
@@ -193,10 +194,10 @@ function sendLabel(result: SimulateResult): string {
 
 function sendNote(result: SimulateResult): string {
   if (result.decision.outcome === 'auto')
-    return 'Inside every rule: creating the request captures this amount through PayPal immediately.'
+    return 'Inside every rule — captures this amount through PayPal now.'
   if (result.decision.outcome === 'review')
-    return 'A real request is recorded and waits for a signature in the Inbox.'
-  return 'A real request is recorded as blocked. No consent, no PayPal object, no money.'
+    return 'Records the request; a person signs it in the Inbox.'
+  return 'Records it as blocked. No consent, no PayPal object, no money.'
 }
 
 /** The dry run's verdict in the shared state language, before the details. */
@@ -291,8 +292,7 @@ function DryRun({ agent }: { agent: Agent }) {
         <span className="card-note">dry run</span>
       </header>
       <p className="card-lede">
-        The agent&rsquo;s decision for this message: extract, choose a product, price it, apply
-        the rules. Nothing is ordered until you send the request.
+        How this bot judges a message. Nothing is ordered until you send it.
       </p>
       <form className="inline-form" onSubmit={run}>
         <input
@@ -372,8 +372,8 @@ function DryRun({ agent }: { agent: Agent }) {
               <div className="dry-miss">
                 <p className="dry-empty">
                   {result.near_misses?.length
-                    ? 'Nothing the catalogue returned is the item asked for, so the cart never got priced.'
-                    : 'No product was found inside this agent’s scope, so the cart never got priced.'}
+                    ? 'No catalogue match for the item, so nothing was priced.'
+                    : 'Nothing in scope, so nothing was priced.'}
                 </p>
                 {(result.near_misses ?? []).map((miss) => (
                   <div className="near" key={miss.item}>
@@ -390,8 +390,8 @@ function DryRun({ agent }: { agent: Agent }) {
                   </div>
                 ))}
                 <p className="fineprint">
-                  This catalogue carries household, office and equipment goods — it does not
-                  stock groceries or food brands.
+                  The catalogue covers household, office and equipment goods; no groceries or food
+                  brands.
                 </p>
               </div>
             )}
@@ -501,8 +501,7 @@ function FindProduct({ agent }: { agent: Agent }) {
         <span className="card-note">scoped to the rules</span>
       </header>
       <p className="card-lede">
-        Every offer these merchants return for a search, annotated with the rules it passes or
-        fails. This is the list a decision is made from.
+        Live offers from the approved merchants, tagged with the rule each one fails.
       </p>
       <form className="inline-form" onSubmit={run}>
         <input
@@ -575,10 +574,7 @@ function FindProduct({ agent }: { agent: Agent }) {
                 ))}
               </ul>
             ) : (
-              <p className="dry-empty">
-                Nothing matched inside these rules. The agent cannot buy what its scope does not
-                cover.
-              </p>
+              <p className="dry-empty">Nothing matched inside these rules.</p>
             )}
 
             {result.filtered.irrelevant ? (
@@ -725,9 +721,12 @@ export function AgentDetail({ me }: { me: Me }) {
     return (
       <div className="screen agent-skel" aria-hidden="true">
         <span className="skel" style={{ width: 148, height: 10 }} />
-        <div className="agent-skel-head">
-          <span className="skel" style={{ width: 220, height: 26 }} />
-          <span className="skel" style={{ width: 300, height: 11 }} />
+        <div className="instance-head-skel">
+          <span className="skel" style={{ width: 56, height: 56, borderRadius: 13 }} />
+          <div className="agent-skel-ident">
+            <span className="skel" style={{ width: 220, height: 26 }} />
+            <span className="skel" style={{ width: 300, height: 11 }} />
+          </div>
         </div>
         <div className="card">
           <span className="skel" style={{ width: 118, height: 16 }} />
@@ -767,13 +766,19 @@ export function AgentDetail({ me }: { me: Me }) {
         <FreshnessButton />
       </motion.div>
 
-      <motion.header className="screen-head agent-header" variants={m.riseIn}>
-        <div>
-          <h1>{agent.name}</h1>
-          <div className="agent-meta">
-            <span className="chip chip-quiet">{agent.tag}</span>
-            {agent.channel ? <span className="mono agent-channel">{agent.channel}</span> : null}
-            <State tone={headerState.tone}>{headerState.label}</State>
+      <motion.header className="screen-head instance-head" variants={m.riseIn}>
+        <div className="instance-ident">
+          <AgentAvatar agent={agent} size={56} />
+          <div className="instance-text">
+            <div className="instance-title">
+              <h1>{agent.name}</h1>
+              <State tone={headerState.tone}>{headerState.label}</State>
+            </div>
+            <p className="instance-serial">
+              <span className="mono instance-serial-id">{agent.id}</span>
+              {agent.channel ? <span className="mono instance-channel">{agent.channel}</span> : null}
+              <span className="instance-tag">{agent.tag}</span>
+            </p>
           </div>
         </div>
         {me.user.role === 'viewer' ? (
@@ -781,7 +786,7 @@ export function AgentDetail({ me }: { me: Me }) {
         ) : (
           <div className="agent-actions">
             <PressButton
-              variant={editing ? 'quiet' : 'secondary'}
+              variant={editing ? 'quiet' : 'primary'}
               onClick={() => setEditing((v) => !v)}
             >
               {editing ? 'Close editor' : 'Edit rules'}
@@ -830,7 +835,7 @@ export function AgentDetail({ me }: { me: Me }) {
             style={{ overflow: 'hidden' }}
           >
             <header className="card-head">
-              <h2>Rules for {agent.name}</h2>
+              <h2>Rules</h2>
               <span className="card-note">guided</span>
             </header>
             <AgentForm
@@ -878,9 +883,8 @@ export function AgentDetail({ me }: { me: Me }) {
             <span className="card-note">irreversible</span>
           </header>
           <p className="card-lede">
-            Deleting removes the agent, its rules and its standing job. An agent that has
-            ever made a request cannot be deleted — the money trail has to stay readable — so
-            Veto refuses and the brake to use is <b>Pause agent</b> instead.
+            Deletes the agent, its rules and its job. An agent with requests on record cannot be
+            deleted — pause it instead.
           </p>
           {deleteError ? (
             <p className="inline-error" role="alert">
@@ -890,8 +894,8 @@ export function AgentDetail({ me }: { me: Me }) {
           {confirmDelete ? (
             <div className="danger-confirm">
               <p className="danger-copy">
-                Delete {agent.name}? This cannot be undone, and its standing job goes with it.
-                Any request it already made stays in the record.
+                Delete {agent.name}? This cannot be undone. Its job goes too; requests it made
+                stay in the record.
               </p>
               <div className="form-actions">
                 <button

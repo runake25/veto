@@ -26,10 +26,16 @@ class StubHandler:
     responses) is what gets tested, not a reimplementation.
     """
 
-    def __init__(self, server, session: dict | None) -> None:
+    def __init__(self, server, session: dict | None, *,
+                 body: dict | None = None, path: str = "/") -> None:
         self.server = server
         self.session = session
+        self.body = body or {}
+        self.path = path
         self.response: dict | None = None
+
+    def _body(self) -> dict:
+        return self.body
 
     def _require_session(self) -> dict:
         if self.session is None:

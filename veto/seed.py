@@ -17,7 +17,12 @@ from veto.store import Store
 WORKSPACE_NAME = "Bracken & Field"
 DEMO_PASSWORD = "veto-demo-2026"
 ADMIN_EMAIL = "ops@brackenfield.demo"
-APPROVER_EMAIL = "priya@brackenfield.demo"
+ADMIN_NAME = "Ops admin"
+APPROVER_EMAIL = "caroline@brackenfield.demo"
+APPROVER_NAME = "Caroline Hayes"
+# Round-4 rename: a workspace seeded before D1 still carries this identity.
+LEGACY_APPROVER_EMAIL = "priya@brackenfield.demo"
+LEGACY_APPROVER_NAME = "Priya Raman"
 MONTHLY_BUDGET_CENTS = 285_000
 
 # The six rules the charter UI exposes today. (expires_at is a consent
@@ -116,13 +121,22 @@ DEFAULT_AGENT_NAME = AGENTS[0]["name"]
 
 def _ensure_workspace(store: Store) -> dict:
     workspace = store.workspace_by_name(WORKSPACE_NAME)
-    if workspace is None:
-        workspace = store.create_workspace(
-            WORKSPACE_NAME,
-            currency="USD",
-            monthly_budget_cents=MONTHLY_BUDGET_CENTS,
-        )
-    return workspace
+    if workspace is not None:
+        return workspace
+    # Settings lets an admin rename the workspace, so "the demo workspace" is
+    # found by its seeded admin identity first; the name check above is only the
+    # fast path. Without this, a rename would make the next boot seed a second
+    # workspace and duplicate the demo.
+    admin = store.user_by_email(ADMIN_EMAIL)
+    if admin is not None:
+        existing = store.workspace(admin["workspace_id"])
+        if existing is not None:
+            return existing
+    return store.create_workspace(
+        WORKSPACE_NAME,
+        currency="USD",
+        monthly_budget_cents=MONTHLY_BUDGET_CENTS,
+    )
 
 
 def _ensure_user(store: Store, workspace_id: str, email: str, name: str, role: str) -> dict:
@@ -136,6 +150,30 @@ def _ensure_user(store: Store, workspace_id: str, email: str, name: str, role: s
         password_hash=auth.hash_password(DEMO_PASSWORD),
         role=role,
     )
+
+
+def migrate_demo_identity(store: Store) -> bool:
+    """Rename a DB seeded before the D1 identity change, idempotently.
+
+    The demo approver used to be "Priya Raman" <priya@brackenfield.demo>; round 4
+    makes her "Caroline Hayes" <caroline@brackenfield.demo>. The legacy email is
+    globally unique, so matching it finds exactly the seeded row no matter how
+    the workspace or data evolved. User ids never change, so existing sessions
+    and every request that points at this approver stay valid. Returns True only
+    when a row actually changed; safe to call on every boot.
+    """
+    with store.transaction():
+        legacy = store.user_by_email(LEGACY_APPROVER_EMAIL)
+        current = store.user_by_email(APPROVER_EMAIL)
+        if legacy is not None and current is None:
+            store.update_user(legacy["id"], email=APPROVER_EMAIL, name=APPROVER_NAME)
+            return True
+        if current is not None and (current.get("name") or "").strip() == LEGACY_APPROVER_NAME:
+            # The email moved but the display name was left behind (partial or
+            # hand-edited migration): finish the rename.
+            store.update_user(current["id"], name=APPROVER_NAME)
+            return True
+    return False
 
 
 def _ensure_agents(store: Store, workspace_id: str) -> None:
@@ -179,8 +217,10 @@ def _ensure_routines(store: Store, workspace_id: str) -> None:
 
 def _populate(store: Store) -> dict:
     workspace = _ensure_workspace(store)
-    admin = _ensure_user(store, workspace["id"], ADMIN_EMAIL, "Ops admin", "admin")
-    approver = _ensure_user(store, workspace["id"], APPROVER_EMAIL, "Priya Raman", "approver")
+    admin = _ensure_user(store, workspace["id"], ADMIN_EMAIL, ADMIN_NAME, "admin")
+    approver = _ensure_user(
+        store, workspace["id"], APPROVER_EMAIL, APPROVER_NAME, "approver"
+    )
     _ensure_agents(store, workspace["id"])
     _ensure_routines(store, workspace["id"])
 
@@ -211,8 +251,10 @@ def seed_demo(store: Store) -> dict:
     """Create the demo state if missing and return what a caller can log in as.
 
     Returns ``{"workspace", "admin", "approver", "agents"}``. Safe to call on
-    every boot: existing rows are reused rather than duplicated.
+    every boot: existing rows are reused rather than duplicated, and a DB seeded
+    under the old demo identity is renamed first.
     """
+    migrate_demo_identity(store)
     try:
         with store.transaction():
             return _populate(store)

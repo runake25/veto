@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, money, type Agent } from '../api'
+import { AgentAvatar } from '../components/AgentAvatar'
 import { InlineError } from '../components/Bits'
 import { FreshnessButton, useFreshness } from '../components/freshness'
 import { motionSet } from '../components/motion'
+import { when } from '../components/request'
 import { State, agentState } from '../components/state'
 
 /** The price as short as it stays exact: $300, $1,200, $145.99. */
@@ -26,16 +28,34 @@ function charter(agent: Agent) {
   }
 }
 
-function Plate({ agent }: { agent: Agent }) {
-  const rules = charter(agent)
-  const state = agentState(agent)
-  const readout = [
-    { label: 'Monthly', value: figure(rules.monthly), fallback: 'No cap', lead: true },
-    { label: 'Per order', value: figure(rules.perOrder), fallback: 'No cap', lead: false },
-    { label: 'Per item', value: figure(rules.perItem), fallback: 'No cap', lead: false },
-    { label: 'Signature above', value: figure(rules.signature), fallback: 'Pays alone', lead: false },
-  ]
+/**
+ * The standing job in one line: what it orders, how often, when it next runs.
+ * A paused job, or a job under a paused bot, never promises a next run.
+ */
+function JobLine({ agent }: { agent: Agent }) {
+  const job = agent.routine
+  if (!job) return <span className="plate-muted">No standing job</span>
+  const paused = job.status === 'paused' || agent.status !== 'active'
+  return (
+    <>
+      <span className="plate-job-name">{job.name}</span>
+      <span className="plate-muted plate-job-cadence">· {job.cadence_word}</span>
+      {paused ? (
+        <span className="plate-muted"> · paused</span>
+      ) : job.next_run_at ? (
+        <span className="mono plate-job-next">
+          {' '}
+          · next {when(job.next_run_at).split(' · ')[0]}
+          <span className="plate-job-time"> · {when(job.next_run_at).split(' · ')[1]}</span>
+        </span>
+      ) : null}
+    </>
+  )
+}
 
+/** The scope this instance may buy inside, as a person reads it. */
+function scope(agent: Agent) {
+  const rules = charter(agent)
   const buys =
     rules.categories === null
       ? 'any category'
@@ -49,22 +69,37 @@ function Plate({ agent }: { agent: Agent }) {
         ? `${rules.merchants.length} ${rules.merchants.length === 1 ? 'merchant' : 'merchants'}`
         : 'no merchants yet'
   const exceptions = agent.overrides.length
-  const exceptionHint =
-    'A category with its own cap, overriding the agent default for that category.'
+  return { buys, merchants, exceptions, cold: rules.merchants !== null && rules.merchants.length === 0 }
+}
+
+function Plate({ agent }: { agent: Agent }) {
+  const rules = charter(agent)
+  const state = agentState(agent)
+  const readout = [
+    { label: 'Monthly', value: figure(rules.monthly), fallback: 'No cap', lead: true },
+    { label: 'Per order', value: figure(rules.perOrder), fallback: 'No cap', lead: false },
+    { label: 'Per item', value: figure(rules.perItem), fallback: 'No cap', lead: false },
+    { label: 'Signature above', value: figure(rules.signature), fallback: 'Pays alone', lead: false },
+  ]
+  const { buys, merchants, exceptions, cold } = scope(agent)
 
   return (
     <Link className="agent-plate" to={`/agents/${agent.id}`}>
-      <div className="agent-plate-tag">
-        <span className="mono">{agent.id}</span>
-        <State tone={state.tone}>{state.label}</State>
-      </div>
-
-      <header className="agent-plate-head">
-        <h2>{agent.name}</h2>
-        <span className="chip chip-quiet">{agent.tag}</span>
+      <header className="plate-ident">
+        <AgentAvatar agent={agent} size={44} />
+        <div className="plate-ident-text">
+          <h2>{agent.name}</h2>
+          <p className="plate-serial">
+            <span className="mono plate-serial-id">{agent.id}</span>
+            {agent.channel ? <span className="mono plate-channel">{agent.channel}</span> : null}
+          </p>
+        </div>
+        <State tone={state.tone} className="plate-state">
+          {state.label}
+        </State>
       </header>
 
-      <div className="agent-plate-rules">
+      <div className="agent-plate-rules plate-charter">
         {readout.map((cell) => (
           <div className="agent-plate-rule" key={cell.label}>
             <span className="agent-plate-label">{cell.label}</span>
@@ -79,38 +114,29 @@ function Plate({ agent }: { agent: Agent }) {
         ))}
       </div>
 
-      <footer className="agent-plate-foot">
-        <p className="agent-plate-scope">
-          <span>Buys {buys}</span>
-          <span className="agent-plate-rest">
-            <span
-              className={
-                rules.merchants !== null && rules.merchants.length === 0 ? 'is-cold' : undefined
-              }
-            >
-              {merchants}
-            </span>
-            {exceptions ? (
-              <span title={exceptionHint}>
-                {' '}
-                · {exceptions} category exception{exceptions === 1 ? '' : 's'}
-              </span>
-            ) : null}
-            {agent.routine ? (
-              <span
-                className={`agent-plate-job${
-                  agent.routine.status === 'paused' ? ' is-paused' : ''
-                }`}
-              >
-                {' '}
-                ·{' '}
-                {agent.routine.status === 'paused'
-                  ? 'job paused'
-                  : `runs ${agent.routine.cadence_word}`}
-              </span>
-            ) : null}
-          </span>
-        </p>
+      <footer className="plate-foot">
+        <dl className="plate-facts">
+          <div className="plate-fact">
+            <dt>Job</dt>
+            <dd>
+              <JobLine agent={agent} />
+            </dd>
+          </div>
+          <div className="plate-fact">
+            <dt>Scope</dt>
+            <dd>
+              <span>Buys {buys}</span>
+              <span> · </span>
+              <span className={cold ? 'plate-muted' : undefined}>{merchants}</span>
+              {exceptions ? (
+                <span className="plate-muted">
+                  {' '}
+                  · {exceptions} category exception{exceptions === 1 ? '' : 's'}
+                </span>
+              ) : null}
+            </dd>
+          </div>
+        </dl>
         <span className="agent-plate-arrow" aria-hidden="true">
           →
         </span>
@@ -122,21 +148,21 @@ function Plate({ agent }: { agent: Agent }) {
 function PlateSkeleton() {
   return (
     <div className="agent-plate agent-plate-skel" aria-hidden="true">
-      <div className="agent-plate-tag">
-        <span className="skel" style={{ width: 78, height: 9 }} />
-        <span className="skel" style={{ width: 44, height: 9 }} />
-      </div>
-      <header className="agent-plate-head">
-        <span className="skel" style={{ width: '46%', height: 18 }} />
-        <span className="skel" style={{ width: 56, height: 18 }} />
+      <header className="plate-ident">
+        <span className="skel agent-avatar-skel" />
+        <div className="plate-ident-text">
+          <span className="skel" style={{ width: '54%', height: 17 }} />
+          <span className="skel" style={{ width: '72%', height: 9, marginTop: 8 }} />
+        </div>
+        <span className="skel" style={{ width: 52, height: 11 }} />
       </header>
-      <div className="agent-plate-skel-rules">
+      <div className="agent-plate-rules plate-charter">
         {[0, 1, 2, 3].map((i) => (
-          <span className="skel" style={{ height: 28 }} key={i} />
+          <span className="skel" style={{ height: 34 }} key={i} />
         ))}
       </div>
-      <footer className="agent-plate-foot">
-        <span className="skel" style={{ width: '58%', height: 10 }} />
+      <footer className="plate-foot">
+        <span className="skel" style={{ width: '62%', height: 10 }} />
         <span className="skel" style={{ width: 10, height: 10 }} />
       </footer>
     </div>
@@ -144,9 +170,9 @@ function PlateSkeleton() {
 }
 
 /**
- * Agents: each one is its own plate, not a row in a shared table. The plate carries
- * everything that defines the instance — its serial, who it is, the four numbers of
- * its charter, and the scope it buys inside. The detail screen spends them.
+ * Agents: the fleet of running instances. Each plate carries the identity of one
+ * bot — its mark, serial, state — the four numbers of its charter, and the job it
+ * runs. The detail screen spends them.
  */
 export function Agents() {
   const [agents, setAgents] = useState<Agent[] | null>(null)
@@ -179,12 +205,12 @@ export function Agents() {
       <motion.header className="screen-head" variants={m.riseIn}>
         <div>
           <h1>Agents</h1>
-          <p>The agents that can spend, and the rules each one carries.</p>
+          <p>The bots that can spend, and the charters they run inside.</p>
         </div>
         <div className="head-actions">
           {agents ? (
             <span className="head-count">
-              {agents.length} agent{agents.length === 1 ? '' : 's'}
+              {agents.length} instance{agents.length === 1 ? '' : 's'}
             </span>
           ) : null}
           <FreshnessButton />
@@ -218,21 +244,11 @@ export function Agents() {
       ) : null}
 
       {agents && agents.length === 0 ? (
-        <div className="agent-grid">
-          <div className="agent-plate agent-plate-empty">
-            <span className="empty-mark" aria-hidden="true" />
-            <p className="empty-title">No agents yet.</p>
-            <p className="empty-note">
-              An agent is a team&rsquo;s spending charter: its budget, its merchants, its
-              categories and the point where a person has to say yes.
-            </p>
-          </div>
+        <div className="fleet-empty">
+          <p className="empty-title">No agents yet.</p>
+          <p className="empty-note">Create one to give a bot a budget and a scope.</p>
         </div>
       ) : null}
-
-      <motion.p className="agents-note" variants={m.riseIn}>
-        Inside its rules an agent pays silently; outside them a person signs.
-      </motion.p>
     </motion.div>
   )
 }

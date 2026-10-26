@@ -24,7 +24,7 @@ export function BootSheet() {
           <span className="skel" style={{ width: '34%', height: 12 }} />
           <span className="skel" style={{ width: '44%', height: 12 }} />
         </motion.div>
-        <p className="boot-note mono">checking session</p>
+        <p className="boot-note mono">opening Veto</p>
       </div>
     </main>
   )
@@ -51,11 +51,10 @@ export function BootFailure({
       <div className="boot boot-failure">
         <Wordmark />
         <div className="boot-error">
-          <h1 className="boot-title">The console cannot reach its engine.</h1>
+          <h1 className="display boot-title">The engine is unreachable.</h1>
           <p className="boot-message">{message}</p>
           <p className="boot-hint">
-            A free hosted instance sleeps when it is idle; the first wake can take about a
-            minute. Nothing on the page was lost — this is only the session check.
+            The hosted instance sleeps when idle; the first wake can take a minute.
           </p>
         </div>
         <div className="form-actions">

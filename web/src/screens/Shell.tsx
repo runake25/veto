@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
-import { initials, type Me } from '../api'
-import { FreshnessProvider } from '../components/freshness'
+import { api, initials, type Agent, type Me } from '../api'
+import { AgentAvatar } from '../components/AgentAvatar'
+import { FreshnessProvider, useFreshness } from '../components/freshness'
 import { Wordmark } from '../components/Logo'
-import { State } from '../components/state'
+import { agentState, State } from '../components/state'
 
 const TITLES: Record<string, string> = {
   '/': 'Overview · Veto',
@@ -11,6 +12,7 @@ const TITLES: Record<string, string> = {
   '/agents': 'Agents · Veto',
   '/analytics': 'Analytics · Veto',
   '/integrations': 'Integrations · Veto',
+  '/settings': 'Settings · Veto',
 }
 
 function titleFor(pathname: string): string {
@@ -19,13 +21,24 @@ function titleFor(pathname: string): string {
   return TITLES[pathname] ?? 'Veto — spend control'
 }
 
-const SECTIONS = [
-  { to: '/', label: 'Overview', end: true },
-  { to: '/inbox', label: 'Inbox' },
-  { to: '/agents', label: 'Agents' },
-  { to: '/analytics', label: 'Analytics' },
-  { to: '/integrations', label: 'Integrations' },
+const GROUPS = [
+  {
+    label: 'Control',
+    sections: [
+      { to: '/', label: 'Overview', end: true },
+      { to: '/inbox', label: 'Inbox' },
+      { to: '/agents', label: 'Agents' },
+      { to: '/analytics', label: 'Analytics' },
+    ],
+  },
+  {
+    label: 'Setup',
+    sections: [{ to: '/integrations', label: 'Integrations' }, { to: '/settings', label: 'Settings' }],
+  },
 ]
+
+const SECTIONS = GROUPS.flatMap((group) => group.sections)
+const RAIL_KEY = 'veto.instances'
 
 /**
  * The account menu exists for the narrow layout, where the rail (and with it
@@ -74,7 +87,7 @@ function AccountMenu({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         aria-expanded={open}
         aria-controls="account-menu"
         onClick={() => setOpen((value) => !value)}
-        title="Account, wallet and sign out"
+        title="Account, settings and sign out"
       >
         <span className="avatar" aria-hidden="true">
           {initials(me.user.name)}
@@ -119,6 +132,9 @@ function AccountMenu({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           <Link className="account-link" to="/integrations">
             Wallet &amp; integrations
           </Link>
+          <Link className="account-link" to="/settings">
+            Settings
+          </Link>
           <button type="button" className="account-signout" onClick={onSignOut}>
             Sign out
           </button>
@@ -128,7 +144,93 @@ function AccountMenu({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   )
 }
 
-export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
+/**
+ * The fleet, in the rail. An agent is a running instance, so the rail lists the
+ * running things — avatar, name, state — under the Agents tab instead of making
+ * a person go back to a directory to switch. The disclosure remembers whether a
+ * person closed it; inside the Agents section it is open by default.
+ */
+function InstanceRail({ me }: { me: Me }) {
+  const location = useLocation()
+  const { tick } = useFreshness()
+  const [agents, setAgents] = useState<Agent[] | null>(null)
+  const [pref, setPref] = useState<'auto' | 'open' | 'closed'>(() => {
+    const saved = window.localStorage.getItem(RAIL_KEY)
+    return saved === '1' ? 'open' : saved === '0' ? 'closed' : 'auto'
+  })
+  const inAgents = location.pathname.startsWith('/agents')
+  const open = pref === 'open' || (pref === 'auto' && inAgents)
+
+  useEffect(() => {
+    let live = true
+    api
+      .agents()
+      .then((list) => {
+        if (live) setAgents(list)
+      })
+      .catch(() => {
+        // the rail is a convenience; the Agents screen owns the failure state
+      })
+    return () => {
+      live = false
+    }
+  }, [tick, me.workspace.id])
+
+  const toggle = () => {
+    const next = open ? 'closed' : 'open'
+    setPref(next)
+    window.localStorage.setItem(RAIL_KEY, next === 'open' ? '1' : '0')
+  }
+
+  return (
+    <div className="instances">
+      <button
+        type="button"
+        className={`instances-head${open ? ' is-open' : ''}`}
+        aria-expanded={open}
+        aria-controls="instance-list"
+        onClick={toggle}
+      >
+        <span className="instances-title">Instances</span>
+        <span className="instances-meta" aria-hidden="true">
+          <span className="instances-count mono">{agents ? agents.length : '—'}</span>
+          <span className="instances-caret">{open ? '▾' : '▸'}</span>
+        </span>
+        <span className="sr-only">{open ? 'Collapse agent list' : 'Expand agent list'}</span>
+      </button>
+
+      {open ? (
+        <ul className="instance-list" id="instance-list">
+          {(agents ?? []).map((agent) => {
+            const state = agentState(agent)
+            return (
+              <li key={agent.id}>
+                <NavLink
+                  to={`/agents/${agent.id}`}
+                  className={({ isActive }) => `instance${isActive ? ' is-active' : ''}`}
+                  title={`${agent.name} · ${state.label}`}
+                >
+                  <AgentAvatar agent={agent} size={24} />
+                  <span className="instance-name">{agent.name}</span>
+                </NavLink>
+              </li>
+            )
+          })}
+          {agents && agents.length === 0 ? (
+            <li className="instance-empty">No agents yet</li>
+          ) : null}
+          {!agents ? (
+            <li className="instance-empty" aria-hidden="true">
+              Loading…
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+function ShellInner({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const walletOn = me.wallet.status === 'connected'
   const period = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date())
   const location = useLocation()
@@ -149,19 +251,23 @@ export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         </div>
 
         <nav className="nav" aria-label="Sections">
-          <div className="nav-group">
-            <p className="nav-label">Control</p>
-            {SECTIONS.map((section) => (
-              <NavLink
-                key={section.to}
-                to={section.to}
-                end={section.end}
-                className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
-              >
-                {section.label}
-              </NavLink>
-            ))}
-          </div>
+          {GROUPS.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <p className="nav-label">{group.label}</p>
+              {group.sections.map((section) => (
+                <div className="nav-slot" key={section.to}>
+                  <NavLink
+                    to={section.to}
+                    end={section.end}
+                    className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
+                  >
+                    {section.label}
+                  </NavLink>
+                  {section.to === '/agents' ? <InstanceRail me={me} /> : null}
+                </div>
+              ))}
+            </div>
+          ))}
         </nav>
 
         <div className="sidebar-foot">
@@ -178,6 +284,9 @@ export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       <div className="frame">
         <header className="topbar">
           <span className="crumb mono">{period}</span>
+          <span className="topbar-brand">
+            <Wordmark />
+          </span>
           <nav className="topnav" aria-label="Sections">
             {SECTIONS.map((section) => (
               <NavLink
@@ -206,11 +315,17 @@ export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         </header>
 
         <main className="sheet" id="main-content" tabIndex={-1}>
-          <FreshnessProvider>
-            <Outlet />
-          </FreshnessProvider>
+          <Outlet />
         </main>
       </div>
     </div>
+  )
+}
+
+export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
+  return (
+    <FreshnessProvider>
+      <ShellInner me={me} onSignOut={onSignOut} />
+    </FreshnessProvider>
   )
 }

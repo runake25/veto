@@ -8,7 +8,7 @@
  * and a dot on the next.
  */
 import type { ReactNode } from 'react'
-import type { Agent, RoutineOutcome, RoutineSummary } from '../api'
+import type { Agent, RequestStatus, RoutineOutcome, RoutineSummary } from '../api'
 
 export type Tone = 'pos' | 'wait' | 'neg' | 'quiet'
 
@@ -114,4 +114,75 @@ export function paymentMode(mode: string | null | undefined): string {
   if (key === 'live' || key === 'paypal') return 'PayPal live'
   if (key === 'mock' || key === 'simulator') return 'In-process simulator'
   return word(mode)
+}
+
+/* ---- request state groups ------------------------------------------------ */
+
+/**
+ * Inbox navigation, in importance order. The queue used to expose every status
+ * as its own tab — seven doors, with "Expired" first because a lapsed consent
+ * sorts early. A person opening the inbox has one job: money waiting on a
+ * signature. So the tabs group the statuses under what they mean for the money,
+ * and "Needs you" leads. The stored status words never change; grouping is
+ * navigation, not vocabulary.
+ */
+export type StateGroup = 'needs' | 'settled' | 'refused' | 'withdrawn'
+
+export interface StateGroupMeta {
+  /** The `state=` URL value; the whole-record tab has none. */
+  value: StateGroup | ''
+  label: string
+  /** The statuses the server is asked for; empty means every status. */
+  statuses: RequestStatus[]
+  /** One short phrase for the tab's tooltip. */
+  hint: string
+}
+
+/** The five tabs, in the order the console shows them. */
+export const STATE_GROUPS: StateGroupMeta[] = [
+  {
+    value: 'needs',
+    label: 'Needs you',
+    statuses: ['awaiting', 'approved'],
+    hint: 'Waiting on a signature, including a lapsed consent',
+  },
+  { value: '', label: 'All', statuses: [], hint: 'Every request in the record' },
+  { value: 'settled', label: 'Settled', statuses: ['captured'], hint: 'Money moved through PayPal' },
+  {
+    value: 'refused',
+    label: 'Refused',
+    statuses: ['blocked', 'vetoed'],
+    hint: 'Stopped by a rule or a person; no money moved',
+  },
+  {
+    value: 'withdrawn',
+    label: 'Withdrawn',
+    statuses: ['voided'],
+    hint: 'Ended without a decision',
+  },
+]
+
+/**
+ * The group a status belongs to. Old `?status=` links (and the engine's
+ * synthetic `expired` filter) still resolve: a lapsed consent is a request
+ * waiting on a person, so it belongs in Needs you.
+ */
+export function stateGroupFor(status: string | null | undefined): StateGroup | '' {
+  if (!status) return ''
+  if (status === 'expired') return 'needs'
+  for (const group of STATE_GROUPS) {
+    if ((group.statuses as string[]).includes(status)) return group.value
+  }
+  return ''
+}
+
+/** The tab label for a group value, for breadcrumbs and headings. */
+export function stateGroupLabel(value: string | null | undefined): string {
+  const group = STATE_GROUPS.find((entry) => entry.value === (value ?? ''))
+  return group?.label ?? 'All'
+}
+
+/** The inbox URL for a group; the whole-record tab is plain `/inbox`. */
+export function stateGroupHref(group: StateGroup | ''): string {
+  return group ? `/inbox?state=${group}` : '/inbox'
 }

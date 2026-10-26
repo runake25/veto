@@ -63,7 +63,7 @@ CATALOG = [
 
 CHARTERS = {
     "office": {
-        "id": "office", "name": "Office supplies", "approver": "Priya Raman",
+        "id": "office", "name": "Office supplies", "approver": "Caroline Hayes",
         "monthly_cap": 80000, "per_order_cap": 30000, "per_unit_cap": 1500,
         "approval_threshold": 5000,
         "vendors": {"Kettle Supply", "Meridian Paper", "Northgate Tools"},

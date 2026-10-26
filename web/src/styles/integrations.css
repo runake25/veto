@@ -1,0 +1,437 @@
+/* Round 4 — integrations screen layout: two labelled groups (MONEY then ACCESS).
+   Loaded after app.css. Owned by the integrations workstream; see round4-brief.md.
+   Everything here is scoped to .integrations-screen / .integ-* so the shared
+   sheet (app.css) stays the Lead's. */
+
+.integrations-screen {
+  /* one reading column: the wallet leads, the access cards follow */
+  gap: 14px;
+}
+
+.integ-groups {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.integ-group {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* a group label is a divider, not a heading: caps, quiet, then a hairline */
+.integ-group-label {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.integ-group-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.integ-card {
+  min-width: 0;
+  gap: 9px;
+  padding-top: 13px;
+  padding-bottom: 14px;
+}
+
+.integ-card .card-head {
+  align-items: center;
+}
+
+.integ-head-meta {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* ---- MONEY: the wallet strip -------------------------------------------- */
+
+.integ-facts {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 30px;
+  min-width: 0;
+}
+
+.integ-fact {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.integ-fact dt {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  flex: none;
+}
+
+.integ-fact dd {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--text);
+  min-width: 0;
+}
+
+.integ-fact dd.mono {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.integ-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.integ-wallet {
+  padding-top: 13px;
+  padding-bottom: 14px;
+}
+
+.integ-wallet-cta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ---- ACCESS: agent keys, the working card -------------------------------- */
+
+.integ-curl {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--wash);
+}
+
+.integ-curl-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.integ-curl-code {
+  display: block;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.integ-flash {
+  margin: 0;
+  padding: 8px 11px;
+  border-left: 2px solid var(--positive);
+  border-radius: var(--radius-control);
+  background: var(--positive-soft);
+  color: var(--positive);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.integ-secret {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--accent-soft);
+  min-width: 0;
+}
+
+.integ-secret-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-ink);
+}
+
+.integ-secret-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.integ-key-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.integ-key-row {
+  display: grid;
+  gap: 4px;
+  padding: 7px 0;
+  border-top: 1px solid var(--rule);
+  min-width: 0;
+}
+
+.integ-key-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.integ-key-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.integ-key-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.integ-key-name:hover {
+  color: var(--accent-ink);
+}
+
+.integ-key-tag {
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.integ-key-mint {
+  margin-left: auto;
+}
+
+.integ-key-tokens {
+  list-style: none;
+  margin: 0;
+  padding: 1px 0 0 12px;
+  border-left: 1px solid var(--rule);
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.integ-key-token {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  min-width: 0;
+}
+
+.integ-key-prefix {
+  flex: none;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.integ-key-meta {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.integ-key-revoke {
+  flex: none;
+}
+
+.integ-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* ---- ACCESS: Slack, the reference card ---------------------------------- */
+
+.integ-commands {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 28px;
+  min-width: 0;
+}
+
+.integ-commands li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 1px 7px;
+  min-width: 0;
+}
+
+.integ-command {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.integ-command-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.integ-endpoints {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px 28px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+  min-width: 0;
+}
+
+.integ-endpoint {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.integ-endpoint-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.integ-endpoint .copy-value {
+  width: 100%;
+  min-width: 0;
+}
+
+.integ-endpoint .copy-value-text {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.integ-endpoint .state {
+  align-self: start;
+}
+
+.integ-warn {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--hold);
+  border-radius: var(--radius-control);
+  background: var(--hold-soft);
+  color: var(--hold-ink);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* the labels of the loading skeleton */
+.integ-label-skel {
+  display: block;
+  width: 68px;
+  height: 10px;
+}
+
+/* ---- narrow ------------------------------------------------------------- */
+
+@media (max-width: 760px) {
+  .integ-groups {
+    gap: 22px;
+  }
+
+  .integ-facts {
+    gap: 7px 22px;
+  }
+
+  .integ-endpoints {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  /* one command per row: the name on its line, the sentence under it */
+  .integ-commands {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .integ-commands li {
+    display: grid;
+    gap: 0;
+  }
+
+  /* a phone shows the whole URL rather than an ellipsis the copy button hides */
+  .integ-endpoint .copy-value {
+    align-items: flex-start;
+  }
+
+  .integ-endpoint .copy-value-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+  }
+}
+
+@media (max-width: 520px) {
+  .integ-key-mint {
+    margin-left: 0;
+  }
+
+  .integ-key-tokens {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .integ-key-row {
+    gap: 7px;
+  }
+
+  /* phone: the prefix and the revoke action share a line, the stamps go under */
+  .integ-key-token {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 2px 8px;
+  }
+
+  .integ-key-meta {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .integ-key-revoke {
+    justify-self: end;
+  }
+}

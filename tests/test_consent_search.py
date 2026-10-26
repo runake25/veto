@@ -29,7 +29,7 @@ class ConsentSearchTests(unittest.TestCase):
         self.desk = self.store.create_agent(self.workspace["id"], {"name": "Desk kit"})
 
     def request(self, title: str, *, agent: dict | None = None, status: str = "awaiting",
-                total: int = 1_000, requester: str = "Priya") -> dict:
+                total: int = 1_000, requester: str = "Caroline") -> dict:
         return self.store.create_request(
             self.workspace["id"],
             (agent or self.pantry)["id"],
@@ -100,12 +100,12 @@ class ConsentSearchTests(unittest.TestCase):
             (lapsed["id"],))["expires_at"])
 
     def test_search_matches_title_agent_and_requester(self) -> None:
-        self.request("Coffee beans", requester="Priya Raman")
+        self.request("Coffee beans", requester="Caroline Hayes")
         self.request("Standing mat", agent=self.desk, requester="Dan")
         for needle, expected in (
             ("coffee", "Coffee beans"),
             ("desk", "Standing mat"),
-            ("priya", "Coffee beans"),
+            ("caroline", "Coffee beans"),
         ):
             rows = self.store.list_requests(self.workspace["id"], q=needle)
             self.assertEqual([row["title"] for row in rows], [expected])

@@ -5,9 +5,9 @@ words; Veto applies that agent's charter, asks a human only when the cart crosse
 threshold, and moves money through PayPal only against a signed, single-use consent. Every
 step is a stored record — cart, reasons, consent, PayPal ids, trail.
 
-Slack is one door, not the product. The product is the record: **Inbox → Record → Agents →
-Analytics → Integrations**, all reading one SQLite store. Built sandbox-only for the PayPal
-AI Hackathon (October 2026).
+Slack is one door, not the product. The product is the record: **Overview → Inbox → Record →
+Agents → Analytics → Integrations**, plus Settings for the seat, all reading one SQLite
+store. Built sandbox-only for the PayPal AI Hackathon (October 2026).
 
 ## Run it
 
@@ -23,8 +23,9 @@ python3 server.py               # http://127.0.0.1:8787/
 callbacks need a public URL). The host changes on every start; paste the two URLs in
 *Integrations* back into the Slack app after a restart.
 
-**Sign in:** the auth screen's *Open the demo workspace* button signs in as the approver
-seeded in `Bracken & Field`. The admin account is `ops@brackenfield.demo` / `veto-demo-2026`.
+**Sign in:** the auth screen's *Open the demo workspace* button signs in as **Caroline
+Hayes**, the approver seeded in *Bracken & Field* — `caroline@brackenfield.demo` /
+`veto-demo-2026`. The admin account is `ops@brackenfield.demo` / `veto-demo-2026`.
 
 ## The loop
 
@@ -45,8 +46,9 @@ block   → (no consent, no PayPal object)                        status: blocke
   assembled in the order the request named the items.
 - **The dry run is streamed**: the agent page reads `POST /api/v1/simulate/stream`, so
   each stage and each resolved item appears as it lands instead of behind a spinner.
-- **A lapsed consent is its own queue**: a request whose 10-minute consent expired is not
-  signable; it leaves "Needs you", gets an Expired tab, and the record offers "Send it again".
+- **A lapsed consent is still waiting on a person**: a request whose 10-minute consent
+  expired stays in **Needs you**, marked `Consent expired`; the record locks approve and
+  offers **Send it again** with a fresh window.
 - **The Inbox finds things**: a real table with sortable column headers, search over title,
   text, agent, requester and merchant (URL-addressable), a day range in the viewer's own
   calendar, a filtered total, and a footer that adds the queue up.
@@ -84,7 +86,7 @@ block   → (no consent, no PayPal object)                        status: blocke
 The public demo runs on Render's free plan:
 
 **https://veto-bracken-field.onrender.com** — open it and use the demo button (the seeded
-company *Bracken & Field* signs you in as its approver).
+company *Bracken & Field* signs you in as Caroline Hayes, its approver).
 
 - **Slack:** point every command's Request URL at
   `https://veto-bracken-field.onrender.com/api/slack/veto` and Interactivity at
@@ -112,16 +114,17 @@ CLI and inject the same env vars (`render.yaml` lists them; secrets are never in
 The image is built from `Dockerfile` (runtime files only: `server.py`, `veto/`, `spike/`,
 `app/`), and serves the built app on `$PORT`.
 
-## The six screens
+## The seven screens
 
 | Screen | It owns |
 |---|---|
-| **Overview** (`/`) | needs-you count, committed-unsigned, settled this month, the agent roster, the oldest pending requests as links |
-| **Inbox** (`/inbox`) | the only request list, a real table with `aria-sort` headers; status/agent/day range/order/search live in the URL, with a filtered total, a retryable error state and a phone layout of the same rows |
-| **Record** (`/inbox/REQ-1043`) | the cart, the rule reasons, the consent hash, the PayPal ids (each copyable), the trail, the payment state in words, and approve / veto / void |
-| **Agents** (`/agents`) | one plate per agent, with its standing job on the plate; the agent page carries the real month track (spent / unsigned / left), the **standing job** (schedule, envelope, run history, run now, pause, edit), a dry run that can be sent as a real request, and a scoped catalogue search |
-| **Analytics** (`/analytics`) | captured money by day, agent, vendor, category and rule over one range, linking into the filtered Inbox |
-| **Integrations** (`/integrations`) | Slack endpoints and model routing, the PayPal wallet, and agent API keys |
+| **Overview** (`/`) | one action (Review N requests / Open inbox), the Needs-you panel with amount and age, one quiet This-month strip (held / settled / left), and compact agent rows |
+| **Inbox** (`/inbox`) | the only request list: five groups in importance order (Needs you · All · Settled · Refused · Withdrawn, a lapsed consent marked inside Needs you), a real table with `aria-sort` headers, search/agent/day/order in the URL, a reconciled total, and a phone list of the same rows |
+| **Record** (`/inbox/REQ-1043`) | the document: identity, verdict and reasons, cart, PayPal ids (each copyable), consent hash and window, trail, payment state in words, and approve / veto / void |
+| **Agents** (`/agents`) | a fleet of instance plates (agent mark, serif name, state, serial, charter figures, standing job and scope); the agent page carries the charter, the **standing job** (schedule, envelope, runs, run now, pause, edit), a dry run that can be sent as a real request, and a scoped catalogue search. The rail lists the same instances collapsibly |
+| **Analytics** (`/analytics`) | one lead settled figure over held/stopped/requests, captured money by day (with a daily table), agent, vendor, category and rule over one range, linking into the filtered Inbox |
+| **Integrations** (`/integrations`) | two groups: **MONEY** (PayPal wallet) and **ACCESS** (agent API keys, then Slack commands, URLs and signature state) |
+| **Settings** (`/settings`) | Account (name, email, role, sign out), Workspace (admin rename, id, currency), Security (password change), read-only Environment |
 
 ## Slack
 
@@ -165,7 +168,9 @@ veto/                store.py · auth.py · seed.py · policy.py · pipeline.py
                      events.py (the in-process change feed for the live board)
                      check.py (top-five shortlists) · slack_commands.py (the command surface)
                      settlement.py (the only money mover)
-web/src/             React app: screens/, components/, styles/tokens.css
+web/src/             React app: screens/ (incl. Settings.tsx) · components/ (incl.
+                     AgentAvatar.tsx and state.tsx) · styles/ (tokens.css plus one
+                     shell, inbox, agents, integrations and record stylesheet per screen)
 app/                 the built web app (served at / and /app/)
 tools/               check_m3.py (request board, ~60s) · check_m4.py (read models, ~1s)
                      check_polish.py (live feed, filters, delete guard, built controls, ~2s)
@@ -182,7 +187,7 @@ shots/               screenshots used as delivery evidence
 ## Verify it
 
 ```bash
-python3 -m unittest discover -s tests    # 314 backend tests
+python3 -m unittest discover -s tests    # 343 backend tests
 python3 tools/check_m3.py                # 19 checks: the request loop over HTTP (real pipeline)
 python3 tools/check_m4.py                # 42 checks: read models, read-only, no money moves
 python3 tools/check_polish.py            # 20 checks: live feed, filters, delete guard, built controls

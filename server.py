@@ -12,6 +12,7 @@ import json
 import os
 import queue
 import re
+import sqlite3
 import threading
 import time
 import sys
@@ -27,7 +28,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from veto.engine import ApprovalPending, Engine, VaultRequired  # noqa: E402
-from veto.store import Store, month_start_iso, parse_iso  # noqa: E402
+from veto.store import STATE_GROUPS, Store, month_start_iso, parse_iso  # noqa: E402
 from veto import auth as veto_auth  # noqa: E402
 from veto import pipeline as veto_pipeline  # noqa: E402
 from veto.policy import RULE_KINDS  # noqa: E402
@@ -39,7 +40,7 @@ from veto.events import FEED  # noqa: E402
 from veto.ratelimit import RateLimiter  # noqa: E402
 from veto import settlement as veto_settlement  # noqa: E402
 from veto import slack_commands as veto_slack  # noqa: E402
-from veto.seed import seed_demo  # noqa: E402
+from veto.seed import migrate_demo_identity, seed_demo  # noqa: E402
 
 ENGINE = Engine()
 PORT = int(os.environ.get("PORT", "8787"))
@@ -96,6 +97,12 @@ CONTENT_TYPES = {
 # ---------------------------------------------------------------------------
 STORE = Store()
 SEEDED: dict = {}
+# Round-4 identity migration runs on every boot, before the optional seed, so a
+# DB seeded under the old demo approver is renamed even when seeding is off.
+try:
+    migrate_demo_identity(STORE)
+except Exception:  # noqa: BLE001 - a rename failure must not stop the runner
+    traceback.print_exc()
 if os.environ.get("VETO_SEED_DEMO", "1") != "0":
     try:
         SEEDED = seed_demo(STORE)
@@ -270,9 +277,15 @@ def date_range(params: dict) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 AGENT_WRITE_ROLES = ("admin", "approver")
 REQUEST_STATUSES = ("blocked", "awaiting", "approved", "captured", "vetoed", "voided")
+# The Inbox's five tabs (minus "All", which is "no state param"). Validated here
+# so the store only ever sees a group it knows.
+REQUEST_STATES = tuple(STATE_GROUPS)
 REQUEST_SORTS = (
     "priority", "newest", "oldest", "amount_desc", "amount_asc", "agent", "agent_desc",
 )
+MAX_NAME_CHARS = 80
+MIN_WORKSPACE_NAME_CHARS = 2
+MIN_PASSWORD_CHARS = 10
 MAX_AGENT_NAME = 80
 MAX_AGENT_TAG = 40
 MAX_AGENT_CHANNEL = 60
@@ -694,6 +707,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/demo-session":
             self._v1_demo_session()
             return True
+        if path == "/api/v1/me/password":
+            self._v1_change_password()
+            return True
         if path == "/api/v1/agents":
             self._v1_create_agent()
             return True
@@ -755,9 +771,15 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _v2_patch(self, path: str) -> bool:
-        """Handle PATCH /api/v1/agents/{id}. True = handled."""
+        """Handle PATCH /api/v1/me, /api/v1/workspace and /api/v1/agents/{id}."""
         if not path.startswith("/api/v1/"):
             return False
+        if path == "/api/v1/me":
+            self._v1_update_me()
+            return True
+        if path == "/api/v1/workspace":
+            self._v1_update_workspace()
+            return True
         prefix = "/api/v1/agents/"
         if path.startswith(prefix):
             parts = [unquote(part) for part in path[len(prefix):].split("/") if part]
@@ -1025,6 +1047,68 @@ class Handler(BaseHTTPRequestHandler):
             "keys": keys,
         })
 
+    # -- settings: account name, workspace name, password ---------------
+    def _v1_update_me(self) -> None:
+        """PATCH /api/v1/me — display name only; email and role are read-only."""
+        session = self._require_session()
+        name = str(self._body().get("name") or "").strip()
+        if not 1 <= len(name) <= MAX_NAME_CHARS:
+            self._api_error(
+                400, "invalid_name", f"Name must be 1–{MAX_NAME_CHARS} characters."
+            )
+        user = STORE.update_user(session["user"]["id"], name=name)
+        if user is None:
+            self._api_error(404, "user_not_found", "That account no longer exists.")
+        # A person's name is shown on request records (approver and requester).
+        _changed("requests")
+        self._ok({"user": public_user(user)})
+
+    def _v1_update_workspace(self) -> None:
+        """PATCH /api/v1/workspace — admin only; the name is the tenant's identity."""
+        session = self._require_role("admin")
+        workspace = session["workspace"]
+        name = str(self._body().get("name") or "").strip()
+        if not MIN_WORKSPACE_NAME_CHARS <= len(name) <= MAX_NAME_CHARS:
+            self._api_error(
+                400,
+                "invalid_name",
+                f"Workspace name must be {MIN_WORKSPACE_NAME_CHARS}–"
+                f"{MAX_NAME_CHARS} characters.",
+            )
+        try:
+            updated = STORE.update_workspace(workspace["id"], name=name)
+        except sqlite3.IntegrityError:
+            self._api_error(409, "name_taken", "That workspace name is already taken.")
+        if updated is None:
+            self._api_error(404, "workspace_not_found", "That workspace does not exist.")
+        _changed("agents")
+        self._ok({"workspace": public_workspace(updated)})
+
+    def _v1_change_password(self) -> None:
+        """POST /api/v1/me/password — verify current, require 10+ for the new one."""
+        session = self._require_session()
+        body = self._body()
+        current = str(body.get("current_password") or "")
+        new = str(body.get("new_password") or "")
+        user = STORE.user(session["user"]["id"])
+        if user is None or not veto_auth.verify_password(
+            user.get("password_hash") or "", current
+        ):
+            self._api_error(401, "invalid_password", "Current password is incorrect.")
+        if len(new) < MIN_PASSWORD_CHARS:
+            self._api_error(
+                400,
+                "invalid_password_rule",
+                f"New password must be at least {MIN_PASSWORD_CHARS} characters.",
+            )
+        updated = STORE.update_user(
+            user["id"], password_hash=veto_auth.hash_password(new)
+        )
+        if updated is None:
+            self._api_error(404, "user_not_found", "That account no longer exists.")
+        # Existing sessions stay valid: no global revoke in this build.
+        self._ok({})
+
     def _v1_list_requests(self) -> None:
         session = self._require_session()
         workspace_id = session["workspace"]["id"]
@@ -1034,6 +1118,12 @@ class Handler(BaseHTTPRequestHandler):
             pass  # the synthetic expired tab is handled below
         elif status and status not in REQUEST_STATUSES:
             self._api_error(400, "invalid_status", f"Unknown status: {status}")
+        # The five Inbox tabs: "all" (or no param) is the absence of a group.
+        state = (params.get("state") or [""])[0].strip().lower()
+        if state in ("", "all"):
+            state = None
+        elif state not in REQUEST_STATES:
+            self._api_error(400, "invalid_state", f"Unknown state group: {state}")
         agent_id = (params.get("agent_id") or [""])[0].strip() or None
         sort = (params.get("sort") or [""])[0].strip()
         if sort and sort not in REQUEST_SORTS:
@@ -1055,6 +1145,7 @@ class Handler(BaseHTTPRequestHandler):
             limit, offset = 50, 0
         filters = {
             "status": status,
+            "state": state,
             "agent_id": agent_id,
             "q": q,
             "consent_state": consent_state,
@@ -1075,6 +1166,7 @@ class Handler(BaseHTTPRequestHandler):
             "sum_cents": STORE.sum_requests(workspace_id, **filters),
             "sort": sort or "priority",
             "query": q or "",
+            "state": state,
             "from": window["from"],
             "to": window["to"],
             "tz": window["tz"],

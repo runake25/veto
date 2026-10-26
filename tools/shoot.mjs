@@ -27,7 +27,6 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const PORT = 9412;
 
 const arg = (name, fallback) => {
   const eq = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -39,6 +38,10 @@ const arg = (name, fallback) => {
   return fallback;
 };
 const has = (name) => process.argv.includes(`--${name}`);
+
+// Several workstreams shoot at once: each caller passes its own debugging port
+// so two screenshots never fight over 9412.
+const PORT = Number(arg("port", "9412"));
 
 const BASE = arg("base", "http://localhost:5180").replace(/\/+$/, "");
 const API = (arg("api", BASE) || BASE).replace(/\/+$/, "");
@@ -134,7 +137,7 @@ const chrome = spawn(
     "--disable-extensions",
     "--force-color-profile=srgb",
     `--remote-debugging-port=${PORT}`,
-    "--user-data-dir=/tmp/veto-shoot-profile",
+    `--user-data-dir=/tmp/veto-shoot-profile-${PORT}`,
     "about:blank",
   ],
   { stdio: "ignore" }

@@ -118,7 +118,7 @@ class LifecycleTestCase(unittest.TestCase):
         self.addCleanup(self.store.close)
         self.workspace = self.store.create_workspace("Bracken & Field", monthly_budget_cents=285_000)
         self.agent = self.make_agent()
-        self.user = {"id": "usr_approver", "name": "Priya Raman", "role": "approver"}
+        self.user = {"id": "usr_approver", "name": "Caroline Hayes", "role": "approver"}
 
     def make_agent(self, **overrides) -> dict:
         extra = {

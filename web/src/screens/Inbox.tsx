@@ -1,21 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, money, type Agent, type RequestSummary } from '../api'
 import { InlineError } from '../components/Bits'
 import { FreshnessButton, useFreshness } from '../components/freshness'
 import { motionSet } from '../components/motion'
-import { StatusMark, requestLabel, sourceLabel, when as whenText } from '../components/request'
-
-const FILTERS = [
-  { value: '', label: 'All', hint: 'Every request in the record' },
-  { value: 'awaiting', label: 'Needs you', hint: 'Waiting for a signature that is still valid' },
-  { value: 'expired', label: 'Expired', hint: 'The consent lapsed before anyone signed' },
-  { value: 'captured', label: 'Captured', hint: 'Money moved through PayPal' },
-  { value: 'blocked', label: 'Blocked', hint: 'Refused by the rules; no money moved' },
-  { value: 'vetoed', label: 'Vetoed', hint: 'Refused by a person; no money moved' },
-  { value: 'voided', label: 'Voided', hint: 'Withdrawn before any capture' },
-]
+import {
+  StatusMark,
+  requestLabel,
+  sourceLabel,
+  age,
+  when as whenText,
+} from '../components/request'
+import { STATE_GROUPS, stateGroupFor } from '../components/state'
 
 /** The orders the record offers. The server owns the SQL; the UI names it. */
 const SORT_OPTIONS = [
@@ -105,51 +102,52 @@ function ariaSort(current: string, column: Column): 'ascending' | 'descending' |
   return ascending ? 'ascending' : 'descending'
 }
 
-function emptyCopy(status: string): { title: string; note: string } {
-  if (status === 'awaiting')
+/** One title and one line per group: an empty queue needs no philosophy. */
+function emptyCopy(group: string): { title: string; note: string } {
+  if (group === 'needs')
+    return { title: 'Nothing needs you.', note: 'A request lands here when a rule needs a signature.' }
+  if (group === 'settled')
     return {
-      title: 'Nothing needs you.',
-      note: 'A cart lands here only when it crosses a cap or a threshold.',
+      title: 'Nothing settled yet.',
+      note: 'Captured money carries its PayPal order and capture id.',
     }
-  if (status === 'captured')
-    return {
-      title: 'No captures in this view.',
-      note: 'Captured money shows a PayPal order, authorization and capture id in its record.',
-    }
-  if (status === 'blocked')
-    return {
-      title: 'Nothing was blocked.',
-      note: 'The rules refuse a cart when a merchant, a category or a cap says no.',
-    }
-  if (status === 'vetoed')
-    return {
-      title: 'Nothing was vetoed.',
-      note: 'A veto is a person refusing a cart that the rules already sent for a signature.',
-    }
-  if (status === 'voided')
-    return {
-      title: 'Nothing was voided.',
-      note: 'Voiding withdraws a pending request before any capture.',
-    }
-  return {
-    title: 'No requests yet.',
-    note: 'Ask an agent to buy something — the request appears here the moment it exists.',
-  }
+  if (group === 'refused')
+    return { title: 'Nothing was refused.', note: 'A rule or a person stopped it before any capture.' }
+  if (group === 'withdrawn')
+    return { title: 'Nothing was withdrawn.', note: 'Voided requests ended before any capture.' }
+  return { title: 'No requests yet.', note: 'Ask an agent to buy something; it appears here.' }
+}
+
+/** The footer's one word for the money column, per group. */
+function sumWord(group: string): string {
+  if (group === 'needs') return 'held'
+  if (group === 'settled') return 'settled'
+  if (group === 'refused') return 'refused'
+  if (group === 'withdrawn') return 'voided'
+  return 'total'
 }
 
 /**
- * Inbox: the only list of requests. Filters live in the URL so a view can be
- * linked, and every row opens its full record. The queue is a real table with
- * sortable column headers (a phone gets the same rows as a list instead).
+ * Inbox: the only list of requests. The tabs are the five state groups, in the
+ * order that matters — money waiting on a signature first, history after. The
+ * whole view lives in the URL, and every row opens its full record.
  */
 export function Inbox() {
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
-  const status = params.get('status') ?? ''
+  const stateParam = params.get('state') ?? ''
+  const legacyStatus = params.get('status') ?? ''
   const agentId = params.get('agent') ?? ''
   const sort = params.get('sort') ?? ''
   const q = params.get('q') ?? ''
   const period = params.get('when') ?? ''
+
+  // An old `?status=awaiting` link still resolves to the group that now holds
+  // that status; the tab is the group, never a raw status.
+  const tab = useMemo(() => {
+    if (STATE_GROUPS.some((group) => group.value === stateParam)) return stateParam
+    return legacyStatus ? stateGroupFor(legacyStatus) : ''
+  }, [stateParam, legacyStatus])
 
   const [rows, setRows] = useState<RequestSummary[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -181,24 +179,28 @@ export function Inbox() {
   // a filter change starts a fresh view; a background refresh keeps the rows
   useEffect(() => {
     setRows(null)
-  }, [status, agentId, sort, q, period])
+  }, [tab, agentId, sort, q, period])
+
+  const query = useMemo(() => {
+    const next = new URLSearchParams({ limit: '50' })
+    if (tab) next.set('state', tab)
+    if (agentId) next.set('agent_id', agentId)
+    if (sort) next.set('sort', sort)
+    if (q) next.set('q', q)
+    const days = rangeDays(period)
+    if (days) {
+      next.set('from', days.from)
+      next.set('to', days.to)
+      next.set('tz', String(-new Date().getTimezoneOffset()))
+    }
+    return next.toString()
+  }, [tab, agentId, sort, q, period])
 
   useEffect(() => {
     let live = true
     setError(null)
-    const query = new URLSearchParams({ limit: '50' })
-    if (status) query.set('status', status)
-    if (agentId) query.set('agent_id', agentId)
-    if (sort) query.set('sort', sort)
-    if (q) query.set('q', q)
-    const days = rangeDays(period)
-    if (days) {
-      query.set('from', days.from)
-      query.set('to', days.to)
-      query.set('tz', String(-new Date().getTimezoneOffset()))
-    }
     api
-      .requests(query.toString())
+      .requests(query)
       .then((data) => {
         if (!live) return
         setRows(data.requests)
@@ -212,25 +214,41 @@ export function Inbox() {
     return () => {
       live = false
     }
-  }, [status, agentId, sort, q, period, tick, reloadTick, markLoaded])
+  }, [query, tick, reloadTick, markLoaded])
 
   const choose = useCallback(
-    (next: { status?: string; agent?: string; sort?: string; q?: string; when?: string }) => {
+    (next: {
+      state?: string
+      agent?: string
+      sort?: string
+      q?: string
+      when?: string
+    }) => {
       const params = new URLSearchParams()
-      const nextStatus = next.status ?? status
+      const nextState = next.state ?? tab
       const nextAgent = next.agent ?? agentId
       const nextSort = next.sort ?? sort
       const nextQuery = next.q ?? q
       const nextWhen = next.when ?? period
-      if (nextStatus) params.set('status', nextStatus)
+      if (nextState) params.set('state', nextState)
       if (nextAgent) params.set('agent', nextAgent)
       if (nextSort) params.set('sort', nextSort)
       if (nextQuery) params.set('q', nextQuery)
       if (nextWhen) params.set('when', nextWhen)
       setParams(params, { replace: true })
     },
-    [status, agentId, sort, q, period, setParams],
+    [tab, agentId, sort, q, period, setParams],
   )
+
+  // an old status link becomes the group link, so a bookmark keeps working
+  useEffect(() => {
+    if (stateParam || !legacyStatus) return
+    const next = new URLSearchParams(params)
+    next.delete('status')
+    const mapped = stateGroupFor(legacyStatus)
+    if (mapped) next.set('state', mapped)
+    setParams(next, { replace: true })
+  }, [stateParam, legacyStatus, params, setParams])
 
   // a search box writes the URL after a short pause, so the view stays linkable
   useEffect(() => {
@@ -245,18 +263,9 @@ export function Inbox() {
     if (!rows) return
     setMoreBusy(true)
     try {
-      const query = new URLSearchParams({ limit: '50', offset: String(rows.length) })
-      if (status) query.set('status', status)
-      if (agentId) query.set('agent_id', agentId)
-      if (sort) query.set('sort', sort)
-      if (q) query.set('q', q)
-      const days = rangeDays(period)
-      if (days) {
-        query.set('from', days.from)
-        query.set('to', days.to)
-        query.set('tz', String(-new Date().getTimezoneOffset()))
-      }
-      const data = await api.requests(query.toString())
+      const next = new URLSearchParams(query)
+      next.set('offset', String(rows.length))
+      const data = await api.requests(next.toString())
       setRows([...rows, ...data.requests])
     } catch {
       setError('The next page did not load.')
@@ -266,13 +275,10 @@ export function Inbox() {
   }
 
   const empty = q
-    ? {
-        title: `No request matches “${q}”.`,
-        note: 'Try a shorter fragment, or clear the search to see the whole record.',
-      }
-    : emptyCopy(status)
-  const filtered = Boolean(status || agentId || q || period)
-  const count = rows ? (filtered ? `${total} matching` : `${total} in the record`) : ''
+    ? { title: `No request matches “${q}”.`, note: 'Try a shorter fragment.' }
+    : emptyCopy(tab)
+  const filtered = Boolean(tab || agentId || q || period)
+  const count = rows ? `${total} ${total === 1 ? 'request' : 'requests'}` : ''
   const open = (id: string) => navigate(`/inbox/${id}`)
 
   return (
@@ -280,7 +286,7 @@ export function Inbox() {
       <motion.header className="screen-head" variants={m.riseIn}>
         <div>
           <h1>Inbox</h1>
-          <p>Every request an agent made, and what happened to the money.</p>
+          <p>Every request, and where the money went.</p>
         </div>
         <div className="head-tools">
           {count ? <span className="head-count mono">{count}</span> : null}
@@ -288,79 +294,79 @@ export function Inbox() {
         </div>
       </motion.header>
 
-      <motion.div className="filter-bar" variants={m.riseIn}>
-        <div className="filter-tabs" role="group" aria-label="Filter by status">
-          {FILTERS.map((filter) => (
+      <motion.div className="inbox-toolbar" variants={m.riseIn}>
+        <div className="filter-tabs" role="group" aria-label="Request state">
+          {STATE_GROUPS.map((group) => (
             <button
-              key={filter.value || 'all'}
+              key={group.value || 'all'}
               type="button"
-              className={`filter-tab${status === filter.value ? ' is-on' : ''}`}
-              aria-pressed={status === filter.value}
-              onClick={() => choose({ status: filter.value })}
-              title={filter.hint}
+              className={`filter-tab${tab === group.value ? ' is-on' : ''}`}
+              aria-pressed={tab === group.value}
+              onClick={() => choose({ state: group.value })}
+              title={group.hint}
             >
-              {filter.label}
+              {group.label}
             </button>
           ))}
         </div>
-        <div className="filter-controls">
-        <label className="filter-search">
-          <span className="filter-agent-label">Search</span>
-          <input
-            className="input"
-            type="search"
-            value={search}
-            aria-label="Search requests"
-            placeholder="Title, vendor, agent or requester"
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
-        <label className="filter-agent">
-          <span className="filter-agent-label">Agent</span>
-          <select
-            className="select"
-            value={agentId}
-            onChange={(event) => choose({ agent: event.target.value })}
-          >
-            <option value="">All agents</option>
-            {(agents ?? []).map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="filter-when">
-          <span className="filter-agent-label">When</span>
-          <select
-            className="select"
-            value={period}
-            aria-label="Filter by day"
-            title="Calendar days in your own time zone"
-            onChange={(event) => choose({ when: event.target.value })}
-          >
-            {WHEN_OPTIONS.map((option) => (
-              <option key={option.value || 'any'} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="filter-sort">
-          <span className="filter-agent-label">Order</span>
-          <select
-            className="select"
-            value={sort}
-            aria-label="Order requests"
-            onChange={(event) => choose({ sort: event.target.value })}
-          >
-            {SORT_OPTIONS.map((option) => (
-              <option key={option.value || 'priority'} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="inbox-filters">
+          <label className="inbox-search">
+            <span className="sr-only">Search requests</span>
+            <input
+              className="input"
+              type="search"
+              value={search}
+              placeholder="Search title, merchant, agent"
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+          <label className="inbox-filter">
+            <span className="sr-only">Filter by agent</span>
+            <select
+              className="select"
+              value={agentId}
+              aria-label="Filter by agent"
+              onChange={(event) => choose({ agent: event.target.value })}
+            >
+              <option value="">All agents</option>
+              {(agents ?? []).map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="inbox-filter">
+            <span className="sr-only">Filter by day</span>
+            <select
+              className="select"
+              value={period}
+              aria-label="Filter by day"
+              title="Calendar days in your own time zone"
+              onChange={(event) => choose({ when: event.target.value })}
+            >
+              {WHEN_OPTIONS.map((option) => (
+                <option key={option.value || 'any'} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="inbox-filter">
+            <span className="sr-only">Order requests</span>
+            <select
+              className="select"
+              value={sort}
+              aria-label="Order requests"
+              onChange={(event) => choose({ sort: event.target.value })}
+            >
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value || 'priority'} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </motion.div>
 
@@ -380,15 +386,21 @@ export function Inbox() {
               <table className="inbox-table">
                 <thead>
                   <tr>
-                    <th scope="col">Request</th>
-                    <th scope="col">Agent</th>
+                    <th scope="col" className="col-request">
+                      Request
+                    </th>
+                    <th scope="col" className="num col-amount">
+                      Amount
+                    </th>
+                    <th scope="col" className="col-agent">
+                      Agent
+                    </th>
                     <th scope="col" className="col-source">
                       Source
                     </th>
-                    <th scope="col" className="num">
-                      Amount
+                    <th scope="col" className="col-status">
+                      Status
                     </th>
-                    <th scope="col">Status</th>
                     <th scope="col" className="num col-created">
                       Created
                     </th>
@@ -400,14 +412,14 @@ export function Inbox() {
                       <td>
                         <span className="skel" style={{ width: '64%', height: 12 }} />
                       </td>
+                      <td className="num">
+                        <span className="skel" style={{ width: 52, height: 10 }} />
+                      </td>
                       <td className="col-agent">
                         <span className="skel" style={{ width: '72%', height: 10 }} />
                       </td>
                       <td className="col-source">
                         <span className="skel" style={{ width: '54%', height: 10 }} />
-                      </td>
-                      <td className="num">
-                        <span className="skel" style={{ width: 52, height: 10 }} />
                       </td>
                       <td>
                         <span className="skel" style={{ width: 68, height: 10 }} />
@@ -435,13 +447,13 @@ export function Inbox() {
           <div className="empty inbox-empty">
             <p className="empty-title">{empty.title}</p>
             <p className="empty-note">{empty.note}</p>
-            {filtered || sort ? (
+            {filtered ? (
               <button
                 type="button"
                 className="btn btn-secondary btn-small"
                 onClick={() => {
                   setSearch('')
-                  choose({ status: '', agent: '', sort: '', q: '', when: '' })
+                  choose({ state: '', agent: '', sort: '', q: '', when: '' })
                 }}
               >
                 Show all requests
@@ -459,8 +471,24 @@ export function Inbox() {
                 </caption>
                 <thead>
                   <tr>
-                    <th scope="col">Request</th>
-                    <th scope="col" aria-sort={ariaSort(sort, 'agent')}>
+                    <th scope="col" className="col-request">
+                      Request
+                    </th>
+                    <th scope="col" className="num col-amount" aria-sort={ariaSort(sort, 'amount')}>
+                      <button
+                        type="button"
+                        className={`inbox-sort${isSorted(sort, 'amount') ? ' is-on' : ''}`}
+                        aria-label={sortLabel(sort, 'amount')}
+                        title={sortLabel(sort, 'amount')}
+                        onClick={() => choose({ sort: nextSort(sort, 'amount') })}
+                      >
+                        Amount
+                        <span className="sort-mark" aria-hidden="true">
+                          {sortMark(sort, 'amount')}
+                        </span>
+                      </button>
+                    </th>
+                    <th scope="col" className="col-agent" aria-sort={ariaSort(sort, 'agent')}>
                       <button
                         type="button"
                         className={`inbox-sort${isSorted(sort, 'agent') ? ' is-on' : ''}`}
@@ -477,22 +505,14 @@ export function Inbox() {
                     <th scope="col" className="col-source">
                       Source
                     </th>
-                    <th scope="col" className="num" aria-sort={ariaSort(sort, 'amount')}>
-                      <button
-                        type="button"
-                        className={`inbox-sort${isSorted(sort, 'amount') ? ' is-on' : ''}`}
-                        aria-label={sortLabel(sort, 'amount')}
-                        title={sortLabel(sort, 'amount')}
-                        onClick={() => choose({ sort: nextSort(sort, 'amount') })}
-                      >
-                        Amount
-                        <span className="sort-mark" aria-hidden="true">
-                          {sortMark(sort, 'amount')}
-                        </span>
-                      </button>
+                    <th scope="col" className="col-status">
+                      Status
                     </th>
-                    <th scope="col">Status</th>
-                    <th scope="col" className="num col-created" aria-sort={ariaSort(sort, 'created')}>
+                    <th
+                      scope="col"
+                      className="num col-created"
+                      aria-sort={ariaSort(sort, 'created')}
+                    >
                       <button
                         type="button"
                         className={`inbox-sort${isSorted(sort, 'created') ? ' is-on' : ''}`}
@@ -531,23 +551,20 @@ export function Inbox() {
                           {row.line_count === 1 ? 'line' : 'lines'}
                         </span>
                       </td>
-                      <td className="col-agent inbox-agent">
-                        {row.agent.name}
-                        <span className="inbox-agent-tag mono">{row.agent.tag}</span>
-                      </td>
-                      <td className="col-source inbox-source">
-                        {sourceLabel(row.origin, row.routine_name)}
-                      </td>
                       <td className="num inbox-amount">
                         {row.line_count ? money(row.total_cents, row.currency) : '—'}
                       </td>
-                      <td className="inbox-status">
+                      <td className="col-agent inbox-agent">{row.agent.name}</td>
+                      <td className="col-source inbox-source">
+                        {sourceLabel(row.origin, row.routine_name)}
+                      </td>
+                      <td className="col-status inbox-status">
                         <StatusMark
                           status={row.status}
                           label={row.consent_expired ? 'Consent expired' : undefined}
                         />
                       </td>
-                      <td className="num col-created inbox-when mono">
+                      <td className="num col-created inbox-when">
                         {whenText(row.created_at)}
                       </td>
                     </tr>
@@ -556,7 +573,7 @@ export function Inbox() {
               </table>
             </div>
 
-            {/* the same rows as a list on a phone: title first, nothing invented */}
+            {/* the same rows as a list on a phone: title and money first */}
             <ul className="inbox-mobile">
               {rows.map((row) => (
                 <li key={row.id}>
@@ -564,8 +581,7 @@ export function Inbox() {
                     <span className="inbox-mobile-main">
                       <b>{row.title}</b>
                       <span className="inbox-meta mono">
-                        {requestLabel(row.seq)} · {row.agent.name} ·{' '}
-                        {sourceLabel(row.origin, row.routine_name)}
+                        {requestLabel(row.seq)} · {row.agent.name} · {age(row.created_at)}
                       </span>
                     </span>
                     <span className="inbox-mobile-side">
@@ -589,7 +605,9 @@ export function Inbox() {
             <span className="mono">
               1–{rows.length} of {total}
             </span>
-            <span className="inbox-summary-total mono">{money(sumCents)} total</span>
+            <span className="inbox-summary-total mono">
+              {money(sumCents)} {sumWord(tab)}
+            </span>
           </div>
         ) : null}
 

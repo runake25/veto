@@ -1,15 +1,16 @@
-"""Inbox filters: line-aware search, UTC day bounds, and the viewer's timezone."""
+"""Inbox filters: line-aware search, UTC day bounds, viewer timezone, state groups."""
 from __future__ import annotations
 
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from server_harness import load_server  # noqa: E402
-from veto.store import Store  # noqa: E402
+from server_harness import StubHandler, load_server  # noqa: E402
+from veto.store import STATE_GROUPS, Store  # noqa: E402
 
 
 def line(title="Bamboo toilet paper", vendor="amazon.com", category="pantry",
@@ -35,7 +36,7 @@ class InboxFilterStoreTests(unittest.TestCase):
             self.workspace["id"], {"name": "Pantry runner", "tag": "pantry"}
         )
 
-    def add_request(self, *, title="A cart", text="", requester="Priya", agent=None,
+    def add_request(self, *, title="A cart", text="", requester="Caroline", agent=None,
                     status="captured", total_cents=1_000,
                     created_at="2026-10-26T12:00:00+00:00", lines=None) -> dict:
         record = self.store.create_request(
@@ -266,6 +267,170 @@ class InboxDateBoundsTests(unittest.TestCase):
             (created_at, record["id"]),
         )
         return record
+
+
+class StateGroupStoreTests(unittest.TestCase):
+    """Round 4: the five Inbox tabs are five status sets, one SQL filter."""
+
+    STATUSES = (
+        ("awaiting", 1_000),
+        ("approved", 500),
+        ("captured", 2_000),
+        ("blocked", 300),
+        ("vetoed", 400),
+        ("voided", 700),
+    )
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.store = Store(Path(self._tmp.name) / "veto.db")
+        self.addCleanup(self.store.close)
+        self.workspace = self.store.create_workspace("Bracken & Field")
+        self.agent = self.store.create_agent(
+            self.workspace["id"], {"name": "Pantry runner"}
+        )
+        self.records = {}
+        for status, total in self.STATUSES:
+            self.records[status] = self.store.create_request(
+                self.workspace["id"],
+                self.agent["id"],
+                origin="web",
+                status=status,
+                title=f"{status} cart",
+                total_cents=total,
+                subtotal_cents=total,
+            )
+
+    def ids(self, **filters) -> list[str]:
+        rows = self.store.list_requests(self.workspace["id"], limit=100, **filters)
+        return [row["id"] for row in rows]
+
+    def test_group_mapping(self) -> None:
+        self.assertEqual(
+            STATE_GROUPS,
+            {
+                "needs": ("awaiting", "approved"),
+                "settled": ("captured",),
+                "refused": ("blocked", "vetoed"),
+                "withdrawn": ("voided",),
+            },
+        )
+
+    def test_each_group_selects_its_statuses(self) -> None:
+        expectations = {
+            "needs": {"awaiting", "approved"},
+            "settled": {"captured"},
+            "refused": {"blocked", "vetoed"},
+            "withdrawn": {"voided"},
+        }
+        for state, statuses in expectations.items():
+            with self.subTest(state=state):
+                self.assertEqual(
+                    set(self.ids(state=state)),
+                    {self.records[status]["id"] for status in statuses},
+                )
+
+    def test_counts_and_sums_respect_the_group(self) -> None:
+        self.assertEqual(self.store.count_requests(self.workspace["id"], state="needs"), 2)
+        self.assertEqual(self.store.sum_requests(self.workspace["id"], state="needs"), 1_500)
+        self.assertEqual(
+            self.store.count_requests(self.workspace["id"], state="refused"), 2
+        )
+        self.assertEqual(
+            self.store.sum_requests(self.workspace["id"], state="refused"), 700
+        )
+        self.assertEqual(
+            self.store.sum_requests(self.workspace["id"], state="settled"), 2_000
+        )
+        self.assertEqual(
+            self.store.sum_requests(self.workspace["id"], state="withdrawn"), 700
+        )
+
+    def test_state_composes_with_status(self) -> None:
+        found = self.ids(state="needs", status="awaiting")
+        self.assertEqual(found, [self.records["awaiting"]["id"]])
+        self.assertEqual(self.ids(state="settled", status="blocked"), [])
+
+    def test_state_composes_with_q(self) -> None:
+        self.assertEqual(
+            self.ids(state="refused", q="blocked"),
+            [self.records["blocked"]["id"]],
+        )
+
+    def test_state_composes_with_sort(self) -> None:
+        self.assertEqual(
+            self.ids(state="needs", sort="amount_desc"),
+            [self.records["awaiting"]["id"], self.records["approved"]["id"]],
+        )
+
+    def test_unknown_state_raises_from_the_store(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.list_requests(self.workspace["id"], state="bogus")
+
+
+class StateGroupHandlerTests(unittest.TestCase):
+    """The HTTP layer: validation, envelope and the grouped total/sum."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = load_server()
+
+    def setUp(self) -> None:
+        suffix = uuid.uuid4().hex[:8]
+        self.workspace = self.server.STORE.create_workspace(f"States {suffix}")
+        self.agent = self.server.STORE.create_agent(
+            self.workspace["id"], {"name": f"State agent {suffix}"}
+        )
+        for status, total in StateGroupStoreTests.STATUSES:
+            self.server.STORE.create_request(
+                self.workspace["id"], self.agent["id"], origin="web", status=status,
+                title=f"{status} cart", total_cents=total, subtotal_cents=total,
+            )
+        session = {
+            "user": {"id": "usr_state_test", "name": "State Test", "role": "admin"},
+            "workspace": self.workspace,
+        }
+        self.stub = StubHandler(self.server, session)
+
+    def list_requests(self, query: str = "") -> dict:
+        self.stub.path = f"/api/v1/requests?{query}" if query else "/api/v1/requests"
+        self.stub.response = None
+        self.server.Handler._v1_list_requests(self.stub)
+        return self.stub.response
+
+    def test_state_groups_end_to_end(self) -> None:
+        data = self.list_requests("state=needs")["data"]
+        self.assertEqual(data["state"], "needs")
+        self.assertEqual(data["total"], 2)
+        self.assertEqual(data["returned"], 2)
+        self.assertEqual(data["sum_cents"], 1_500)
+        self.assertEqual({row["status"] for row in data["requests"]},
+                         {"awaiting", "approved"})
+
+    def test_all_and_absent_state_are_the_same(self) -> None:
+        everything = self.list_requests()
+        self.assertEqual(everything["data"]["state"], None)
+        self.assertEqual(everything["data"]["total"], 6)
+        explicit_all = self.list_requests("state=all")
+        self.assertEqual(explicit_all["data"]["state"], None)
+        self.assertEqual(explicit_all["data"]["total"], 6)
+
+    def test_invalid_state_is_400_invalid_state(self) -> None:
+        with self.assertRaises(self.server.ApiError) as caught:
+            self.list_requests("state=everything")
+        self.assertEqual(caught.exception.status, 400)
+        self.assertEqual(caught.exception.code, "invalid_state")
+
+    def test_legacy_status_param_still_works(self) -> None:
+        data = self.list_requests("status=captured")["data"]
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["sum_cents"], 2_000)
+        self.assertEqual(data["requests"][0]["status"], "captured")
+        # the synthetic expired tab keeps its old semantics instead of 400ing
+        expired = self.list_requests("status=expired")
+        self.assertEqual(expired["status"], 200)
+        self.assertEqual(expired["data"]["total"], 0)  # these carts have no consent
 
 
 if __name__ == "__main__":

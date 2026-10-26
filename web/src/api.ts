@@ -703,6 +703,21 @@ export const api = {
       `/api/v1/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
     ),
   integrations: () => request<IntegrationsData>('/api/v1/integrations'),
+  updateMe: (name: string) =>
+    request<{ user: User }>('/api/v1/me', {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }).then((d) => d.user),
+  updateWorkspace: (name: string) =>
+    request<{ workspace: Workspace }>('/api/v1/workspace', {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }).then((d) => d.workspace),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post<Record<string, never>>('/api/v1/me/password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
   mintKey: (agentId: string) =>
     post<{ key: ApiKey; secret: string; note: string }>(
       `/api/v1/agents/${encodeURIComponent(agentId)}/keys`,

@@ -35,10 +35,7 @@ export function NewAgent() {
       <motion.header className="screen-head" variants={m.riseIn}>
         <div>
           <h1>New agent</h1>
-          <p>
-            Six fields set the whole policy. Everything the agent buys is judged against them
-            before money moves.
-          </p>
+          <p>Set the budget, the caps and the point where a person signs.</p>
         </div>
       </motion.header>
 

@@ -34,6 +34,30 @@
   src: url("../assets/fonts/mono400.woff2") format("woff2");
 }
 
+/* Round 4: the document voice. Serif is for titles only — a signed page, a
+   ledger heading. It never sets controls, rows or money. */
+@font-face {
+  font-family: "IBM Plex Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/serif400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Serif";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/serif500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Serif";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../assets/fonts/serif600.woff2") format("woff2");
+}
+
 :root {
   /* ground / surfaces — a cool graphite desk, not warm stone */
   --ground: #e9ebee;
@@ -89,6 +113,7 @@
   --row-height: 48px;
 
   --font: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --display: "IBM Plex Serif", "Iowan Old Style", Georgia, serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
 
   /* handfeel: graphite desk + paper sheet -> click for controls, stamp for conclusions */

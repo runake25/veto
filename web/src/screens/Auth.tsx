@@ -1,7 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { api, ApiError, type Me, type SessionData } from '../api'
-import { FlowRail } from '../components/FlowRail'
 import { Wordmark } from '../components/Logo'
 import { Check, PressButton, Spinner } from '../components/PressButton'
 import { motionSet } from '../components/motion'
@@ -29,10 +28,30 @@ function Field({
   )
 }
 
+const DEMO = {
+  approver: 'caroline@brackenfield.demo',
+  admin: 'ops@brackenfield.demo',
+  password: 'veto-demo-2026',
+}
+
+const FACE: Record<Mode, { title: string; line: string; cta: string; switchTo: string }> = {
+  signin: {
+    title: 'Sign in',
+    line: 'Approve what your agents propose.',
+    cta: 'Sign in',
+    switchTo: 'Create a workspace',
+  },
+  signup: {
+    title: 'Create a workspace',
+    line: 'Set up a workspace for your agents.',
+    cta: 'Create workspace',
+    switchTo: 'Sign in',
+  },
+}
+
 /**
- * The door. Two ways in: a real account (B2B sign-up) or the seeded demo workspace,
- * which exists so a judge can interact in seconds. The left half is the product
- * explaining its own loop rather than a marketing panel.
+ * The door. Two ways in: a real workspace, or the seeded demo. The page says one
+ * thing above the form and keeps the rest (demo logins, sandbox facts) quiet.
  */
 export function Auth({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
   const [mode, setMode] = useState<Mode>('signin')
@@ -46,6 +65,7 @@ export function Auth({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
   const busy = status !== 'idle' || demoBusy
+  const face = FACE[mode]
 
   const land = async (session: SessionData) => {
     setStatus('success')
@@ -95,231 +115,195 @@ export function Auth({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
     }
   }
 
-  const switchMode = (next: Mode) => {
-    if (busy || next === mode) return
+  const switchMode = () => {
+    if (busy) return
     setError(null)
-    setMode(next)
+    setMode((current) => (current === 'signin' ? 'signup' : 'signin'))
   }
-
-  const stamp = reduce ? {} : { scale: status === 'success' ? [1, 1.015, 1] : 1 }
 
   return (
     <main className="ground auth-ground">
-      <motion.div className="auth-sheet" variants={m.sheetIn} initial="hidden" animate="show">
-        <motion.section
-          className="auth-left"
-          variants={m.stagger}
-          initial="hidden"
-          animate="show"
-          aria-labelledby="auth-title"
-        >
-          <motion.div variants={m.riseIn}>
-            <Wordmark />
-          </motion.div>
+      <motion.section
+        className="auth-sheet"
+        variants={m.sheetIn}
+        initial="hidden"
+        animate="show"
+        aria-labelledby="auth-title"
+      >
+        <header className="auth-brand">
+          <Wordmark />
+          <span className="auth-env mono">PayPal sandbox · USD</span>
+        </header>
 
-          <motion.h1 id="auth-title" className="auth-title" variants={m.riseIn}>
-            Agents spend.
-            <br />
-            Humans govern.
-          </motion.h1>
+        <div className="auth-body">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={mode}
+              className="auth-intro"
+              initial={{ opacity: 0, y: reduce ? 0 : 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, transition: { duration: 0.1 } }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <h1 id="auth-title" className="display auth-title">
+                {face.title}
+              </h1>
+              <p className="auth-line">{face.line}</p>
+            </motion.div>
+          </AnimatePresence>
 
-          <motion.p className="auth-lead" variants={m.riseIn}>
-            Veto sits between an AI agent and the company wallet. Every purchase is priced
-            against real products, judged by that agent&apos;s own rules, and signed by a
-            person before money moves.
-          </motion.p>
-
-          <FlowRail />
-
-          <motion.footer className="auth-meta" variants={m.riseIn}>
-            <span className="chip">PayPal sandbox</span>
-            <span className="chip">USD</span>
-            <span className="auth-meta-note mono">no real charges</span>
-          </motion.footer>
-        </motion.section>
-
-        <motion.section className="auth-right" animate={stamp} transition={{ duration: 0.28 }}>
-          <motion.div
-            className="auth-panel"
-            variants={m.stagger}
-            initial="hidden"
-            animate="show"
-          >
-            <motion.div className="seg" role="tablist" aria-label="Access" variants={m.riseIn}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode === 'signin'}
-                className={`seg-btn${mode === 'signin' ? ' is-on' : ''}`}
-                onClick={() => switchMode('signin')}
-                disabled={busy}
-              >
-                {mode === 'signin' && (
-                  <motion.span
-                    layoutId="seg-thumb"
-                    className="seg-thumb"
-                    transition={
-                      reduce ? { duration: 0 } : { type: 'spring', stiffness: 380, damping: 32 }
-                    }
-                  />
-                )}
-                <span className="seg-label">Sign in</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode === 'signup'}
-                className={`seg-btn${mode === 'signup' ? ' is-on' : ''}`}
-                onClick={() => switchMode('signup')}
-                disabled={busy}
+          <form className="auth-form" onSubmit={submit} noValidate>
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={mode}
+                className="auth-fields"
+                initial={{ opacity: 0, y: reduce ? 0 : 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, transition: { duration: 0.1 } }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
               >
                 {mode === 'signup' && (
-                  <motion.span
-                    layoutId="seg-thumb"
-                    className="seg-thumb"
-                    transition={
-                      reduce ? { duration: 0 } : { type: 'spring', stiffness: 380, damping: 32 }
-                    }
-                  />
+                  <>
+                    <Field label="Workspace" hint="company or team">
+                      <input
+                        className="input"
+                        value={workspaceName}
+                        onChange={(e) => setWorkspaceName(e.target.value)}
+                        placeholder="Bracken & Field"
+                        autoComplete="organization"
+                        required
+                        disabled={busy}
+                      />
+                    </Field>
+                    <Field label="Your name">
+                      <input
+                        className="input"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="Caroline Hayes"
+                        autoComplete="name"
+                        required
+                        disabled={busy}
+                      />
+                    </Field>
+                  </>
                 )}
-                <span className="seg-label">Create workspace</span>
-              </button>
-            </motion.div>
+                <Field label="Email">
+                  <input
+                    className="input"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@company.com"
+                    autoComplete="email"
+                    required
+                    disabled={busy}
+                  />
+                </Field>
+                <Field
+                  label="Password"
+                  hint={mode === 'signup' ? 'at least 8 characters' : undefined}
+                >
+                  <input
+                    className="input"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                    required
+                    minLength={mode === 'signup' ? 8 : undefined}
+                    disabled={busy}
+                  />
+                </Field>
+              </motion.div>
+            </AnimatePresence>
 
-            <form className="auth-form" onSubmit={submit} noValidate>
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.div
-                  key={mode}
-                  className="auth-fields"
-                  initial={{ opacity: 0, y: reduce ? 0 : 5 }}
+            <AnimatePresence initial={false}>
+              {error ? (
+                <motion.p
+                  className="form-error"
+                  role="alert"
+                  initial={{ opacity: 0, y: reduce ? 0 : -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, transition: { duration: 0.1 } }}
-                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
                 >
-                  {mode === 'signup' && (
+                  {error}
+                </motion.p>
+              ) : null}
+            </AnimatePresence>
+
+            <PressButton type="submit" loading={status === 'busy'} className="auth-submit">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span
+                  key={status}
+                  className="btn-face"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0, transition: { duration: 0.08 } }}
+                  transition={{ duration: 0.14 }}
+                >
+                  {status === 'idle' && face.cta}
+                  {status === 'busy' && (
                     <>
-                      <Field label="Workspace" hint="company or team">
-                        <input
-                          className="input"
-                          value={workspaceName}
-                          onChange={(e) => setWorkspaceName(e.target.value)}
-                          placeholder="Bracken & Field"
-                          autoComplete="organization"
-                          required
-                          disabled={busy}
-                        />
-                      </Field>
-                      <Field label="Your name">
-                        <input
-                          className="input"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          placeholder="Priya Raman"
-                          autoComplete="name"
-                          required
-                          disabled={busy}
-                        />
-                      </Field>
+                      <Spinner label="signing in" />
+                      {mode === 'signin' ? 'Signing in…' : 'Creating workspace…'}
                     </>
                   )}
-                  <Field label="Email">
-                    <input
-                      className="input"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="you@company.com"
-                      autoComplete="email"
-                      required
-                      disabled={busy}
-                    />
-                  </Field>
-                  <Field
-                    label="Password"
-                    hint={mode === 'signup' ? 'at least 8 characters' : undefined}
-                  >
-                    <input
-                      className="input"
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-                      required
-                      minLength={mode === 'signup' ? 8 : undefined}
-                      disabled={busy}
-                    />
-                  </Field>
-                </motion.div>
+                  {status === 'success' && (
+                    <>
+                      <Check />
+                      {mode === 'signin' ? 'Signed in' : 'Workspace created'}
+                    </>
+                  )}
+                </motion.span>
               </AnimatePresence>
+            </PressButton>
+          </form>
 
-              <AnimatePresence initial={false}>
-                {error ? (
-                  <motion.p
-                    className="form-error"
-                    role="alert"
-                    initial={{ opacity: 0, y: reduce ? 0 : -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, transition: { duration: 0.1 } }}
-                  >
-                    {error}
-                  </motion.p>
-                ) : null}
-              </AnimatePresence>
+          <p className="auth-switch">
+            {mode === 'signin' ? 'New to Veto?' : 'Already have a workspace?'}{' '}
+            <button type="button" className="auth-switch-btn" onClick={switchMode} disabled={busy}>
+              {face.switchTo}
+            </button>
+          </p>
 
-              <PressButton type="submit" loading={status === 'busy'} className="submit">
-                <AnimatePresence mode="wait" initial={false}>
-                  <motion.span
-                    key={status}
-                    className="btn-face"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0, transition: { duration: 0.08 } }}
-                    transition={{ duration: 0.14 }}
-                  >
-                    {status === 'idle' && (mode === 'signin' ? 'Sign in' : 'Create workspace')}
-                    {status === 'busy' && (
-                      <>
-                        <Spinner label="signing in" />
-                        {mode === 'signin' ? 'Signing in…' : 'Creating workspace…'}
-                      </>
-                    )}
-                    {status === 'success' && (
-                      <>
-                        <Check />
-                        {mode === 'signin' ? 'Signed in' : 'Workspace created'}
-                      </>
-                    )}
-                  </motion.span>
-                </AnimatePresence>
-              </PressButton>
-            </form>
+          <div className="auth-demo">
+            <div className="auth-rule" aria-hidden="true">
+              <span>or use the demo</span>
+            </div>
+            <PressButton variant="secondary" onClick={() => void demo()} loading={demoBusy}>
+              {demoBusy ? (
+                <>
+                  <Spinner label="opening the demo" />
+                  Opening the demo…
+                </>
+              ) : (
+                'Open the demo workspace'
+              )}
+            </PressButton>
+            <dl className="auth-demo-cred">
+              <div>
+                <dt>Approver</dt>
+                <dd className="mono">{DEMO.approver}</dd>
+              </div>
+              <div>
+                <dt>Admin</dt>
+                <dd className="mono">{DEMO.admin}</dd>
+              </div>
+              <div>
+                <dt>Password</dt>
+                <dd className="mono">{DEMO.password}</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
 
-            <motion.div className="auth-sep" variants={m.riseIn}>
-              <span>or</span>
-            </motion.div>
-
-            <motion.div variants={m.riseIn}>
-              <PressButton variant="secondary" onClick={() => void demo()} loading={demoBusy}>
-                {demoBusy ? (
-                  <>
-                    <Spinner label="opening the demo" />
-                    Opening the demo…
-                  </>
-                ) : (
-                  'Open the demo workspace'
-                )}
-              </PressButton>
-              <p className="auth-small">Seeded example workspace and agents. No sign-up needed.</p>
-            </motion.div>
-          </motion.div>
-        </motion.section>
-      </motion.div>
-
-      <p className="auth-legend">
-        Sandbox environment · money moves only from the vaulted <span className="mono">PayPal</span>{' '}
-        wallet
-      </p>
+        <footer className="auth-foot">
+          <span className="mono">priced → judged → signed → captured</span>
+          <span>No real charges.</span>
+        </footer>
+      </motion.section>
     </main>
   )
 }

@@ -47,6 +47,15 @@ _ANALYTICS_AGENT_KEYS = (
 # final authority; this tuple gives callers a readable error before SQLite does.
 ROLES = ("admin", "approver", "viewer")
 
+# The Inbox navigates by five groups, not by seven raw statuses: one tab is one
+# decision a human can act on, and the group is the SQL that backs it.
+STATE_GROUPS = {
+    "needs": ("awaiting", "approved"),
+    "settled": ("captured",),
+    "refused": ("blocked", "vetoed"),
+    "withdrawn": ("voided",),
+}
+
 # Columns a caller may change through update_workspace().
 WORKSPACE_UPDATABLE = (
     "name",
@@ -55,6 +64,11 @@ WORKSPACE_UPDATABLE = (
     "default_agent_id",
     "slack_team_id",
 )
+
+# Columns a caller may change through update_user(). Role changes have no
+# endpoint in this build; email only changes through the demo-identity migration.
+USER_UPDATABLE = ("name", "email", "password_hash")
+
 
 # Scalar agent columns a caller may change through update_agent(). The child
 # lists (vendors/categories/rules/overrides) are replaced through their own
@@ -627,6 +641,28 @@ class Store:
             )
         return int(row["n"]) if row else 0
 
+    def update_user(self, user_id: str, **fields: Any) -> dict | None:
+        """Update a user's mutable identity fields; returns the fresh row or None.
+
+        Only ``USER_UPDATABLE`` columns are writable. Email is normalised like
+        ``create_user`` does, so the UNIQUE constraint stays case-insensitive.
+        """
+        unknown = set(fields) - set(USER_UPDATABLE)
+        if unknown:
+            raise ValueError(f"unknown user fields: {', '.join(sorted(unknown))}")
+        if not fields:
+            return self.user(user_id)
+        if "name" in fields:
+            fields["name"] = str(fields["name"] or "").strip()
+        if "email" in fields:
+            fields["email"] = str(fields["email"] or "").strip().lower()
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        cur = self.execute(
+            f"UPDATE users SET {assignments} WHERE id = ?",
+            list(fields.values()) + [user_id],
+        )
+        return self.user(user_id) if cur.rowcount else None
+
     # -- sessions -------------------------------------------------------
     def create_session(
         self,
@@ -1164,6 +1200,7 @@ class Store:
         workspace_id: str,
         *,
         status: str | None = None,
+        state: str | None = None,
         agent_id: str | None = None,
         before: str | None = None,
         limit: int = 50,
@@ -1180,6 +1217,11 @@ class Store:
         ``sort`` is a closed set of orders (see ``REQUEST_SORTS``); an unknown
         value keeps the default so a URL cannot inject SQL. The default
         (``priority``) is the inbox order: waiting requests first, then newest.
+
+        ``state`` is one of the Inbox's five groups (``needs`` -> awaiting +
+        approved, ``settled`` -> captured, ``refused`` -> blocked + vetoed,
+        ``withdrawn`` -> voided). It composes with ``status`` as an AND, so the
+        legacy raw-status links keep working beside the new grouped tabs.
 
         ``q`` matches the request title/text, the agent name, the requester and
         any line's vendor/title. ``created_from`` is inclusive and
@@ -1200,6 +1242,7 @@ class Store:
         where, params = self._request_filter(
             workspace_id,
             status=status,
+            state=state,
             agent_id=agent_id,
             q=q,
             consent_state=consent_state,
@@ -1237,6 +1280,7 @@ class Store:
         status: str | None = None,
         agent_id: str | None = None,
         *,
+        state: str | None = None,
         q: str | None = None,
         consent_state: str | None = None,
         created_from: str | None = None,
@@ -1244,7 +1288,7 @@ class Store:
     ) -> int:
         """Total of the filtered requests, so a list can reconcile its own money."""
         where, params = self._request_filter(
-            workspace_id, status=status, agent_id=agent_id, q=q,
+            workspace_id, status=status, agent_id=agent_id, state=state, q=q,
             consent_state=consent_state,
             created_from=created_from, created_before=created_before,
         )
@@ -1256,6 +1300,7 @@ class Store:
         workspace_id: str,
         *,
         status: str | None = None,
+        state: str | None = None,
         agent_id: str | None = None,
         q: str | None = None,
         consent_state: str | None = None,
@@ -1264,6 +1309,8 @@ class Store:
     ) -> tuple[str, list[Any]]:
         """The WHERE shared by list, count and sum so a filtered list reconciles.
 
+        ``state`` maps one Inbox group to its raw statuses via ``STATE_GROUPS``
+        (unknown values raise ``ValueError`` -- the HTTP layer validates first).
         ``q`` is one lowercase substring needle applied to the request title,
         its text, the agent name, the requester, and any line's vendor or title.
         ``created_from`` (inclusive) and ``created_before`` (exclusive) are ISO
@@ -1277,6 +1324,13 @@ class Store:
         if status:
             sql += " AND r.status = ?"
             params.append(status)
+        if state:
+            statuses = STATE_GROUPS.get(state)
+            if statuses is None:
+                raise ValueError(f"unknown request state group: {state}")
+            placeholders = ", ".join("?" for _ in statuses)
+            sql += f" AND r.status IN ({placeholders})"
+            params.extend(statuses)
         if agent_id:
             sql += " AND r.agent_id = ?"
             params.append(agent_id)
@@ -1309,13 +1363,14 @@ class Store:
         status: str | None = None,
         agent_id: str | None = None,
         *,
+        state: str | None = None,
         q: str | None = None,
         consent_state: str | None = None,
         created_from: str | None = None,
         created_before: str | None = None,
     ) -> int:
         where, params = self._request_filter(
-            workspace_id, status=status, agent_id=agent_id, q=q,
+            workspace_id, status=status, agent_id=agent_id, state=state, q=q,
             consent_state=consent_state,
             created_from=created_from, created_before=created_before,
         )

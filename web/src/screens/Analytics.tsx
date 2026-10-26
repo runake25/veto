@@ -56,26 +56,6 @@ function shortMoney(cents: number): string {
   return `$${dollars.toFixed(dollars % 1 === 0 ? 0 : 2)}`
 }
 
-function Stat({
-  label,
-  value,
-  note,
-  tone,
-}: {
-  label: string
-  value: string
-  note: string
-  tone?: 'pos' | 'wait' | 'neg'
-}) {
-  return (
-    <div className="stat">
-      <p className="stat-label">{label}</p>
-      <p className={`stat-value${tone ? ` is-${tone}` : ''}`}>{value}</p>
-      <p className="stat-note">{note}</p>
-    </div>
-  )
-}
-
 function SeriesChart({ data }: { data: AnalyticsData }) {
   if (!data.series.length) return null
   const max = Math.max(...data.series.map((day) => day.captured_cents), 0)
@@ -84,49 +64,49 @@ function SeriesChart({ data }: { data: AnalyticsData }) {
   const activeDays = days.filter((day) => day.captured_cents > 0).length
 
   return (
-    <section className="card">
+    <section className="card chart-card">
       <header className="card-head">
         <h2>Settled by day</h2>
-        <span className="card-note mono">
-          {max ? `${money(data.totals.captured_cents)} captured` : 'no captures in range'}
-        </span>
+        <span className="card-note mono">{days.length} days</span>
       </header>
-      <div className="chart-wrap">
-        <div className="chart" role="img" aria-label="Captured spend per day, in dollars">
-          {days.map((day, index) => {
-            const height = max ? Math.max(2, Math.round((day.captured_cents / max) * 100)) : 2
-            return (
-              <span
-                className={`chart-col${day.captured_cents ? ' is-on' : ''}`}
-                key={day.date}
-                title={`${day.date}: ${money(day.captured_cents)} · ${day.requests} ${
-                  day.requests === 1 ? 'request' : 'requests'
-                }`}
-              >
-                <span className="chart-bar" style={{ height: `${height}%` }} />
-                {day.captured_cents && height >= 22 && activeDays <= 4 ? (
-                  <span
-                    className={`chart-value mono${index === 0 ? ' is-first' : ''}${
-                      index === days.length - 1 ? ' is-last' : ''
-                    }`}
-                    style={{ bottom: `calc(${height}% + 4px)` }}
-                  >
-                    {shortMoney(day.captured_cents)}
-                  </span>
-                ) : null}
-                {labelAt.has(index) ? (
-                  <span className="chart-tick mono">{dayLabel(day.date)}</span>
-                ) : null}
-              </span>
-            )
-          })}
+      {max ? (
+        <div className="chart-wrap">
+          <div className="chart" role="img" aria-label="Captured spend per day, in dollars">
+            {days.map((day, index) => {
+              const height = Math.max(2, Math.round((day.captured_cents / max) * 100))
+              return (
+                <span
+                  className={`chart-col${day.captured_cents ? ' is-on' : ''}`}
+                  key={day.date}
+                  title={`${day.date}: ${money(day.captured_cents)} · ${day.requests} ${
+                    day.requests === 1 ? 'request' : 'requests'
+                  }`}
+                >
+                  <span className="chart-bar" style={{ height: `${height}%` }} />
+                  {day.captured_cents && height >= 22 && activeDays <= 4 ? (
+                    <span
+                      className={`chart-value mono${index === 0 ? ' is-first' : ''}${
+                        index === days.length - 1 ? ' is-last' : ''
+                      }`}
+                      style={{ bottom: `calc(${height}% + 4px)` }}
+                    >
+                      {shortMoney(day.captured_cents)}
+                    </span>
+                  ) : null}
+                  {labelAt.has(index) ? (
+                    <span className="chart-tick mono">{dayLabel(day.date)}</span>
+                  ) : null}
+                </span>
+              )
+            })}
+          </div>
         </div>
-      </div>
-      <p className="card-footnote">
-        A capture is counted on the day the money moved, not the day the request was written.
-      </p>
+      ) : (
+        <p className="chart-empty">No captures in this range.</p>
+      )}
+      <p className="card-footnote">Counted on the day the money moved.</p>
       <details className="chart-table">
-        <summary>View the daily numbers</summary>
+        <summary>Daily numbers</summary>
         <div className="chart-table-scroll">
           <table>
             <caption className="sr-only">Captured spend by day, in dollars</caption>
@@ -272,13 +252,14 @@ export function Analytics() {
   }, [range.from, range.to, tick, reloadTick, markLoaded])
 
   const totals = data?.totals
+  const held = totals ? totals.awaiting + totals.approved : 0
 
   return (
-    <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
-      <motion.header className="screen-head" variants={m.riseIn}>
+    <motion.div className="screen analytics" variants={m.stagger} initial="hidden" animate="show">
+      <motion.header className="screen-head analytics-head" variants={m.riseIn}>
         <div>
           <h1>Analytics</h1>
-          <p>The same requests, added up. Captured money only counts when it moved.</p>
+          <p>What agents captured, held, and were stopped from spending.</p>
         </div>
         <div className="range-tabs" role="group" aria-label="Range">
           {RANGES.map((item) => (
@@ -304,152 +285,106 @@ export function Analytics() {
         <InlineError onRetry={() => setReloadTick((value) => value + 1)}>{error}</InlineError>
       ) : null}
 
-      <motion.div className="stats" variants={m.riseIn}>
-        <Stat
-          label="Settled"
-          value={totals ? money(totals.captured_cents) : '—'}
-          note={totals ? `${totals.captured} captured through PayPal` : ' '}
-          tone={totals && totals.captured_cents > 0 ? 'pos' : undefined}
-        />
-        <Stat
-          label="Held for a signature"
-          value={totals ? money(totals.pending_cents) : '—'}
-          note={
-            totals
-              ? totals.pending_cents > 0
-                ? `${totals.awaiting + totals.approved} ${
-                    totals.awaiting + totals.approved === 1 ? 'request' : 'requests'
-                  } not yet captured`
-                : 'nothing is held right now'
-              : ' '
-          }
-          tone={totals && totals.pending_cents > 0 ? 'wait' : undefined}
-        />
-        <Stat
-          label="Stopped"
-          value={totals ? money(totals.blocked_cents) : '—'}
-          note={
-            totals
-              ? `${totals.blocked} blocked · ${totals.vetoed} vetoed · zero moved`
-              : ' '
-          }
-        />
-        <Stat
-          label="Requests"
-          value={totals ? String(totals.requests) : '—'}
-          note={
-            totals
-              ? `${totals.auto} auto · ${totals.review} sent for review · ${totals.block} blocked`
-              : ' '
-          }
-        />
-      </motion.div>
-
       {!data && !error ? (
-        <>
-          <div className="stats stats-skel" aria-hidden="true">
-            {[0, 1, 2, 3].map((i) => (
-              <div className="stat" key={i}>
-                <span className="skel" style={{ width: '46%', height: 10 }} />
-                <span className="skel" style={{ width: '62%', height: 20, marginTop: 8 }} />
-                <span className="skel" style={{ width: '72%', height: 10, marginTop: 8 }} />
-              </div>
-            ))}
+        <div className="analytics-skel" aria-hidden="true">
+          <div className="money-lead is-skel">
+            <span className="skel" style={{ width: 180, height: 12 }} />
+            <span className="skel" style={{ width: 220, height: 40, marginTop: 10 }} />
+            <span className="skel" style={{ width: 140, height: 12, marginTop: 8 }} />
           </div>
-          <div className="card" aria-hidden="true">
+          <div className="card">
             <span className="skel" style={{ width: '28%', height: 16 }} />
-            <span className="skel" style={{ width: '100%', height: 118, marginTop: 14 }} />
-            <span className="skel" style={{ width: '44%', height: 10, marginTop: 12 }} />
+            <span className="skel" style={{ width: '100%', height: 150, marginTop: 14 }} />
           </div>
-          <div className="record-cols analytics-cols" aria-hidden="true">
+          <div className="analytics-grid" aria-hidden="true">
             {[0, 1].map((col) => (
-              <div className="record-col" key={col}>
-                {[0, 1].map((i) => (
-                  <div className="card" key={i}>
-                    <span className="skel" style={{ width: '36%', height: 16 }} />
-                    <span className="skel" style={{ width: '100%', height: 48, marginTop: 12 }} />
-                  </div>
-                ))}
+              <div className="card" key={col}>
+                <span className="skel" style={{ width: '36%', height: 16 }} />
+                <span className="skel" style={{ width: '100%', height: 64, marginTop: 12 }} />
               </div>
             ))}
           </div>
-        </>
+        </div>
       ) : null}
 
-      {data ? (
+      {data && totals ? (
         <>
+          <motion.section className="money-lead" variants={m.riseIn}>
+            <div className="money-main">
+              <span className="money-label">Settled</span>
+              <span className={`money-figure${totals.captured_cents > 0 ? ' is-pos' : ''}`}>
+                {money(totals.captured_cents)}
+              </span>
+              <span className="money-note">
+                {totals.captured} {totals.captured === 1 ? 'capture' : 'captures'} through PayPal
+              </span>
+            </div>
+            <dl className="money-facts">
+              <div>
+                <dt>Held for a signature</dt>
+                <dd>{money(totals.pending_cents)}</dd>
+                <span>
+                  {held} {held === 1 ? 'request' : 'requests'} not yet captured
+                </span>
+              </div>
+              <div>
+                <dt>Stopped</dt>
+                <dd>{money(totals.blocked_cents)}</dd>
+                <span>
+                  {totals.blocked} blocked · {totals.vetoed} vetoed
+                </span>
+              </div>
+              <div>
+                <dt>Requests</dt>
+                <dd>{totals.requests}</dd>
+                <span>
+                  {totals.auto} auto · {totals.review} review · {totals.block} blocked
+                </span>
+              </div>
+            </dl>
+          </motion.section>
+
           <motion.div variants={m.riseIn}>
             <SeriesChart data={data} />
           </motion.div>
 
-          <div className="record-cols analytics-cols">
-            <div className="record-col">
-              <motion.section className="card" variants={m.riseIn}>
-                <header className="card-head">
-                  <h2>By agent</h2>
-                  <span className="card-note mono">settled</span>
-                </header>
-                <AgentRows data={data} />
-                <p className="card-footnote">
-                  Each figure is the sum of captured requests that agent made in this range.
-                </p>
-              </motion.section>
+          <div className="analytics-grid">
+            <motion.section className="card" variants={m.riseIn}>
+              <header className="card-head">
+                <h2>By agent</h2>
+                <span className="card-note mono">settled</span>
+              </header>
+              <AgentRows data={data} />
+            </motion.section>
 
-              <motion.section className="card" variants={m.riseIn}>
-                <header className="card-head">
-                  <h2>By vendor</h2>
-                  <span className="card-note mono">settled</span>
-                </header>
-                <SpendRows rows={data.by_vendor} empty="No merchant was paid in this range." />
-                <p className="card-footnote">
-                  Settled money only: a held, refused or voided cart is not spent.
-                </p>
-              </motion.section>
+            <motion.section className="card" variants={m.riseIn}>
+              <header className="card-head">
+                <h2>What the rules caught</h2>
+                <span className="card-note mono">triggers</span>
+              </header>
+              <RuleRows data={data} />
+              <p className="card-footnote">
+                A request can trigger several rules, so these counts overlap.
+              </p>
+            </motion.section>
 
-              <motion.section className="card" variants={m.riseIn}>
-                <header className="card-head">
-                  <h2>By category</h2>
-                  <span className="card-note mono">settled</span>
-                </header>
-                <SpendRows
-                  rows={data.by_category}
-                  empty="No category was paid in this range."
-                />
-                <p className="card-footnote">
-                  One request can carry several lines; each captured line is counted once, in its
-                  own category.
-                </p>
-              </motion.section>
-            </div>
+            <motion.section className="card" variants={m.riseIn}>
+              <header className="card-head">
+                <h2>By vendor</h2>
+                <span className="card-note mono">settled</span>
+              </header>
+              <SpendRows rows={data.by_vendor} empty="No vendor was paid in this range." />
+            </motion.section>
 
-            <div className="record-col">
-              <motion.section className="card" variants={m.riseIn}>
-                <header className="card-head">
-                  <h2>What the rules caught</h2>
-                  <span className="card-note mono">triggers</span>
-                </header>
-                <RuleRows data={data} />
-                <p className="card-footnote">
-                  One request can trigger more than one rule, so these counts overlap. Blocked
-                  means the rule refused on its own; human means the cart reached the inbox.
-                </p>
-              </motion.section>
-
-              <motion.section className="card" variants={m.riseIn}>
-                <header className="card-head">
-                  <h2>Open the record</h2>
-                  <span className="card-note mono">Inbox</span>
-                </header>
-                <p className="card-lede">
-                  Every figure above has rows behind it. The Inbox lists the requests; a record
-                  opens the cart, the consent and the capture.
-                </p>
-                <Link className="text-link mono record-link" to="/inbox">
-                  open the inbox →
-                </Link>
-              </motion.section>
-            </div>
+            <motion.section className="card" variants={m.riseIn}>
+              <header className="card-head">
+                <h2>By category</h2>
+                <span className="card-note mono">settled</span>
+              </header>
+              <SpendRows rows={data.by_category} empty="No category was paid in this range." />
+            </motion.section>
           </div>
+
         </>
       ) : null}
     </motion.div>

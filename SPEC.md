@@ -162,13 +162,16 @@ The expensive doors are rate limited in-process (requests, simulate, search, Sla
 | `POST /api/v1/simulate` | session | **M2 done** — dry-run, persists nothing |
 | `POST /api/v1/simulate/stream` | session | **M5 done** — the same dry run as SSE: `start`, one `event` per stage, one `item` per resolved cart line, `result` |
 | `GET /api/v1/overview` | session | **M3 done** — needs you (signable only), expired consents, committed, settled this month, budget/remaining, agents |
-| `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | **M3 done, polished** — summaries and the full record; list takes `status` (incl. synthetic `expired`), `consent=actionable|expired`, `q` (title, text, agent, requester **and cart-line merchant**), whitelisted `sort`, an optional `from`/`to` day window with `tz` (viewer-local calendar, east-positive minutes), and returns `total` + `sum_cents` + the echoed window |
+| `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | **M3 done, polished** — summaries and the full record; list takes `state=needs|settled|refused|withdrawn` (the five Inbox groups; `all` or empty means no group; `400 invalid_state` otherwise; composes with the legacy `status`/`consent` filters and `total`/`sum_cents` respect it; the group is echoed as `state`), `status` (incl. synthetic `expired`), `consent=actionable|expired`, `q` (title, text, agent, requester **and cart-line merchant**), whitelisted `sort`, an optional `from`/`to` day window with `tz` (viewer-local calendar, east-positive minutes), and returns `total` + `sum_cents` + the echoed window |
 | `GET /api/v1/events` | session | **polish** — the live board: SSE `retry`, a `ready` frame, then `{"type":"change","scope":"requests|agents|integrations"}` per write, with a `: ping` heartbeat every 20s. Bounded per-tab queues; a slow reader drops frames, never blocks a write |
 | `POST /api/v1/requests` | agent key / session | **M3 done** — persist, judge, consent, capture |
 | `POST /api/v1/requests/{id}/decision` · `/void` | approver / admin | **M3 done** — approve captures, veto/void move no money |
 | `GET/POST /api/v1/agents/{id}/keys` · `DELETE …/keys/{kid}` | admin | **M3 done** — `vkey_…`, shown once, stored hashed |
 | `GET /api/v1/analytics?from&to=` | session | **M4 done** — daily series and agent/tag/vendor/category/rule aggregates |
 | `GET /api/v1/integrations` | session | **M4 done** — Slack endpoints + routing, wallet, agent keys |
+| `PATCH /api/v1/me` `{name}` | session | **round 4** — display name only; email and role stay read-only; `400 invalid_name` outside 1–80 characters |
+| `PATCH /api/v1/workspace` `{name}` | admin | **round 4** — rename the workspace; `403 forbidden` for an approver or viewer, `400 invalid_name` outside 2–80 characters, `409 name_taken` |
+| `POST /api/v1/me/password` `{current_password,new_password}` | session | **round 4** — `401 invalid_password` when the current password is wrong, `400 invalid_password_rule` below 10 characters; existing sessions stay valid |
 | `GET /api/v1/routines` | session | **M6 done** — the standing jobs with their month and next run |
 | `POST /api/v1/agents/{id}/routine` · `/pause` · `/resume` | admin/approver | **M6 done** — save the standing job, stop or restart it |
 | `DELETE /api/v1/agents/{id}/routine` | admin/approver | **polish** — delete the job and its run history; the requests it made stay in the record |
@@ -214,6 +217,27 @@ The old static console (`index.html`, `ui/`) is deleted: `/` and `/app/` serve t
 React app, and `/demo` no longer exists. `/connect` remains as the one-page wallet setup
 utility (it drives the legacy engine's PayPal vault flow); everything the product does now
 lives behind `/api/v1/*`.
+
+### Settings and identity
+
+Round 4 makes the seat editable and renames the demo approver.
+
+- **Demo identity.** The seeded approver is **Caroline Hayes** `caroline@brackenfield.demo`
+  (password `veto-demo-2026`); the admin stays `ops@brackenfield.demo`. On boot the runner calls
+  `veto.seed.migrate_demo_identity(STORE)`, which renames a legacy seeded row idempotently by
+  matching the old email or display name. User ids never change, so existing sessions and every
+  request that points at the approver stay valid.
+- `PATCH /api/v1/me {name}` writes the display name only (`400 invalid_name` outside 1–80
+  characters); email and role are read-only.
+- `PATCH /api/v1/workspace {name}` is admin-only (`403 forbidden` otherwise), uses the same
+  2–80 character window (`400 invalid_name`), and answers `409 name_taken` when another
+  workspace holds the name.
+- `POST /api/v1/me/password {current_password,new_password}` verifies the current password
+  (`401 invalid_password`) and requires at least 10 characters for the new one
+  (`400 invalid_password_rule`). A password change keeps the current sessions valid in this
+  build; there is no global revoke.
+- **Settings** (`/settings`) is the only surface for these writes: Account, Workspace, Security
+  and a read-only Environment card. Each card saves itself; there is no save-all button.
 
 ### Slack command surface
 
@@ -279,17 +303,18 @@ Tables: `routines` (one per agent, `next_run_at`, `last_run_at`, envelope, dedup
 
 ## 5. Screens and data ownership
 
-Six screens, all live from the same store. Each fact has exactly one owner; other
-surfaces may show a count or a link. `/` opens the app; a hash router owns the rest.
+Seven screens, all live from the same store. Each fact has exactly one owner; other surfaces
+may show a count or a link. `/` opens the app; a hash router owns the rest.
 
 | Screen | Owns |
 |---|---|
-| **Overview** | needs-me count · committed-unsigned · settled this month · agent count · top-3 pending, linked |
-| **Inbox** | the only request list; status/agent/order/search live in the URL, with a filtered total; expired consents are their own tab |
-| **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void, expired-consent state |
-| **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, the real month track (spent / unsigned / left), the **standing job** (schedule, envelope, run history, run now, pause, edit), **test a request** (extract → choose → price → judge), **send it as a real request**, and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
-| **Analytics** | captured money by day, agent, vendor, category and rule, over one range; links into the filtered Inbox |
-| **Integrations** | Slack endpoints + model routing, PayPal wallet, agent API keys (mint once, revoke immediately) |
+| **Overview** | one primary action (Review N requests / Open inbox) · the Needs-you lead panel (rows with agent mark, amount, age, Open; a quiet lapsed-consent line) · one quiet This-month strip (held for signature, settled, left, thin budget meter) · compact agent rows |
+| **Inbox** | the only request list; five state groups in importance order — Needs you (awaiting + approved, including a lapsed consent marked `Consent expired`), All, Settled, Refused (blocked + vetoed), Withdrawn — with a real table, `aria-sort` headers, phone list, and search/agent/day/order filters below the tabs in the URL |
+| **Record** | document order: identity, verdict band with reasons and actions, cart, PayPal objects, consent seal, trail; approve/veto/void by state, expired-consent lock and "send it again" |
+| **Agents** | one instance plate per agent (44px mark, serif name, state, `agt_… · #channel · tag`, charter figures, JOB + SCOPE); the agent page carries the charter band, the standing job (schedule, envelope, runs, run now, pause, edit), the dry run and the scoped catalogue search |
+| **Analytics** | one lead settled figure over a held/stopped/requests row; captured money by day (with a daily data table), by agent, by vendor, by category and by rule over one range; links into the filtered Inbox |
+| **Integrations** | two groups: MONEY (one PayPal wallet card) and ACCESS (agent API keys, then Slack endpoints and signature state; the default-agent routing fact is a Slack footnote) |
+| **Settings** | Account (display name, email, role, sign out), Workspace (admin rename, id, currency), Security (password change), read-only Environment (wallet/rails, agents, runner URL) |
 
 Guided rule setup (option A): one form with template defaults and an optional category
 override. The agent screen renders the charter back as a guardrail band — monthly figure
@@ -301,22 +326,27 @@ exceptions — not as a table of rule names. Not a raw editor.
 Email + password (scrypt), opaque sessions (sha256 stored, HttpOnly cookie, SameSite=Lax,
 7-day expiry, `Secure` only on https requests). Roles: admin, approver, viewer. Sign-up
 creates a workspace and its first admin. The seeded demo workspace is reachable in one
-click so a judge can interact without sign-up. Agent API keys are `vkey_…`, shown once,
-stored hashed.
+click so a judge can interact without sign-up; its approver is **Caroline Hayes**
+`caroline@brackenfield.demo` and the runner renames a legacy seeded row to that identity on
+boot (idempotent; user ids never change, so sessions and record references keep working).
+Agent API keys are `vkey_…`, shown once, stored hashed; minting and revoking are admin-only
+by design, so the demo approver reads the key card but cannot write it.
 
 ## 7. Motion and design rules
 
 The framed sheet, in a ledger tone: a cool graphite desk, one dark navy rail, the work on a
-white sheet inset 8px, 1px edge, 12px corners, no shadow. One navy accent carries links,
-focus and the one series; green is only money captured, red only a refusal, amber only money
-held for a signature. Tight corners (4/6/12px), IBM Plex, tabular figures, identifiers in
-mono. Ten screens' worth of decoration would be a duplicate; every screen has one job.
-Motion budget: (1) press feedback on every control, (2) one first-enter stagger of the
-screen's blocks, (3) state changes render in place and keep provenance (Inbox row → Record;
-approve → captured, in the same band), (4) hover is a tone step, never a lift. Loading,
-empty, expired-consent and refused states are authored, not blank. Below 900px the sidebar
-becomes a top nav; below 720px rows fold to two lines and nothing scrolls sideways.
-`prefers-reduced-motion` collapses everything to the end state.
+white sheet inset 8px, 1px edge, 12px corners, no shadow. Three type voices: IBM Plex Serif
+for page, document, plate and Settings titles; IBM Plex Sans for the interface, rows and
+money (tabular); IBM Plex Mono for identifiers, hashes and timestamps. One navy accent
+carries links, focus and the one series; green is only money captured, red only a refusal,
+amber only money held for a signature. Tight corners (4/6/12px), tabular figures,
+identifiers in mono. Ten screens' worth of decoration would be a duplicate; every screen has
+one job. Motion budget: (1) press feedback on every control, (2) one first-enter stagger of
+the screen's blocks, (3) state changes render in place and keep provenance (Inbox row →
+Record; approve → captured, in the same band), (4) hover is a tone step, never a lift.
+Loading, empty, expired-consent and refused states are authored, not blank. Below 900px the
+sidebar becomes a top nav with an account menu; below 720px rows fold to two lines and
+nothing scrolls sideways. `prefers-reduced-motion` collapses everything to the end state.
 
 ## 8. Milestones
 
@@ -336,7 +366,7 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (314)
+python3 -m unittest discover -s tests    # backend tests (343)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
 python3 tools/check_m4.py                # 42 checks: screens' data, read-only (~1s)
 python3 tools/check_polish.py            # 20 checks: live feed, filters, delete guard, built controls
@@ -425,6 +455,37 @@ skips only EXTRACT/SOURCE/CHOOSE, and re-enters at PRICE → JUDGE → CONSENT �
 
 `PAYPAL_LIVE=0` runs the whole loop against the in-process PayPal simulator with no keys.
 Hosted deploys pass the approved `PAYPAL_VAULT_ID` through the environment.
+
+A round-4 pass (2026-10-26) rebuilt hierarchy and instances, and added Settings:
+
+- **A document voice.** IBM Plex Serif 400/500/600 is bundled for page titles (h1 32/600),
+  the record title, the agent-plate name and Settings section titles; the interface stays
+  IBM Plex Sans and identifiers stay IBM Plex Mono. The shipped scale is page subtitle 13.5,
+  card title 15, primary row 14.5, secondary 12.5–13, labels 11 tracked capitals, money
+  sans tabular. `DESIGN.md` carries the full scale. The four-card Overview stat row is gone.
+- **Instances, not folders.** The rail gains a collapsible **Instances** list under Agents
+  (24px mark + name, count, auto-open inside `/agents*`, remembered per browser), and every
+  agent is drawn by `components/AgentAvatar.tsx` — a dark mono-monogram tile with a serial-
+  hashed dot grid and a four-tone state ring (24/44/56px). The Agents screen is a fleet of
+  instance plates; the agent page leads with the identity header.
+- **Five inbox groups, in importance order.** `state=needs|settled|refused|withdrawn` maps
+  to `awaiting+approved`, `captured`, `blocked+vetoed`, `voided`; the plain `/inbox` is All.
+  A lapsed consent is no longer its own tab — it stays in **Needs you**, marked
+  `Consent expired`, and the record offers "send it again". This supersedes the polish
+  round's separate Expired tab; the old `status=` parameter still resolves for old links.
+- **Overview decision-first.** Head with one primary button and freshness → Needs-you lead
+  panel (agent mark, title, amount, age, Open, one quiet lapsed line) → one quiet This-month
+  strip (held / settled / left, thin meter) → compact agent rows. No four identical stat
+  cards.
+- **Integrations in two groups.** **MONEY** is the single PayPal wallet card; **ACCESS** is
+  agent API keys then Slack; the model-routing card is deleted and its one default-agent
+  fact is a Slack footnote. This supersedes the polish round's Slack-beside-wallet layout.
+- **Settings.** The new `/settings` screen writes the account name, the workspace name
+  (admin only) and the password through the three endpoints above, and shows the read-only
+  environment beside them. Each card saves itself.
+- **Identity and copy.** The demo approver is Caroline Hayes `caroline@brackenfield.demo`,
+  with an idempotent boot rename for legacy rows. Page subtitles are one clause of ≤ 12
+  words; card ledes were cut where they only explained the product.
 
 ## 10. Non-goals (v1)
 

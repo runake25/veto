@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, ApiError, money, type Me, type RequestDetail, type RequestEvent } from '../api'
@@ -18,19 +18,12 @@ import { State, paymentMode, paymentStatus } from '../components/state'
 
 type Action = 'approve' | 'veto' | 'void'
 
-const DECISION_WORD: Record<string, string> = {
-  auto: 'inside the rules',
-  review: 'needs a signature',
-  block: 'refused by the rules',
-}
-
-/** Rule messages are audit text, so they are shown verbatim, with the numbers beside them. */
+/** Rule messages are audit text; the rule's own figures sit beside them. */
 function ReasonList({ record, showHints }: { record: RequestDetail; showHints: boolean }) {
   if (!record.reasons.length) {
     return (
       <p className="verdict-clean">
-        No rule fired. The cart sat inside the monthly cap, the per-order and per-item caps, and
-        every merchant and category the agent is allowed to use.
+        No rule fired; the cart was inside every cap and allowlist.
       </p>
     )
   }
@@ -48,9 +41,7 @@ function ReasonList({ record, showHints }: { record: RequestDetail; showHints: b
                 : ''}
             </span>
           ) : null}
-          {showHints && reason.unblock ? (
-            <span className="reason-unblock">{reason.unblock}</span>
-          ) : null}
+          {showHints && reason.unblock ? <span className="reason-unblock">{reason.unblock}</span> : null}
         </li>
       ))}
     </ul>
@@ -71,169 +62,139 @@ function actorOf(record: RequestDetail): string | null {
   return who || null
 }
 
-function signedLine(record: RequestDetail): string | null {
-  const event = actorEvent(record)
-  const actor = actorOf(record)
-  if (!event || !actor) return null
-  return `${event.label} by ${actor} · ${when(event.at)}`
-}
-
-function expiredNote(record: RequestDetail): string | null {
-  if (record.status !== 'awaiting') return null
-  const expires = record.consent?.expires_at
-  if (!expires || new Date(expires) > new Date()) return null
-  return `The consent expired at ${when(expires)}. Ask the agent for a new request, or veto this one — no money can move.`
-}
-
 function consentLapsed(record: RequestDetail): boolean {
   const expires = record.consent?.expires_at
-  return Boolean(
-    record.status === 'awaiting' && expires && new Date(expires) <= new Date(),
-  )
+  return Boolean(record.status === 'awaiting' && expires && new Date(expires) <= new Date())
 }
 
 function verdictHeadline(record: RequestDetail): string {
   const actor = actorOf(record)
   if (record.status === 'captured') {
-    if (record.reasons.length === 0) return 'Inside every rule — captured without a signature.'
-    return actor
-      ? `${actor} approved the review — the capture went through.`
-      : 'Approved, then captured through PayPal.'
+    if (actor) return `${actor} signed it; PayPal captured the money.`
+    return 'Inside every rule; PayPal captured the money.'
   }
-  if (record.status === 'blocked') return 'The rules stopped this cart before consent.'
-  if (record.status === 'vetoed')
-    return actor ? `${actor} vetoed this cart. Nothing moved.` : 'A person vetoed this cart. Nothing moved.'
-  if (record.status === 'voided')
-    return actor ? `${actor} voided this request before capture.` : 'Withdrawn before any capture.'
-  if (record.status === 'approved') return 'Signed — the capture is owed.'
+  if (record.status === 'blocked') return 'The rules stopped this cart.'
+  if (record.status === 'vetoed') {
+    return actor ? `${actor} vetoed this cart. Nothing moved.` : 'Vetoed. Nothing moved.'
+  }
+  if (record.status === 'voided') {
+    return actor ? `${actor} voided this request. Nothing was captured.` : 'Withdrawn before capture.'
+  }
+  if (record.status === 'approved') return 'Signed; the capture is still owed.'
   if (consentLapsed(record)) return 'The consent expired before anyone signed.'
   return 'Waiting for a signature.'
 }
 
-/** The money trail: every object PayPal returned, or the fact that none exists. */
-function PaymentCard({ record }: { record: RequestDetail }) {
+/** A document section: title on the left, one small fact on the right. */
+function DocSection({
+  title,
+  note,
+  children,
+  className,
+}: {
+  title: string
+  note?: string
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <section className={`doc-section${className ? ` ${className}` : ''}`}>
+      <header className="doc-section-head">
+        <h2>{title}</h2>
+        {note ? <span className="doc-note mono">{note}</span> : null}
+      </header>
+      {children}
+    </section>
+  )
+}
+
+function PayPalSection({ record }: { record: RequestDetail }) {
   const payment = record.payment
   const status = payment ? paymentStatus(payment.status) : null
+  const mode = paymentMode(payment?.mode)
+  const steps = [
+    { label: 'Order', id: payment?.order_id ?? null, at: payment?.created_at ?? null },
+    { label: 'Authorization', id: payment?.authorization_id ?? null, at: payment?.updated_at ?? null },
+    { label: 'Capture', id: payment?.capture_id ?? null, at: payment?.updated_at ?? null },
+  ]
+  if (!payment) {
+    return (
+      <DocSection title="PayPal">
+        <p className="doc-none">No PayPal object exists; no money moved.</p>
+      </DocSection>
+    )
+  }
   return (
-    <section className="card">
-      <header className="card-head">
-        <h2>Payment</h2>
-        <span className="card-note">{paymentMode(payment?.mode)}</span>
-      </header>
-      {payment ? (
-        <dl className="record-rows">
-          <div className="record-row">
-            <dt>PayPal status</dt>
-            <dd title={payment.status}>
-              {status ? <State tone={status.tone}>{status.label}</State> : '—'}
-            </dd>
-          </div>
-          <div className="record-row">
-            <dt>Amount</dt>
-            <dd>{money(payment.amount_cents)}</dd>
-          </div>
-          <div className="record-row">
-            <dt>Order</dt>
-            <dd>
-              {payment.order_id ? (
-                <CopyValue value={payment.order_id} label="Copy the PayPal order id" />
-              ) : (
-                '—'
-              )}
-            </dd>
-          </div>
-          <div className="record-row">
-            <dt>Authorization</dt>
-            <dd>
-              {payment.authorization_id ? (
-                <CopyValue
-                  value={payment.authorization_id}
-                  label="Copy the PayPal authorization id"
-                />
-              ) : (
-                '—'
-              )}
-            </dd>
-          </div>
-          <div className="record-row">
-            <dt>Capture</dt>
-            <dd>
-              {payment.capture_id ? (
-                <CopyValue value={payment.capture_id} label="Copy the PayPal capture id" />
-              ) : (
-                '—'
-              )}
-            </dd>
-          </div>
-        </dl>
-      ) : (
-        <p className="record-none">
-          No PayPal object exists for this request. The money never moved.
-        </p>
-      )}
-      <p className="card-footnote">
-        Order → authorization → capture. The capture is the only step that moves money.
-      </p>
-    </section>
+    <DocSection
+      title="PayPal"
+      note={`${mode}${payment.updated_at ? ` · ${when(payment.updated_at)}` : ''}`}
+    >
+      {status ? (
+        <div className="pay-status">
+          <State tone={status.tone}>PayPal {status.label}</State>
+        </div>
+      ) : null}
+      <ol className="pay-steps">
+        {steps.map((step) => (
+          <li className="pay-step" key={step.label}>
+            <span className="pay-label">{step.label}</span>
+            {step.id ? (
+              <CopyValue value={step.id} label={`Copy the PayPal ${step.label.toLowerCase()} id`} />
+            ) : (
+              <span className="pay-missing">Not created</span>
+            )}
+            {step.id && step.at ? <span className="pay-at mono">{when(step.at)}</span> : null}
+          </li>
+        ))}
+      </ol>
+      <p className="doc-footnote">Only the capture moves money.</p>
+    </DocSection>
   )
 }
 
-function ConsentCard({ record }: { record: RequestDetail }) {
+function ConsentSection({ record }: { record: RequestDetail }) {
   const consent = record.consent
+  if (!consent) {
+    return (
+      <DocSection title="Consent">
+        <p className="doc-none">No consent was issued.</p>
+      </DocSection>
+    )
+  }
+  const used = consent.used_at
+    ? whenFull(consent.used_at)
+    : consent.expires_at && new Date(consent.expires_at) <= new Date()
+      ? 'Expired, unused'
+      : 'Not yet'
   return (
-    <section className="card">
-      <header className="card-head">
-        <h2>Consent</h2>
-        <span className="card-note mono">{consent ? 'one use · 10 min' : 'not issued'}</span>
-      </header>
-      {consent ? (
-        <dl className="record-rows">
-          <div className="record-row">
-            <dt>Cart hash</dt>
-            <dd>
-              <CopyValue value={consent.cart_hash} label="Copy the cart hash" />
-            </dd>
-          </div>
-          <div className="record-row">
-            <dt>Issued</dt>
-            <dd className="mono">{whenFull(consent.issued_at)}</dd>
-          </div>
-          <div className="record-row">
-            <dt>Expires</dt>
-            <dd className="mono">{whenFull(consent.expires_at)}</dd>
-          </div>
-          <div className="record-row">
-            <dt>Used</dt>
-            <dd className="mono">
-              {consent.used_at
-                ? whenFull(consent.used_at)
-                : consent.expires_at && new Date(consent.expires_at) <= new Date()
-                  ? 'expired, unused'
-                  : 'not yet'}
-            </dd>
-          </div>
-        </dl>
-      ) : (
-        <p className="record-none">
-          Without consent there is nothing to spend. This request never got one.
-        </p>
-      )}
-      <p className="card-footnote">
-        The consent is one sha256 of the cart, single use, ten minutes. Its nonce is the PayPal
-        idempotency key, so a retried approval cannot charge twice.
-      </p>
-    </section>
+    <DocSection title="Consent" note="Single use · 10 minutes" className="consent-seal">
+      <div className="seal-hash">
+        <span className="seal-label">Cart hash</span>
+        <CopyValue value={consent.cart_hash} label="Copy the cart hash" />
+      </div>
+      <dl className="seal-grid">
+        <div>
+          <dt>Issued</dt>
+          <dd className="mono">{whenFull(consent.issued_at)}</dd>
+        </div>
+        <div>
+          <dt>Expires</dt>
+          <dd className="mono">{whenFull(consent.expires_at)}</dd>
+        </div>
+        <div>
+          <dt>Used</dt>
+          <dd className="mono">{used}</dd>
+        </div>
+      </dl>
+      <p className="doc-footnote">Its nonce is PayPal&apos;s idempotency key.</p>
+    </DocSection>
   )
 }
 
-function TrailCard({ record }: { record: RequestDetail }) {
+function TrailSection({ record }: { record: RequestDetail }) {
   return (
-    <section className="card">
-      <header className="card-head">
-        <h2>Trail</h2>
-        <span className="card-note mono">{record.events.length} entries</span>
-      </header>
-      <ol className="trail">
+    <DocSection title="Trail" note={`${record.events.length} entries · append-only`}>
+      <ol className="doc-trail">
         {record.events.map((event) => (
           <li key={event.seq}>
             <span className="trail-seq mono">{String(event.seq).padStart(2, '0')}</span>
@@ -245,14 +206,13 @@ function TrailCard({ record }: { record: RequestDetail }) {
           </li>
         ))}
       </ol>
-      <p className="card-footnote">Append-only: a step is never rewritten.</p>
-    </section>
+    </DocSection>
   )
 }
 
 /**
- * Record: one request as a document — the cart, the decision, the consent, the
- * PayPal objects and the trail all read from the same stored row.
+ * Record: one request as a signed page — the amount and decision first, then the
+ * cart, the PayPal objects, the consent seal and the append-only trail.
  */
 export function Record({ me }: { me: Me }) {
   const { id = '' } = useParams()
@@ -326,15 +286,7 @@ export function Record({ me }: { me: Me }) {
             ? await api.decide(id, 'veto')
             : await api.voidRequest(id)
       setRecord(next)
-      setFlash(
-        action === 'approve'
-          ? next.payment?.capture_id
-            ? `Approved and captured. Capture ${next.payment.capture_id} is in the record.`
-            : 'Approved. The capture is in the record.'
-          : action === 'veto'
-            ? 'Vetoed. No money moved.'
-            : 'Voided. No capture was attempted.',
-      )
+      setFlash(action === 'approve' ? 'Captured.' : action === 'veto' ? 'Vetoed.' : 'Voided.')
     } catch (err) {
       if (err instanceof ApiError) {
         setActionError(err.message)
@@ -348,36 +300,34 @@ export function Record({ me }: { me: Me }) {
   }
 
   const canAct = me.user.role === 'admin' || me.user.role === 'approver'
-  const consentExpired = Boolean(
-    record?.consent?.expires_at && new Date(record.consent.expires_at) <= new Date(),
-  )
-  const canDecide = canAct && record?.status === 'awaiting' && !consentExpired
-  // Void is housekeeping, not a decision: it is offered only when it adds something —
-  // a stale (expired) consent, or an approval whose capture is still owed.
-  const canVoid =
-    canAct && (record?.status === 'approved' || (record?.status === 'awaiting' && consentExpired))
+  const expired = Boolean(record && consentLapsed(record))
+  const awaiting = record?.status === 'awaiting'
+  const approved = record?.status === 'approved'
+  const canDecide = canAct && awaiting && !expired
+  const canVeto = canAct && awaiting
+  const canVoid = canAct && (awaiting || approved)
+  const canResend = canAct && awaiting && expired
+  const showActions = Boolean(awaiting || (approved && canAct))
   const tone = record ? (STATUS[record.status]?.tone ?? 'quiet') : 'quiet'
+  const expiredLine = 'Consent expired — send it again for a new window.'
 
   return (
-    <motion.div className="screen record" variants={m.stagger} initial="hidden" animate="show">
+    <motion.div
+      className="screen record-doc"
+      variants={m.stagger}
+      initial="hidden"
+      animate="show"
+    >
       <motion.div className="back-row" variants={m.riseIn}>
         <Link className="back-link" to="/inbox">
           ← Inbox
         </Link>
-        <div className="back-tools">
-          <FreshnessButton />
-          {record ? (
-            <CopyValue value={record.id} label="Copy the record id">
-              {requestLabel(record.seq)}
-            </CopyValue>
-          ) : null}
-        </div>
+        <FreshnessButton />
       </motion.div>
 
       {error ? (
         <div className="empty record-error">
-          <h1>Record not found</h1>
-          <span className="empty-mark" aria-hidden="true" />
+          <h1 className="display">Record not found</h1>
           <p className="empty-title">That record is not here.</p>
           <p className="empty-note">{error}</p>
           <div className="empty-actions">
@@ -399,207 +349,161 @@ export function Record({ me }: { me: Me }) {
       ) : null}
 
       {!record && !error ? (
-        <div className="record-skel" aria-hidden="true">
-          <div className="record-skel-head">
-            <div className="record-skel-ident">
-              <span className="skel" style={{ width: 190, height: 10 }} />
-              <span className="skel" style={{ width: '58%', height: 28 }} />
-              <span className="skel" style={{ width: '76%', height: 11 }} />
-            </div>
-            <span className="skel" style={{ width: 120, height: 30 }} />
-          </div>
-          <span className="skel" style={{ width: '100%', height: 96 }} />
-          <div className="record-cols">
-            <div className="record-col">
-              <div className="card">
-                <span className="skel" style={{ width: '28%', height: 16 }} />
-                <span className="skel" style={{ width: '100%', height: 190, marginTop: 14 }} />
-              </div>
-              <div className="card">
-                <span className="skel" style={{ width: '24%', height: 16 }} />
-                <span className="skel" style={{ width: '100%', height: 72, marginTop: 14 }} />
-              </div>
-            </div>
-            <div className="record-col">
-              <div className="card">
-                <span className="skel" style={{ width: '26%', height: 16 }} />
-                <span className="skel" style={{ width: '100%', height: 116, marginTop: 14 }} />
-              </div>
-              <div className="card">
-                <span className="skel" style={{ width: '20%', height: 16 }} />
-                <span className="skel" style={{ width: '100%', height: 120, marginTop: 14 }} />
-              </div>
-            </div>
-          </div>
+        <div className="doc-skel" aria-hidden="true">
+          <span className="skel" style={{ width: 170, height: 11 }} />
+          <span className="skel" style={{ width: '46%', height: 34, marginTop: 12 }} />
+          <span className="skel" style={{ width: '34%', height: 12, marginTop: 12 }} />
+          <span className="skel" style={{ width: '100%', height: 108, marginTop: 24 }} />
+          <span className="skel" style={{ width: '100%', height: 190, marginTop: 24 }} />
+          <span className="skel" style={{ width: '100%', height: 140, marginTop: 24 }} />
         </div>
       ) : null}
 
       {record ? (
-        <>
-          <motion.header className="record-head" variants={m.riseIn}>
-            <div className="record-ident">
-              <span className="record-kicker mono">
-                {requestLabel(record.seq)} · {sourceLabel(record.origin, record.routine?.name)}
-                {record.routine
-                  ? ` · ${record.routine.name}`
-                  : record.channel
-                    ? ` · ${record.channel}`
-                    : ''}
-              </span>
-              <h1>{record.title}</h1>
-              <p className="record-meta">
-                <b>{record.agent.name}</b>
-                <span className="mono record-tag">{record.agent.tag}</span>
-                <span className="record-sep" aria-hidden="true" />
-                asked by {record.requester ?? 'an agent'}
-                <span className="record-sep" aria-hidden="true" />
-                <span className="mono">{whenFull(record.created_at)}</span>
+        <motion.article className="doc" variants={m.riseIn}>
+          <header className="doc-head">
+            <div className="doc-ident">
+              <p className="doc-kicker">
+                <CopyValue value={record.id} label="Copy the request id">
+                  {requestLabel(record.seq)}
+                </CopyValue>
+                <span className="doc-dot" aria-hidden="true" />
+                <span>{sourceLabel(record.origin, record.routine?.name)}</span>
+                {record.channel ? (
+                  <>
+                    <span className="doc-dot" aria-hidden="true" />
+                    <span className="mono">{record.channel}</span>
+                  </>
+                ) : null}
               </p>
-              {record.text ? <p className="record-ask">“{record.text}”</p> : null}
+              <h1 className="display doc-title">{record.title}</h1>
+              <div className="doc-agent">
+                <span className="doc-agent-name">{record.agent.name}</span>
+                <span className="chip-quiet mono">{record.agent.tag}</span>
+                <span className="doc-dot" aria-hidden="true" />
+                <span className="doc-meta">
+                  asked by {record.requester ?? 'an agent'}
+                  <span className="doc-dot" aria-hidden="true" />
+                  <span className="mono">{whenFull(record.created_at)}</span>
+                </span>
+              </div>
+              {record.text ? <p className="doc-ask">“{record.text}”</p> : null}
             </div>
-            <div className="record-amount">
-              {record.lines.length ? (
-                <span className="record-total">{money(record.total_cents, record.currency)}</span>
-              ) : (
-                <span className="record-nopriced">No cart priced</span>
-              )}
+            <div className="doc-amount">
+              <span className="doc-total">
+                {record.lines.length ? money(record.total_cents, record.currency) : 'No cart priced'}
+              </span>
               <StatusMark status={record.status} />
             </div>
-          </motion.header>
+          </header>
 
-          <motion.section className={`verdict is-${tone}`} variants={m.riseIn}>
+          <section className={`verdict is-${tone}`}>
             <div className="verdict-main">
-              <span className="verdict-kicker mono">
-                policy · {DECISION_WORD[record.decision ?? ''] ?? record.decision ?? '—'} ·{' '}
-                {STATUS[record.status]?.label ?? record.status}
-              </span>
+              <p className="verdict-label">Verdict</p>
               <p className="verdict-title">{verdictHeadline(record)}</p>
               <ReasonList
                 record={record}
-                showHints={
-                  record.status === 'awaiting' ||
-                  record.status === 'approved' ||
-                  record.status === 'blocked'
-                }
+                showHints={awaiting || approved || record.status === 'blocked'}
               />
               {record.status === 'captured' && record.reasons.length ? (
                 <p className="verdict-clean">
-                  The flags above are why this cart needed a signature. The signature is the
-                  exception; no cap or threshold was edited.
+                  The signature was the exception; no cap was edited.
                 </p>
               ) : null}
             </div>
 
-            {canDecide || canVoid ? (
-              <div className="verdict-actions">
-                {canDecide ? (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => askAct('approve')}
-                    disabled={busy !== null || pendingAction !== null}
-                  >
-                    {busy === 'approve'
-                      ? 'Capturing…'
-                      : `Approve · ${money(record.total_cents, record.currency)}`}
-                  </button>
-                ) : null}
-                {consentLapsed(record) ? (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => void again()}
-                    disabled={busy !== null || resending}
-                  >
-                    {resending ? 'Sending…' : 'Send it again'}
-                  </button>
-                ) : null}
-                {record?.status === 'awaiting' ? (
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={() => askAct('veto')}
-                    disabled={busy !== null || pendingAction !== null}
-                    title="Refuse this request — the trail records a veto"
-                  >
-                    {busy === 'veto' ? 'Vetoing…' : 'Veto'}
-                  </button>
-                ) : null}
-                {canVoid ? (
-                  <button
-                    type="button"
-                    className="btn btn-quiet"
-                    onClick={() => askAct('void')}
-                    disabled={busy !== null || pendingAction !== null}
-                    title="Withdraw this request before capture — not a refusal"
-                  >
-                    {busy === 'void' ? 'Voiding…' : 'Void'}
-                  </button>
-                ) : null}
-                {pendingAction ? (
-                  <div className="verdict-confirm">
-                    <p className="verdict-confirm-copy">
-                      {pendingAction === 'approve'
-                        ? `Capture ${money(record.total_cents, record.currency)} now? This moves money from the workspace wallet and cannot be undone.`
-                        : pendingAction === 'veto'
-                          ? 'Refuse this request? The veto is written to the trail and cannot be re-opened.'
-                          : 'Withdraw this request before capture? The void stays in the record.'}
-                    </p>
-                    <div className="verdict-confirm-actions">
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={() => void act(pendingAction)}
-                        disabled={busy !== null}
-                      >
-                        {busy !== null
-                          ? 'Working…'
-                          : pendingAction === 'approve'
-                            ? `Confirm · capture ${money(record.total_cents, record.currency)}`
-                            : pendingAction === 'veto'
-                              ? 'Confirm veto'
-                              : 'Confirm void'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-quiet"
-                        onClick={() => setPendingAction(null)}
-                        disabled={busy !== null}
-                      >
-                        Cancel
-                      </button>
-                    </div>
+            {showActions ? (
+            <div className="verdict-actions">
+              {canAct && awaiting ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => askAct('approve')}
+                  disabled={!canDecide || busy !== null || pendingAction !== null}
+                >
+                  {busy === 'approve' ? 'Capturing…' : 'Approve & capture'}
+                </button>
+              ) : null}
+              {canResend ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => void again()}
+                  disabled={busy !== null || resending}
+                >
+                  {resending ? 'Sending…' : 'Send it again'}
+                </button>
+              ) : null}
+              {canVeto ? (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => askAct('veto')}
+                  disabled={busy !== null || pendingAction !== null}
+                >
+                  {busy === 'veto' ? 'Vetoing…' : 'Veto'}
+                </button>
+              ) : null}
+              {canVoid ? (
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  onClick={() => askAct('void')}
+                  disabled={busy !== null || pendingAction !== null}
+                >
+                  {busy === 'void' ? 'Voiding…' : 'Void'}
+                </button>
+              ) : null}
+              {!canAct && awaiting ? (
+                <p className="verdict-role">An approver or admin signs this cart.</p>
+              ) : null}
+              {expired ? <p className="verdict-lock">{expiredLine}</p> : null}
+
+              {pendingAction ? (
+                <div className="verdict-confirm">
+                  <p className="verdict-confirm-copy">
+                    {pendingAction === 'approve'
+                      ? `Capture ${money(record.total_cents, record.currency)} from the workspace wallet? This moves money.`
+                      : pendingAction === 'veto'
+                        ? 'Refuse this request? The veto is written to the trail.'
+                        : 'Withdraw this request? The void stays in the record.'}
+                  </p>
+                  <div className="verdict-confirm-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void act(pendingAction)}
+                      disabled={busy !== null}
+                    >
+                      {busy !== null
+                        ? 'Working…'
+                        : pendingAction === 'approve'
+                          ? 'Confirm capture'
+                          : pendingAction === 'veto'
+                            ? 'Confirm veto'
+                            : 'Confirm void'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-quiet"
+                      onClick={() => setPendingAction(null)}
+                      disabled={busy !== null}
+                    >
+                      Cancel
+                    </button>
                   </div>
-                ) : null}
-                <p className="verdict-legend">
-                  {canDecide
-                    ? `Approve captures ${money(record.total_cents, record.currency)} from the workspace wallet. Veto refuses the request.`
-                    : record.status === 'approved'
-                      ? 'The capture is owed. Void cancels it before any money moves.'
-                      : 'The consent expired, so approve is closed. Veto records a refusal; Void withdraws the stale request.'}
-                </p>
-              </div>
-            ) : expiredNote(record) ? (
-              <p className="verdict-role">{expiredNote(record)}</p>
-            ) : record.status === 'blocked' ? (
-              <p className="verdict-role">
-                No signature was requested, and no PayPal object was created.
-              </p>
-            ) : me.user.role === 'viewer' && record.status === 'awaiting' ? (
-              <p className="verdict-role">
-                Your role is viewer — an approver or admin signs this cart.
-              </p>
-            ) : signedLine(record) ? (
-              <p className="verdict-role">{signedLine(record)}</p>
+                </div>
+              ) : null}
+            </div>
             ) : null}
-          </motion.section>
+          </section>
 
           {actionError ? (
             <p className="inline-error" role="alert">
               {actionError}{' '}
               {approveUrl ? (
                 <a className="text-link" href={approveUrl} target="_blank" rel="noreferrer">
-                  Connect the workspace wallet →
+                  Connect the wallet →
                 </a>
               ) : null}
             </p>
@@ -610,63 +514,53 @@ export function Record({ me }: { me: Me }) {
             </p>
           ) : null}
 
-          <div className="record-cols">
-            <div className="record-col">
-              <motion.section className="card" variants={m.riseIn}>
-                <header className="card-head">
-                  <h2>Cart</h2>
-                  <span className="card-note mono">
-                    {record.lines.length} {record.lines.length === 1 ? 'line' : 'lines'}
-                  </span>
-                </header>
-                {record.lines.length ? (
-                  <>
-                    <div className="line-head" aria-hidden="true">
-                      <span>Item</span>
-                      <span>Vendor</span>
-                      <span className="num">Qty</span>
-                      <span className="num">Unit</span>
-                      <span className="num">Amount</span>
-                    </div>
-                    <ul className="record-lines">
-                      {record.lines.map((line, index) => (
-                        <li className="record-line" key={`${line.sku ?? line.title}-${index}`}>
-                          <span className="line-item">
-                            <b>{line.title}</b>
-                            <span className="line-meta mono">
-                              {line.category ?? 'uncategorised'}
-                              {line.brand ? ` · ${line.brand}` : ''}
-                            </span>
-                          </span>
-                          <span className="line-vendor">{line.vendor ?? 'unknown'}</span>
-                          <span className="line-num">{line.qty}</span>
-                          <span className="line-num">{money(line.unit_cents)}</span>
-                          <span className="line-num line-amount">{money(line.line_cents)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="record-total-row">
-                      <span>Total</span>
-                      <span>{money(record.total_cents, record.currency)}</span>
-                    </div>
-                  </>
-                ) : (
-                  <p className="record-none">
-                    No cart was priced. The catalogue had no product for this request, so there
-                    was nothing to buy and nothing to charge.
-                  </p>
-                )}
-              </motion.section>
+          <DocSection
+            title="Cart"
+            note={`${record.lines.length} ${record.lines.length === 1 ? 'line' : 'lines'}`}
+          >
+            {record.lines.length ? (
+              <div className="cart-lines">
+                <div className="cart-head" aria-hidden="true">
+                  <span>Item</span>
+                  <span>Vendor</span>
+                  <span className="num">Qty</span>
+                  <span className="num">Unit</span>
+                  <span className="num">Amount</span>
+                </div>
+                {record.lines.map((line, index) => (
+                  <div className="cart-line" key={`${line.sku ?? line.title}-${index}`}>
+                    <span className="cart-item">
+                      <b>{line.title}</b>
+                      <span className="cart-meta mono">
+                        {line.category ?? 'uncategorised'}
+                        {line.brand ? ` · ${line.brand}` : ''}
+                      </span>
+                    </span>
+                    <span className="cart-vendor">{line.vendor ?? 'unknown'}</span>
+                    <span className="cart-num cart-qty">
+                      <span className="cart-label">Qty</span>
+                      {line.qty}
+                    </span>
+                    <span className="cart-num cart-unit">
+                      <span className="cart-label">Unit</span>
+                      {money(line.unit_cents)}
+                    </span>
+                    <span className="cart-num cart-amount">
+                      <span className="cart-label">Amount</span>
+                      {money(line.line_cents)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="doc-none">No cart was priced.</p>
+            )}
+          </DocSection>
 
-              <PaymentCard record={record} />
-            </div>
-
-            <div className="record-col">
-              <ConsentCard record={record} />
-              <TrailCard record={record} />
-            </div>
-          </div>
-        </>
+          <PayPalSection record={record} />
+          <ConsentSection record={record} />
+          <TrailSection record={record} />
+        </motion.article>
       ) : null}
     </motion.div>
   )

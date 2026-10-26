@@ -140,3 +140,17 @@ export function RuleFlag({ rule, severity }: { rule: string; severity: 'block' |
     </span>
   )
 }
+
+/** How long something has been waiting, in the shortest honest unit: "6h", "3d". */
+export function age(iso: string | null | undefined): string {
+  const then = iso ? new Date(iso).getTime() : Number.NaN
+  if (Number.isNaN(then)) return '—'
+  const minutes = Math.max(0, Math.round((Date.now() - then) / 60_000))
+  if (minutes < 1) return 'now'
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.round(hours / 24)
+  if (days < 30) return `${days}d`
+  return `${Math.round(days / 30)}mo`
+}

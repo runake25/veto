@@ -1,0 +1,403 @@
+/* Round 4 — agents screen layout.
+   Loaded after app.css. Owned by the agents workstream; see round4-brief.md.
+
+   An agent is a running instance: a mark, a serial, a state and a charter. The
+   plate carries that identity first, then the four numbers, then the job it runs
+   and the scope it buys inside. The detail screen turns the same identity into
+   an identity header. */
+
+/* ---- the fleet: one plate per running instance ------------------------- */
+
+.agent-grid {
+  gap: 14px;
+}
+
+.agent-plate {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 15px 17px 13px;
+}
+
+/* the mark, the name, the serial, the state — one identity block */
+.plate-ident {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.plate-ident-text {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.plate-ident h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 21px;
+  line-height: 1.18;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+
+/* agt_… · #channel · tag, in the machine voice */
+.plate-serial {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--faint);
+  min-width: 0;
+}
+
+.plate-serial-id {
+  color: var(--muted);
+}
+
+.plate-channel {
+  color: var(--faint);
+}
+
+.plate-tag {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* the separator travels with the tag, so a wrapped line never starts with one */
+.plate-channel::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--control);
+}
+
+.plate-tag::before {
+  content: "·";
+  margin-right: 8px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--control);
+}
+
+.plate-state {
+  align-self: center;
+  justify-self: end;
+}
+
+/* the charter figures sit on their own quiet plate: the substance of the card */
+.plate-charter {
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  padding: 10px 12px 11px;
+  column-gap: 14px;
+}
+
+.plate-charter .agent-plate-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.plate-charter .agent-plate-value {
+  font-size: 16px;
+  line-height: 23px;
+}
+
+.plate-charter .agent-plate-value.is-lead {
+  font-size: 21px;
+  line-height: 27px;
+}
+
+/* the job and the scope: two machine-labelled facts under a rule */
+.plate-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 11px;
+  border-top: 1px solid var(--rule);
+}
+
+.plate-facts {
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.plate-fact {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.plate-fact dt {
+  font-size: 10px;
+  line-height: 1.5;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.plate-fact dd {
+  margin: 0;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.plate-job-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.plate-job-next {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.plate-job-cadence {
+  white-space: nowrap;
+}
+
+.plate-muted {
+  color: var(--faint);
+}
+
+.agent-plate-skel .agent-avatar-skel {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+}
+
+.agent-plate-skel .plate-ident {
+  align-items: center;
+}
+
+/* the empty fleet: one title, one line, no philosophy */
+.fleet-empty {
+  border: 1px dashed var(--control);
+  border-radius: var(--radius-card);
+  padding: 26px 22px;
+  display: grid;
+  gap: 4px;
+  background: var(--surface);
+}
+
+.fleet-empty .empty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.fleet-empty .empty-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* ---- agent detail: the identity header --------------------------------- */
+
+.instance-head {
+  align-items: center;
+  gap: 24px;
+}
+
+.instance-ident {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.instance-text {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.instance-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.instance-title h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.instance-serial {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--faint);
+}
+
+.instance-serial-id {
+  color: var(--muted);
+}
+
+.instance-channel::before {
+  content: "·";
+  margin-right: 9px;
+  color: var(--control);
+}
+
+.instance-tag {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.instance-tag::before {
+  content: "·";
+  margin-right: 9px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--control);
+}
+
+.instance-head .agent-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* the editor opens under the identity, never beside it */
+.instance-head + .card,
+.instance-head + .danger-card {
+  margin-top: 2px;
+}
+
+@media (max-width: 720px) {
+  .instance-head {
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .instance-ident {
+    gap: 12px;
+  }
+
+  .instance-head h1 {
+    font-size: 26px;
+  }
+
+  .instance-head .agent-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 560px) {
+  .agent-plate {
+    padding: 14px 14px 12px;
+  }
+
+  .plate-ident h2 {
+    font-size: 19px;
+  }
+
+  .plate-fact {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .plate-charter .agent-plate-value.is-lead {
+    font-size: 19px;
+  }
+}
+
+/* the identity header stacks: mark + name on one line, then serial, then the
+   one action. The monogram never clips because the mark keeps its own column. */
+@media (max-width: 480px) {
+  .instance-head {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .instance-ident {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .instance-title {
+    gap: 8px;
+  }
+
+  .instance-head .agent-actions {
+    width: 100%;
+  }
+}
+
+/* the delete control sits under its own warning, left-aligned with the lede */
+.danger-card .danger-open {
+  justify-self: start;
+}
+
+/* the dry run is the primary tool on an agent, so it takes the width it needs;
+   the catalogue reference sits under it instead of competing beside it */
+.cols-tools {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.cols-tools .inline-form {
+  max-width: 660px;
+}
+
+/* a plate can get narrow inside the two-column grid before the page does */
+@container (max-width: 380px) {
+  .plate-serial {
+    font-size: 10.5px;
+  }
+
+  /* no separator can be left dangling when the line wraps */
+  .plate-channel::before,
+  .plate-tag::before {
+    content: none;
+  }
+
+  .plate-state {
+    justify-self: start;
+  }
+
+  /* the fact label sits above its value, so the job line has the full width */
+  .agent-plate .plate-fact {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+  }
+
+  .plate-facts {
+    gap: 8px;
+  }
+
+  /* the date is enough on a plate; the detail page carries the full timestamp */
+  .plate-job-time {
+    display: none;
+  }
+}

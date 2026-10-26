@@ -24,8 +24,8 @@ class AuthTestCase(unittest.TestCase):
         self.workspace = self.store.create_workspace("Bracken & Field")
         self.user = self.store.create_user(
             self.workspace["id"],
-            "priya@brackenfield.demo",
-            name="Priya Raman",
+            "caroline@brackenfield.demo",
+            name="Caroline Hayes",
             password_hash=auth.hash_password("veto-demo-2026"),
             role="approver",
         )
@@ -97,7 +97,7 @@ class SessionTests(AuthTestCase):
         resolved = auth.resolve_session(self.store, token)
         self.assertIsNotNone(resolved)
         self.assertRegex(resolved["session_id"], r"^ses_")
-        self.assertEqual(resolved["user"]["email"], "priya@brackenfield.demo")
+        self.assertEqual(resolved["user"]["email"], "caroline@brackenfield.demo")
         self.assertEqual(resolved["user"]["role"], "approver")
         self.assertEqual(resolved["workspace"]["name"], "Bracken & Field")
         row = self.store.session_by_token_hash(sha256_hex(token))

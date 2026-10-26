@@ -40,7 +40,7 @@ EXAMPLES
 Input: "dan: we're down to our last sleeve of capsules and the loos are out of paper\n/veto coffee capsules and toilet paper"
 Output: {"items":[{"name":"coffee capsules","qty":1,"query":"coffee capsules","product_type":"coffee capsules","brand":null,"note":""},{"name":"toilet paper","qty":1,"query":"toilet paper","product_type":"toilet paper","brand":null,"note":""}],"amendment":false,"confidence":"high"}
 
-Input: "priya: only 2 boxes"
+Input: "caroline: only 2 boxes"
 Output: {"items":[{"name":"coffee capsules","qty":2,"query":"coffee capsules","product_type":"coffee capsules","brand":null,"note":"only 2 boxes"}],"amendment":true,"confidence":"high"}
 
 Input: "we need whiteboard markers for the studio, 5 packs of pringles, and 2 boxes of bamboo toilet paper"

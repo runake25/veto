@@ -193,7 +193,7 @@ def main() -> int:
             ("Last 7 days", "the inbox offers a day range"),
             ("Delete agent", "an agent can be removed"),
             ("Delete job", "a standing job can be removed"),
-            ("Copy the PayPal capture id", "ledger ids can be copied"),
+            ("Copy the PayPal ${", "ledger ids can be copied"),
         ):
             check(f"bundle: {label}", needle in bundle, needle)
 

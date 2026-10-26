@@ -312,7 +312,7 @@ export function AgentForm({
             disabled={busy}
           />
         </Field>
-        <Field label="Home channel" hint="a label, not routing" error={fieldError('channel')}>
+        <Field label="Home channel" hint="label only" error={fieldError('channel')}>
           <input
             className="input mono"
             value={channel}
@@ -390,7 +390,7 @@ export function AgentForm({
       <motion.div className="form-row" variants={m.riseIn}>
         <Field
           label="Approved merchants"
-          hint="domains, comma separated"
+          hint="one domain each"
           error={fieldError('vendors')}
         >
           <textarea
@@ -406,7 +406,7 @@ export function AgentForm({
             disabled={busy}
           />
         </Field>
-        <Field label="Can buy" hint="categories" error={fieldError('categories')}>
+        <Field label="Can buy" error={fieldError('categories')}>
           <input
             className="input"
             value={categories}
@@ -425,10 +425,7 @@ export function AgentForm({
         <p className="override-title">
           Category exception <span className="mono">optional</span>
         </p>
-        <p className="override-note">
-          One category may break the agent&rsquo;s default. It is the only knob the guided form
-          hides — everything else stays as above.
-        </p>
+        <p className="override-note">One category can break the agent&rsquo;s default limit.</p>
         <div className="form-row form-row-tight">
           <Field label="Category" error={fieldError('overrideCategory')}>
             <input
