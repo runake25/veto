@@ -7,7 +7,8 @@ import { StatusMark, originLabel, requestLabel, when } from '../components/reque
 
 const FILTERS = [
   { value: '', label: 'All', hint: 'Every request in the record' },
-  { value: 'awaiting', label: 'Needs you', hint: 'Waiting for a signature' },
+  { value: 'awaiting', label: 'Needs you', hint: 'Waiting for a signature that is still valid' },
+  { value: 'expired', label: 'Expired', hint: 'The consent lapsed before anyone signed' },
   { value: 'captured', label: 'Captured', hint: 'Money moved through PayPal' },
   { value: 'blocked', label: 'Blocked', hint: 'Refused by the rules; no money moved' },
   { value: 'vetoed', label: 'Vetoed', hint: 'Refused by a person; no money moved' },
@@ -98,6 +99,7 @@ export function Inbox() {
   const status = params.get('status') ?? ''
   const agentId = params.get('agent') ?? ''
   const sort = params.get('sort') ?? ''
+  const q = params.get('q') ?? ''
 
   const [rows, setRows] = useState<RequestSummary[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -106,6 +108,8 @@ export function Inbox() {
   const [agents, setAgents] = useState<Agent[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [moreBusy, setMoreBusy] = useState(false)
+  const [search, setSearch] = useState(q)
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
@@ -132,6 +136,7 @@ export function Inbox() {
     if (status) query.set('status', status)
     if (agentId) query.set('agent_id', agentId)
     if (sort) query.set('sort', sort)
+    if (q) query.set('q', q)
     api
       .requests(query.toString())
       .then((data) => {
@@ -139,6 +144,7 @@ export function Inbox() {
         setRows(data.requests)
         setTotal(data.total)
         setSumCents(data.sum_cents ?? 0)
+        setRefreshedAt(new Date())
       })
       .catch(() => {
         if (live) setError('The request list did not load.')
@@ -146,21 +152,40 @@ export function Inbox() {
     return () => {
       live = false
     }
-  }, [status, agentId, sort, reloadTick])
+  }, [status, agentId, sort, q, reloadTick])
+
+  // an approver leaves the tab open; the queue should not silently go stale
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') setReloadTick((value) => value + 1)
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const choose = useCallback(
-    (next: { status?: string; agent?: string; sort?: string }) => {
+    (next: { status?: string; agent?: string; sort?: string; q?: string }) => {
       const params = new URLSearchParams()
       const nextStatus = next.status ?? status
       const nextAgent = next.agent ?? agentId
       const nextSort = next.sort ?? sort
+      const nextQuery = next.q ?? q
       if (nextStatus) params.set('status', nextStatus)
       if (nextAgent) params.set('agent', nextAgent)
       if (nextSort) params.set('sort', nextSort)
+      if (nextQuery) params.set('q', nextQuery)
       setParams(params, { replace: true })
     },
-    [status, agentId, sort, setParams],
+    [status, agentId, sort, q, setParams],
   )
+
+  // a search box writes the URL after a short pause, so the view stays linkable
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const next = search.trim()
+      if (next !== q) choose({ q: next })
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [search, q, choose])
 
   const loadMore = async () => {
     if (!rows) return
@@ -170,6 +195,7 @@ export function Inbox() {
       if (status) query.set('status', status)
       if (agentId) query.set('agent_id', agentId)
       if (sort) query.set('sort', sort)
+      if (q) query.set('q', q)
       const data = await api.requests(query.toString())
       setRows([...rows, ...data.requests])
     } catch {
@@ -179,8 +205,13 @@ export function Inbox() {
     }
   }
 
-  const empty = emptyCopy(status)
-  const filtered = Boolean(status || agentId)
+  const empty = q
+    ? {
+        title: `No request matches “${q}”.`,
+        note: 'Try a shorter fragment, or clear the search to see the whole record.',
+      }
+    : emptyCopy(status)
+  const filtered = Boolean(status || agentId || q)
   const count = rows ? (filtered ? `${total} matching` : `${total} in the record`) : ''
 
   return (
@@ -190,7 +221,21 @@ export function Inbox() {
           <h1>Inbox</h1>
           <p>Every request an agent made, and what happened to the money.</p>
         </div>
-        {count ? <span className="head-count mono">{count}</span> : null}
+        <div className="head-tools">
+          {count ? <span className="head-count mono">{count}</span> : null}
+          <button
+            type="button"
+            className="refresh-link mono"
+            onClick={() => setReloadTick((value) => value + 1)}
+          >
+            {refreshedAt
+              ? `Updated ${refreshedAt.toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })} · Refresh`
+              : 'Refresh'}
+          </button>
+        </div>
       </motion.header>
 
       <motion.div className="filter-bar" variants={m.riseIn}>
@@ -237,6 +282,17 @@ export function Inbox() {
               </option>
             ))}
           </select>
+        </label>
+        <label className="filter-search">
+          <span className="filter-agent-label">Search</span>
+          <input
+            className="input"
+            type="search"
+            value={search}
+            aria-label="Search requests"
+            placeholder="Title, agent or requester"
+            onChange={(event) => setSearch(event.target.value)}
+          />
         </label>
       </motion.div>
 
@@ -321,7 +377,7 @@ export function Inbox() {
               <button
                 type="button"
                 className="btn btn-secondary btn-small"
-                onClick={() => choose({ status: '', agent: '', sort: '' })}
+                onClick={() => { setSearch(''); choose({ status: '', agent: '', sort: '', q: '' }) }}
               >
                 Show all requests
               </button>
@@ -350,7 +406,10 @@ export function Inbox() {
                     {row.line_count ? money(row.total_cents, row.currency) : '—'}
                   </span>
                   <span className="inbox-status">
-                    <StatusMark status={row.status} />
+                    <StatusMark
+                      status={row.status}
+                      label={row.consent_expired ? 'Consent expired' : undefined}
+                    />
                   </span>
                   <span className="inbox-when mono">{when(row.created_at)}</span>
                 </Link>

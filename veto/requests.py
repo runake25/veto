@@ -570,6 +570,14 @@ def void(
 # ---------------------------------------------------------------------------
 # serialisation
 # ---------------------------------------------------------------------------
+def _consent_expired(row: dict) -> bool:
+    """True when an awaiting request's one consent lapsed before it was signed."""
+    if row.get("status") != "awaiting":
+        return False
+    expires = parse_iso(row.get("consent_expires_at"))
+    return expires is not None and expires <= datetime.now(timezone.utc)
+
+
 def public_summary(row: dict) -> dict:
     """The list shape: no lines, no events, just what an inbox row needs."""
     return {
@@ -587,6 +595,8 @@ def public_summary(row: dict) -> dict:
         "created_at": row.get("created_at"),
         "decided_at": row.get("decided_at"),
         "routine_name": row.get("routine_name"),
+        "consent_expires_at": row.get("consent_expires_at"),
+        "consent_expired": _consent_expired(row),
         "agent": {
             "id": row.get("agent_id"),
             "name": row.get("agent_name"),

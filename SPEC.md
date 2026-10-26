@@ -161,8 +161,8 @@ The expensive doors are rate limited in-process (requests, simulate, search, Sla
 | `GET /api/v1/agents/{id}/search?q=` | session | **M2 done** — scoped product search |
 | `POST /api/v1/simulate` | session | **M2 done** — dry-run, persists nothing |
 | `POST /api/v1/simulate/stream` | session | **M5 done** — the same dry run as SSE: `start`, one `event` per stage, one `item` per resolved cart line, `result` |
-| `GET /api/v1/overview` | session | **M3 done** — needs you, committed, settled this month, agents |
-| `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | **M3 done** — summaries and the full record |
+| `GET /api/v1/overview` | session | **M3 done** — needs you (signable only), expired consents, committed, settled this month, budget/remaining, agents |
+| `GET /api/v1/requests` · `GET /api/v1/requests/{id}` | session | **M3 done** — summaries and the full record; list takes `status` (incl. synthetic `expired`), `consent=actionable|expired`, `q`, whitelisted `sort`, and returns `total` + `sum_cents` |
 | `POST /api/v1/requests` | agent key / session | **M3 done** — persist, judge, consent, capture |
 | `POST /api/v1/requests/{id}/decision` · `/void` | approver / admin | **M3 done** — approve captures, veto/void move no money |
 | `GET/POST /api/v1/agents/{id}/keys` · `DELETE …/keys/{kid}` | admin | **M3 done** — `vkey_…`, shown once, stored hashed |
@@ -257,7 +257,7 @@ surfaces may show a count or a link. `/` opens the app; a hash router owns the r
 | Screen | Owns |
 |---|---|
 | **Overview** | needs-me count · committed-unsigned · settled this month · agent count · top-3 pending, linked |
-| **Inbox** | the only request list; status/agent filters and order live in the URL, with a filtered total |
+| **Inbox** | the only request list; status/agent/order/search live in the URL, with a filtered total; expired consents are their own tab |
 | **Record** | lines, reasons, consent hash, PayPal ids, events, approve/veto/void, expired-consent state |
 | **Agents** | workspace → agent budget hierarchy, rules + category overrides, vendors, categories, tags, channel, API key, the real month track (spent / unsigned / left), **test a request** (extract → choose → price → judge), **send it as a real request**, and **browse the catalogue** (the same scope, raw offers annotated with the rules each passes) |
 | **Analytics** | captured money by day, agent, vendor, category and rule, over one range; links into the filtered Inbox |
@@ -308,9 +308,9 @@ becomes a top nav; below 720px rows fold to two lines and nothing scrolls sidewa
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (259)
+python3 -m unittest discover -s tests    # backend tests (265)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
-python3 tools/check_m4.py                # 34 checks: screens' data, read-only (~1s)
+python3 tools/check_m4.py                # 37 checks: screens' data, read-only (~1s)
 ```
 
 M2 adds the parts you can click: `POST /api/v1/simulate` runs the real
@@ -332,7 +332,7 @@ history in the demo workspace, which is what Overview and Inbox read.
 
 M4 adds the read models the screens consume and a read-only harness:
 
-    python3 tools/check_m4.py                          # 32 checks, no money moved
+    python3 tools/check_m4.py                          # 37 checks, no money moved
 
 It proves Analytics reconciles with Overview (series sum = captured total = by-agent
 sum = by-vendor sum), Integrations reports Slack routing/wallet/keys, a record carries

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { api, ApiError, money, type Me, type RequestDetail, type RequestEvent } from '../api'
 import { motionSet } from '../components/motion'
@@ -82,6 +82,13 @@ function expiredNote(record: RequestDetail): string | null {
   return `The consent expired at ${when(expires)}. Ask the agent for a new request, or veto this one — no money can move.`
 }
 
+function consentLapsed(record: RequestDetail): boolean {
+  const expires = record.consent?.expires_at
+  return Boolean(
+    record.status === 'awaiting' && expires && new Date(expires) <= new Date(),
+  )
+}
+
 function verdictHeadline(record: RequestDetail): string {
   const actor = actorOf(record)
   if (record.status === 'captured') {
@@ -96,6 +103,7 @@ function verdictHeadline(record: RequestDetail): string {
   if (record.status === 'voided')
     return actor ? `${actor} voided this request before capture.` : 'Withdrawn before any capture.'
   if (record.status === 'approved') return 'Signed — the capture is owed.'
+  if (consentLapsed(record)) return 'The consent expired before anyone signed.'
   return 'Waiting for a signature.'
 }
 
@@ -221,6 +229,7 @@ function TrailCard({ record }: { record: RequestDetail }) {
  */
 export function Record({ me }: { me: Me }) {
   const { id = '' } = useParams()
+  const navigate = useNavigate()
   const [record, setRecord] = useState<RequestDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -229,6 +238,7 @@ export function Record({ me }: { me: Me }) {
   const [busy, setBusy] = useState<Action | null>(null)
   const [pendingAction, setPendingAction] = useState<Action | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
+  const [resending, setResending] = useState(false)
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
@@ -253,6 +263,20 @@ export function Record({ me }: { me: Me }) {
   const askAct = (action: Action) => {
     setActionError(null)
     setPendingAction(action)
+  }
+
+  const again = async () => {
+    if (!record) return
+    setResending(true)
+    setActionError(null)
+    try {
+      const next = await api.createRequest(record.text, record.agent.id)
+      navigate(`/inbox/${next.id}`)
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'The request was not sent again.')
+    } finally {
+      setResending(false)
+    }
   }
 
   const act = async (action: Action) => {
@@ -407,6 +431,16 @@ export function Record({ me }: { me: Me }) {
                     {busy === 'approve'
                       ? 'Capturing…'
                       : `Approve · ${money(record.total_cents, record.currency)}`}
+                  </button>
+                ) : null}
+                {consentLapsed(record) ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => void again()}
+                    disabled={busy !== null || resending}
+                  >
+                    {resending ? 'Sending…' : 'Send it again'}
                   </button>
                 ) : null}
                 {record?.status === 'awaiting' ? (

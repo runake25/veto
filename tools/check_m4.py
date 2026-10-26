@@ -232,6 +232,22 @@ def run_checks() -> bool:
               status == 200 and all(row.get("agent", {}).get("id") == agent_id for row in rows),
               f"{len(rows)} rows")
 
+    status, payload = client.call("GET", "/api/v1/requests?status=expired&limit=100")
+    expired = (data(payload) or {}).get("requests") or []
+    check("expired consents are their own queue",
+          status == 200 and all(row.get("consent_expired") for row in expired),
+          f"{len(expired)} expired")
+    status, payload = client.call("GET", "/api/v1/requests?status=awaiting&limit=100")
+    signable = (data(payload) or {}).get("requests") or []
+    check("the needs-you queue never contains a lapsed consent",
+          all(not row.get("consent_expired") for row in signable),
+          f"{len(signable)} signable")
+    status, payload = client.call("GET", "/api/v1/requests?q=zzzz-no-such-request")
+    found = (data(payload) or {})
+    check("search narrows the record to nothing for a nonsense query",
+          status == 200 and found.get("total") == 0 and found.get("sum_cents") == 0,
+          f"total={found.get('total')}")
+
     # --- a record is a document -------------------------------------------
     status, payload = client.call("GET", "/api/v1/requests?status=captured&limit=1")
     captured = ((data(payload) or {}).get("requests") or [None])[0]

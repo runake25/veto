@@ -3796,6 +3796,55 @@ a.agg-row:hover .agg-name b {
   margin-top: 1px;
 }
 
+/* small header utilities used by Overview and Inbox */
+.head-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.refresh-link {
+  border: 0;
+  padding: 2px 0;
+  background: none;
+  color: var(--faint);
+  font-size: 10.5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.refresh-link:hover {
+  color: var(--muted);
+}
+
+.refresh-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.agent-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filter-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-search .input {
+  width: 210px;
+  height: 32px;
+  font-size: 12px;
+}
+
 /* keyboard help: a real skip link and a screen-reader-only class */
 .skip-link {
   position: fixed;
@@ -4210,5 +4259,20 @@ a.agg-row:hover .agg-name b {
 
   .verdict-actions .btn {
     width: 100%;
+  }
+}
+
+@media (max-width: 860px) {
+  .filter-search {
+    width: 100%;
+  }
+
+  .filter-search .input {
+    width: 100%;
+  }
+
+  .head-tools {
+    width: 100%;
+    justify-content: flex-start;
   }
 }

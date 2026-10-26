@@ -47,11 +47,15 @@ export interface RequestSummary {
   line_count: number
   created_at: string
   decided_at: string | null
+  intent?: string | null
+  consent_expires_at?: string | null
+  consent_expired?: boolean
   agent: { id: string; name: string; tag: string }
 }
 
 export interface OverviewCounts {
   needs_you: number
+  expired_consents: number
   committed_cents: number
   settled_month_cents: number
   agent_count: number
@@ -61,6 +65,7 @@ export interface OverviewCounts {
 export interface OverviewData {
   counts: OverviewCounts
   pending: RequestSummary[]
+  expired: RequestSummary[]
   wallet: { status: string; mode: string }
   budget_cents: number
   remaining_cents: number
@@ -352,6 +357,7 @@ export interface ScopedSearch {
 
 export interface AgentInput {
   name: string
+  status?: 'active' | 'paused'
   tag: string
   channel: string | null
   monthly_cap_cents: number | null

@@ -45,6 +45,8 @@ export function Overview() {
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [overviewError, setOverviewError] = useState<string | null>(null)
+  const [reloadTick, setReloadTick] = useState(0)
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
@@ -61,7 +63,9 @@ export function Overview() {
     api
       .overview()
       .then((data) => {
-        if (live) setOverview(data)
+        if (!live) return
+        setOverview(data)
+        setRefreshedAt(new Date())
       })
       .catch(() => {
         if (live) setOverviewError('The live figures did not load.')
@@ -69,10 +73,25 @@ export function Overview() {
     return () => {
       live = false
     }
+  }, [reloadTick])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') setReloadTick((value) => value + 1)
+    }, 30_000)
+    return () => window.clearInterval(timer)
   }, [])
 
   const counts = overview?.counts
   const pending = overview?.pending ?? []
+  const expired = overview?.expired ?? []
+  const expiredCount = counts?.expired_consents ?? expired.length
+  const action =
+    counts && counts.needs_you > 0
+      ? { to: '/inbox?status=awaiting', label: 'Review requests' }
+      : expiredCount > 0
+        ? { to: '/inbox?status=expired', label: 'Review expired' }
+        : { to: '/inbox', label: 'Open the inbox' }
 
   return (
     <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
@@ -81,12 +100,23 @@ export function Overview() {
           <h1>Overview</h1>
           <p>What needs you, and where the money is.</p>
         </div>
-        <Link
-          className="btn btn-secondary"
-          to={counts && counts.needs_you > 0 ? '/inbox?status=awaiting' : '/inbox'}
-        >
-          {counts && counts.needs_you > 0 ? 'Review requests' : 'Open the inbox'}
-        </Link>
+        <div className="head-tools">
+          <button
+            type="button"
+            className="refresh-link mono"
+            onClick={() => setReloadTick((value) => value + 1)}
+          >
+            {refreshedAt
+              ? `Updated ${refreshedAt.toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })} · Refresh`
+              : 'Refresh'}
+          </button>
+          <Link className="btn btn-secondary" to={action.to}>
+            {action.label}
+          </Link>
+        </div>
       </motion.header>
 
       {overviewError ? <p className="inline-error">{overviewError}</p> : null}
@@ -95,7 +125,11 @@ export function Overview() {
         <Stat
           label="Needs you"
           value={counts ? String(counts.needs_you) : '—'}
-          note="requests waiting for a signature"
+          note={
+            expiredCount > 0
+              ? `${expiredCount} consent${expiredCount === 1 ? '' : 's'} expired — send again`
+              : 'requests waiting for a signature'
+          }
           tone={counts && counts.needs_you > 0 ? 'wait' : undefined}
         />
         <Stat
@@ -167,6 +201,16 @@ export function Overview() {
               </p>
             </div>
           )}
+          {expired.length ? (
+            <p className="card-footnote">
+              {expired.length === 1
+                ? `${expired[0]?.id ?? 'A request'} expired before it was signed — send it again from the record.`
+                : `${expired.length} requests expired before they were signed — send them again.`}{' '}
+              <Link className="text-link mono" to="/inbox?status=expired">
+                see expired →
+              </Link>
+            </p>
+          ) : null}
         </motion.section>
 
         <motion.section className="card" variants={m.riseIn}>

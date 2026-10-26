@@ -853,7 +853,12 @@ class Handler(BaseHTTPRequestHandler):
         workspace_id = session["workspace"]["id"]
         counts = STORE.overview_counts(workspace_id)
         pending = STORE.list_requests(
-            workspace_id, status="awaiting", limit=3, oldest_first=True
+            workspace_id, status="awaiting", limit=3, oldest_first=True,
+            consent_state="actionable",
+        )
+        expired = STORE.list_requests(
+            workspace_id, status="awaiting", limit=3, oldest_first=True,
+            consent_state="expired",
         )
         wallet = STORE.wallet(workspace_id) or {"status": "disconnected"}
         budget = int(session["workspace"].get("monthly_budget_cents") or 0)
@@ -861,6 +866,7 @@ class Handler(BaseHTTPRequestHandler):
         self._ok({
             "counts": counts,
             "pending": [veto_requests.public_summary(row) for row in pending],
+            "expired": [veto_requests.public_summary(row) for row in expired],
             "wallet": {
                 "status": wallet.get("status") or "disconnected",
                 "mode": SETTLEMENT.mode,
@@ -939,12 +945,23 @@ class Handler(BaseHTTPRequestHandler):
         workspace_id = session["workspace"]["id"]
         params = parse_qs(urlparse(self.path).query)
         status = (params.get("status") or [""])[0].strip() or None
-        if status and status not in REQUEST_STATUSES:
+        if status == "expired":
+            pass  # the synthetic expired tab is handled below
+        elif status and status not in REQUEST_STATUSES:
             self._api_error(400, "invalid_status", f"Unknown status: {status}")
         agent_id = (params.get("agent_id") or [""])[0].strip() or None
         sort = (params.get("sort") or [""])[0].strip()
         if sort and sort not in REQUEST_SORTS:
             self._api_error(400, "invalid_sort", f"Unknown order: {sort}")
+        q = (params.get("q") or [""])[0].strip()[:80] or None
+        consent_state = (params.get("consent") or [""])[0].strip() or None
+        if consent_state not in (None, "", "actionable", "expired"):
+            self._api_error(400, "invalid_consent", "consent must be actionable or expired.")
+        if status == "expired":
+            status = "awaiting"
+            consent_state = "expired"
+        elif status == "awaiting" and consent_state is None:
+            consent_state = "actionable"
         try:
             limit = max(1, min(100, int((params.get("limit") or ["50"])[0])))
             offset = max(0, int((params.get("offset") or ["0"])[0]))
@@ -957,13 +974,22 @@ class Handler(BaseHTTPRequestHandler):
             limit=limit,
             offset=offset,
             sort=sort or "priority",
+            q=q,
+            consent_state=consent_state,
         )
         self._ok({
             "requests": [veto_requests.public_summary(row) for row in rows],
             "returned": len(rows),
-            "total": STORE.count_requests(workspace_id, status=status, agent_id=agent_id),
-            "sum_cents": STORE.sum_requests(workspace_id, status=status, agent_id=agent_id),
+            "total": STORE.count_requests(
+                workspace_id, status=status, agent_id=agent_id, q=q,
+                consent_state=consent_state,
+            ),
+            "sum_cents": STORE.sum_requests(
+                workspace_id, status=status, agent_id=agent_id, q=q,
+                consent_state=consent_state,
+            ),
             "sort": sort or "priority",
+            "query": q or "",
         })
 
     def _v1_request_detail(self, request_id: str) -> None:

@@ -624,6 +624,8 @@ export function AgentDetail() {
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [confirmStatus, setConfirmStatus] = useState(false)
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
 
@@ -639,6 +641,21 @@ export function AgentDetail() {
       live = false
     }
   }, [id])
+
+  const setStatus = async (status: 'active' | 'paused') => {
+    if (!agent) return
+    setStatusBusy(true)
+    setEditError(null)
+    try {
+      const updated = await api.updateAgent(agent.id, { status })
+      setAgent(updated)
+      setConfirmStatus(false)
+    } catch (err) {
+      setEditError(err instanceof ApiError ? err.message : 'Could not change the agent state.')
+    } finally {
+      setStatusBusy(false)
+    }
+  }
 
   const save = async (input: AgentInput) => {
     if (!agent) return
@@ -705,9 +722,42 @@ export function AgentDetail() {
             </span>
           </div>
         </div>
-        <PressButton variant={editing ? 'quiet' : 'secondary'} onClick={() => setEditing((v) => !v)}>
-          {editing ? 'Close editor' : 'Edit rules'}
-        </PressButton>
+        <div className="agent-actions">
+          <PressButton
+            variant={editing ? 'quiet' : 'secondary'}
+            onClick={() => setEditing((v) => !v)}
+          >
+            {editing ? 'Close editor' : 'Edit rules'}
+          </PressButton>
+          {agent.status === 'active' ? (
+            confirmStatus ? (
+              <>
+                <PressButton
+                  variant="quiet"
+                  loading={statusBusy}
+                  onClick={() => void setStatus('paused')}
+                >
+                  Confirm pause
+                </PressButton>
+                <PressButton variant="quiet" onClick={() => setConfirmStatus(false)}>
+                  Cancel
+                </PressButton>
+              </>
+            ) : (
+              <PressButton variant="quiet" onClick={() => setConfirmStatus(true)}>
+                Pause agent
+              </PressButton>
+            )
+          ) : (
+            <PressButton
+              variant="secondary"
+              loading={statusBusy}
+              onClick={() => void setStatus('active')}
+            >
+              Resume agent
+            </PressButton>
+          )}
+        </div>
       </motion.header>
 
       <AnimatePresence initial={false}>

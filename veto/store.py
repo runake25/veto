@@ -84,6 +84,24 @@ _AGENT_FIELDS = (
 _MEMORY_PATHS = (":", ":memory:")
 
 
+def _consent_filter(alias: str, state: str | None, now: str | None = None) -> tuple[str, list]:
+    """A WHERE fragment for requests whose current consent lapsed (or has not).
+
+    ``state`` is ``"expired"`` (lapsed, unsigned) or ``"actionable"`` (its
+    negation). Anything else adds no condition.
+    """
+    if state not in ("expired", "actionable"):
+        return "", []
+    moment = now or now_iso()
+    expired = (
+        f"EXISTS (SELECT 1 FROM consents c WHERE c.request_id = {alias}.id "
+        "AND c.used_at IS NULL AND c.expires_at IS NOT NULL AND c.expires_at <= ?)"
+    )
+    if state == "expired":
+        return f" AND {expired}", [moment]
+    return f" AND NOT {expired}", [moment]
+
+
 # ---------------------------------------------------------------------------
 # small helpers
 # ---------------------------------------------------------------------------
@@ -1152,6 +1170,8 @@ class Store:
         offset: int = 0,
         oldest_first: bool = False,
         sort: str | None = None,
+        q: str | None = None,
+        consent_state: str | None = None,
     ) -> list[dict]:
         """Request summaries with the agent's name and tag joined in.
 
@@ -1166,7 +1186,9 @@ class Store:
             "(SELECT ro.name FROM routine_runs rr JOIN routines ro ON ro.id = rr.routine_id "
             " WHERE rr.request_id = r.id ORDER BY rr.started_at DESC, rr.rowid DESC LIMIT 1) "
             "AS routine_name, "
-            "(SELECT COUNT(*) FROM request_lines l WHERE l.request_id = r.id) AS line_count "
+            "(SELECT COUNT(*) FROM request_lines l WHERE l.request_id = r.id) AS line_count, "
+            "(SELECT c.expires_at FROM consents c WHERE c.request_id = r.id "
+            " ORDER BY c.issued_at DESC, c.rowid DESC LIMIT 1) AS consent_expires_at "
             "FROM requests r LEFT JOIN agents a ON a.id = r.agent_id "
             "WHERE r.workspace_id = ?"
         )
@@ -1180,6 +1202,18 @@ class Store:
         if before:
             sql += " AND r.created_at < ?"
             params.append(before)
+        needle = (q or "").strip().lower()
+        if needle:
+            like = f"%{needle}%"
+            sql += (
+                " AND (LOWER(r.title) LIKE ? OR LOWER(r.text) LIKE ? "
+                "OR LOWER(COALESCE(a.name, '')) LIKE ? "
+                "OR LOWER(COALESCE(r.requester, '')) LIKE ?)"
+            )
+            params.extend([like, like, like, like])
+        consent_sql, consent_params = _consent_filter("r", consent_state)
+        sql += consent_sql
+        params.extend(consent_params)
         orders = {
             "priority": (
                 "CASE r.status WHEN 'awaiting' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END "
@@ -1206,34 +1240,67 @@ class Store:
         workspace_id: str,
         status: str | None = None,
         agent_id: str | None = None,
+        *,
+        q: str | None = None,
+        consent_state: str | None = None,
     ) -> int:
         """Total of the filtered requests, so a list can reconcile its own money."""
-        sql = "SELECT COALESCE(SUM(total_cents), 0) AS n FROM requests WHERE workspace_id = ?"
+        where, params = self._request_filter(
+            workspace_id, status=status, agent_id=agent_id, q=q,
+            consent_state=consent_state,
+        )
+        row = self.one("SELECT COALESCE(SUM(r.total_cents), 0) AS n" + where, params)
+        return int(row["n"]) if row else 0
+
+    def _request_filter(
+        self,
+        workspace_id: str,
+        *,
+        status: str | None = None,
+        agent_id: str | None = None,
+        q: str | None = None,
+        consent_state: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        """The WHERE shared by list, count and sum so a filtered list reconciles."""
+        sql = (
+            " FROM requests r LEFT JOIN agents a ON a.id = r.agent_id "
+            "WHERE r.workspace_id = ?"
+        )
         params: list[Any] = [workspace_id]
         if status:
-            sql += " AND status = ?"
+            sql += " AND r.status = ?"
             params.append(status)
         if agent_id:
-            sql += " AND agent_id = ?"
+            sql += " AND r.agent_id = ?"
             params.append(agent_id)
-        row = self.one(sql, params)
-        return int(row["n"]) if row else 0
+        needle = (q or "").strip().lower()
+        if needle:
+            like = f"%{needle}%"
+            sql += (
+                " AND (LOWER(r.title) LIKE ? OR LOWER(r.text) LIKE ? "
+                "OR LOWER(COALESCE(a.name, '')) LIKE ? "
+                "OR LOWER(COALESCE(r.requester, '')) LIKE ?)"
+            )
+            params.extend([like, like, like, like])
+        consent_sql, consent_params = _consent_filter("r", consent_state)
+        sql += consent_sql
+        params.extend(consent_params)
+        return sql, params
 
     def count_requests(
         self,
         workspace_id: str,
         status: str | None = None,
         agent_id: str | None = None,
+        *,
+        q: str | None = None,
+        consent_state: str | None = None,
     ) -> int:
-        sql = "SELECT COUNT(*) AS n FROM requests WHERE workspace_id = ?"
-        params: list[Any] = [workspace_id]
-        if status:
-            sql += " AND status = ?"
-            params.append(status)
-        if agent_id:
-            sql += " AND agent_id = ?"
-            params.append(agent_id)
-        row = self.one(sql, params)
+        where, params = self._request_filter(
+            workspace_id, status=status, agent_id=agent_id, q=q,
+            consent_state=consent_state,
+        )
+        row = self.one("SELECT COUNT(*) AS n" + where, params)
         return int(row["n"]) if row else 0
 
     def spent_cents(
@@ -1448,10 +1515,20 @@ class Store:
         }
 
     def overview_counts(self, workspace_id: str, *, month_start: str | None = None) -> dict:
-        """The four Overview figures, computed from the one table that owns requests."""
-        needs_you = self.count_requests(workspace_id, status="awaiting")
+        """The Overview figures: only signable requests count as "needs you".
+
+        A lapsed consent is surfaced separately, because it cannot be signed
+        without asking the agent for a new request.
+        """
+        needs_you = self.count_requests(
+            workspace_id, status="awaiting", consent_state="actionable"
+        )
+        expired = self.count_requests(
+            workspace_id, status="awaiting", consent_state="expired"
+        )
         return {
             "needs_you": needs_you,
+            "expired_consents": expired,
             "committed_cents": self.committed_cents(workspace_id),
             "settled_month_cents": self.spent_cents(
                 workspace_id, since=month_start or month_start_iso()
