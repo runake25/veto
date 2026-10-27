@@ -295,6 +295,9 @@ function DonutBody({ data, kind }: { data: AnalyticsData; kind: RangeKind }) {
                 const offset = slices
                   .slice(0, index)
                   .reduce((sum, prior) => sum + prior.pct, 0)
+                // a hairline gap between slices: colour is not the only separator
+                const gap = slices.length > 1 ? 1.4 : 0
+                const arc = Math.max(0.4, slice.pct - gap)
                 return (
                   <circle
                     key={`${slice.label}-${index}`}
@@ -303,8 +306,8 @@ function DonutBody({ data, kind }: { data: AnalyticsData; kind: RangeKind }) {
                     cy="60"
                     r="48"
                     pathLength={100}
-                    strokeDasharray={`${slice.pct} ${100 - slice.pct}`}
-                    strokeDashoffset={-offset}
+                    strokeDasharray={`${arc} ${100 - arc}`}
+                    strokeDashoffset={-(offset + gap / 2)}
                   />
                 )
               })}

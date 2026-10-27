@@ -878,12 +878,12 @@
   /* Categorical spend: six distinct hues, all deep enough to read on white and
      to separate in grayscale. Money-state colours (green/red/amber) are not
      reused here — this chart is settled spend, not a verdict. */
-  --donut-0: #1b3f63; /* navy */
-  --donut-1: #1f6f6a; /* teal */
-  --donut-2: #704a6e; /* plum */
-  --donut-3: #8a6a1f; /* ochre */
-  --donut-4: #8c3b2e; /* rust */
-  --donut-5: #6b7280; /* other: slate */
+  --donut-0: #16395c; /* navy — darkest */
+  --donut-1: #c26a2a; /* burnt orange — warm, high contrast */
+  --donut-2: #1f8a80; /* teal — brighter than navy */
+  --donut-3: #a3457a; /* berry — distinct hue */
+  --donut-4: #6f7f2f; /* olive — distinct hue */
+  --donut-5: #7b8794; /* other: light slate */
   align-content: start;
 }
 
