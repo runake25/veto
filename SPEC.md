@@ -366,7 +366,7 @@ nothing scrolls sideways. `prefers-reduced-motion` collapses everything to the e
 python3 server.py            # http://127.0.0.1:8787/
 cd web && npm install && npm run build   # rebuild app/ after frontend changes
 cd web && npm run dev                    # dev server on :5173, proxies /api to :8787
-python3 -m unittest discover -s tests    # backend tests (343)
+python3 -m unittest discover -s tests    # backend tests (344)
 python3 tools/check_m3.py                # 19 checks: the request board over HTTP (~60s)
 python3 tools/check_m4.py                # 42 checks: screens' data, read-only (~1s)
 python3 tools/check_polish.py            # 21 checks: live feed, filters, delete guard, built controls

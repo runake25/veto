@@ -50,7 +50,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 9px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
   color: var(--faint);
   min-width: 0;
@@ -65,7 +65,7 @@
 }
 
 .plate-tag {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -101,7 +101,7 @@
 }
 
 .plate-charter .agent-plate-label {
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.08em;
 }
 
@@ -142,7 +142,7 @@
 }
 
 .plate-fact dt {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -153,7 +153,7 @@
 .plate-fact dd {
   margin: 0;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -164,7 +164,7 @@
 }
 
 .plate-job-next {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -206,7 +206,7 @@
 
 .fleet-empty .empty-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -250,7 +250,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 10px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--faint);
 }
@@ -266,7 +266,7 @@
 }
 
 .instance-tag {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -317,6 +317,11 @@
     padding: 14px 14px 12px;
   }
 
+  /* when the tag wraps to its own line on a phone, it must not start with a dot */
+  .instance-tag::before {
+    content: none;
+  }
+
   .plate-ident h2 {
     font-size: 19px;
   }
@@ -359,21 +364,10 @@
   justify-self: start;
 }
 
-/* the dry run is the primary tool on an agent, so it takes the width it needs;
-   the catalogue reference sits under it instead of competing beside it */
-.cols-tools {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
-}
-
-.cols-tools .inline-form {
-  max-width: 660px;
-}
-
 /* a plate can get narrow inside the two-column grid before the page does */
 @container (max-width: 380px) {
   .plate-serial {
-    font-size: 10.5px;
+    font-size: 12px;
   }
 
   /* no separator can be left dangling when the line wraps */
@@ -399,5 +393,223 @@
   /* the date is enough on a plate; the detail page carries the full timestamp */
   .plate-job-time {
     display: none;
+  }
+}
+
+/* ---- one tool card: dry run, then the catalogue under it ---------------- */
+
+.test-request .inline-form {
+  max-width: 660px;
+}
+
+.tool-sub {
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+
+.tool-sub-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tool-sub-head h3 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.tool-sub .card-lede {
+  margin: 0;
+}
+
+/* the row's own action: request this offer as a real request */
+.result-request {
+  margin-top: 2px;
+}
+
+.result-outcome {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--wash);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.result-outcome.is-error {
+  border-color: var(--negative);
+  background: var(--negative-soft);
+}
+
+.result-outcome-id {
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.result-outcome-amount {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- receipts: the requests this instance has raised -------------------- */
+
+.receipt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.receipt-list > li + li {
+  border-top: 1px solid var(--rule);
+}
+
+.receipt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin: 0 -7px;
+  padding: 9px 7px;
+  border-radius: var(--radius-control);
+  color: inherit;
+  text-decoration: none;
+}
+
+.receipt:hover {
+  background: var(--wash);
+}
+
+.receipt-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.receipt-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.008em;
+  color: var(--text);
+}
+
+.receipt-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--faint);
+}
+
+.receipt-id {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* the people are the receipt's attestation: a step stronger than the stamp */
+.receipt-person {
+  color: var(--muted);
+}
+
+.receipt-right {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+}
+
+.receipt-amount {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.receipt-skel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.receipt-skel:first-child {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+.orders-empty {
+  display: grid;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.orders-empty .empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.orders-empty .empty-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* the receipt keeps its money column on a phone; only the meta tightens */
+@media (max-width: 560px) {
+  .receipt {
+    gap: 10px;
+  }
+
+  .receipt-title {
+    font-size: 13.5px;
+  }
+
+  .receipt-amount {
+    font-size: 13.5px;
+  }
+}
+
+/* on a phone the row's price, verdict and action share one line under the offer
+   instead of stacking three deep */
+@media (max-width: 720px) {
+  .result-right {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px 10px;
+  }
+
+  .result-request {
+    height: 32px;
+    margin-top: 0;
+  }
+
+  .result-outcome {
+    gap: 8px;
+    padding: 6px 9px;
+    font-size: 12px;
   }
 }

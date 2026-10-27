@@ -1218,6 +1218,13 @@ class Handler(BaseHTTPRequestHandler):
         requester = str(body.get("requester") or "").strip() or None
         if requester is None:
             requester = (actor["user"] or {}).get("name") or agent.get("name")
+        # A hand-picked catalogue offer: the console's "Request this" sends the
+        # exact line a person chose, so the pipeline starts at PRICE instead of
+        # re-searching the title (and re-pricing it differently).
+        pinned = body.get("pinned")
+        pinned_lines = [pinned] if isinstance(pinned, dict) else None
+        if pinned_lines is not None and not text:
+            text = str(pinned.get("title") or "").strip()
         record = veto_requests.create(
             STORE,
             workspace=workspace,
@@ -1229,6 +1236,7 @@ class Handler(BaseHTTPRequestHandler):
             initiator_user_id=(actor["user"] or {}).get("id"),
             settlement=SETTLEMENT,
             route=route_note,
+            pinned_lines=pinned_lines,
         )
         _changed("requests")
         self._ok({"request": veto_requests.public_request(record)}, status=201)

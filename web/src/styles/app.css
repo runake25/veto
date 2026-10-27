@@ -160,7 +160,7 @@
   border-radius: 999px;
   background: var(--surface);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -172,12 +172,12 @@
   color: var(--muted);
   height: 20px;
   padding: 0 7px;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.02em;
 }
 
 .auth-meta-note {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   margin-left: 2px;
 }
@@ -215,7 +215,7 @@
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   display: grid;
   place-items: center;
@@ -267,13 +267,13 @@
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
 }
 
 .field-hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -416,7 +416,7 @@
   gap: 12px;
   margin: 22px 0 14px;
   color: var(--faint);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .auth-sep::before,
@@ -429,7 +429,7 @@
 
 .auth-small {
   margin: 9px 0 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--faint);
 }
@@ -437,7 +437,7 @@
 .auth-legend {
   margin: 0;
   text-align: center;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -462,7 +462,7 @@
 
 .boot-note {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -548,7 +548,7 @@
 }
 
 .brand-workspace {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   padding-left: 31px;
 }
@@ -567,7 +567,7 @@
 .nav-label {
   margin: 0 0 6px;
   padding: 0 10px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.05em;
   color: var(--faint);
@@ -616,7 +616,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--surface);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -674,7 +674,7 @@
 }
 
 .crumb {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--muted);
 }
@@ -686,7 +686,7 @@
 }
 
 .env {
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.02em;
   color: var(--faint);
 }
@@ -705,7 +705,7 @@
   color: #fff;
   display: grid;
   place-items: center;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
   flex: none;
@@ -722,7 +722,7 @@
 }
 
 .user-meta span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   text-transform: capitalize;
 }
@@ -787,7 +787,7 @@
 
 .screen-stamp {
   margin: 4px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -809,7 +809,7 @@
 }
 
 .agent-header .agent-channel {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .stats {
@@ -832,7 +832,7 @@
 
 .stat-label {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -851,7 +851,7 @@
 
 .stat-note {
   margin: 4px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -893,7 +893,7 @@
 }
 
 .card-note {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -920,7 +920,7 @@
 
 .empty-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
   max-width: 52ch;
@@ -961,19 +961,19 @@
 }
 
 .agent-channel {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
 .agent-caps {
   margin: 3px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
 .agent-scan {
   margin: 2px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -989,7 +989,7 @@
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -1034,7 +1034,7 @@
   background: var(--negative-soft);
   color: var(--negative-ink);
   border-radius: var(--radius-control);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -1044,7 +1044,7 @@
 
 /* a form error sits beside the field it names, never at the bottom of the form */
 .field-error {
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--negative-ink);
 }
@@ -1145,7 +1145,7 @@
 /* ---- agents: list, detail, forms, dry run, scoped search ---------------- */
 
 .breadcrumb {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   display: flex;
   gap: 6px;
@@ -1163,7 +1163,7 @@
 
 .card-lede {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.55;
   color: var(--muted);
   max-width: 62ch;
@@ -1220,7 +1220,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -1284,7 +1284,7 @@
 }
 
 .agent-plate-label {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.2;
   font-weight: 500;
   letter-spacing: 0.07em;
@@ -1332,7 +1332,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--muted);
 }
@@ -1369,7 +1369,7 @@
 }
 
 .head-count {
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--faint);
 }
@@ -1441,13 +1441,13 @@
 
 .checklist.quiet li {
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .text-link {
   color: var(--accent-ink);
   text-decoration: none;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .text-link:hover {
@@ -1531,13 +1531,13 @@
 
 .override-title span {
   font-weight: 400;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
 .override-note {
   margin: 0 0 8px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
   max-width: 62ch;
@@ -1592,7 +1592,7 @@
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -1621,7 +1621,7 @@
 
 .spec-label {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
 }
@@ -1656,7 +1656,7 @@
 }
 
 .band-track .track-legend {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1682,7 +1682,7 @@
 }
 
 .scope dt {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
 }
@@ -1690,7 +1690,7 @@
 .scope dd {
   margin: 0;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--text);
 }
@@ -1702,7 +1702,7 @@
 }
 
 .scope-mono {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1750,13 +1750,13 @@
 
 .dry-meta {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
 .dry-empty {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
   max-width: 52ch;
@@ -1764,7 +1764,7 @@
 
 .dry-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -1785,7 +1785,7 @@
 
 .near-head {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1813,12 +1813,12 @@
 }
 
 .near-vendor {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
 .near-price {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1845,7 +1845,7 @@
 .cart-qty,
 .cart-vendor,
 .cart-money {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1885,7 +1885,7 @@
 
 .rule-flag {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0;
   padding: 2px 6px;
   border-radius: 4px;
@@ -1904,13 +1904,13 @@
 }
 
 .reason-text {
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
 .reason-unblock {
   grid-column: 2;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1933,18 +1933,18 @@
 }
 
 .mini-step {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
 .mini-label {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text);
 }
 
 .mini-detail {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2018,7 +2018,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   flex-wrap: wrap;
 }
@@ -2032,7 +2032,7 @@
 .fit-bad,
 .fit-warn,
 .fit-good {
-  font-size: 11px;
+  font-size: 12px;
   padding: 1px 6px;
   border-radius: 999px;
 }
@@ -2165,7 +2165,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
   color: var(--muted);
@@ -2232,7 +2232,7 @@
 .btn-small {
   height: 28px;
   padding: 0 10px;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .btn-danger {
@@ -2300,7 +2300,7 @@
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   transition:
@@ -2326,7 +2326,7 @@
 }
 
 .filter-agent-label {
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--faint);
@@ -2361,7 +2361,7 @@
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--wash);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -2455,7 +2455,7 @@
 .inbox-meta {
   display: block;
   margin-top: 1px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -2469,17 +2469,17 @@
 
 .inbox-agent-tag {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
 .inbox-source {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
 .inbox-amount {
-  font-size: 12.5px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2488,7 +2488,7 @@
 }
 
 .inbox-when {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -2505,7 +2505,7 @@
   padding: 8px 16px;
   border-top: 1px solid var(--rule);
   background: var(--wash);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -2603,7 +2603,7 @@
 }
 
 .sort-mark {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   color: var(--control);
 }
@@ -2636,7 +2636,7 @@
   border: 0;
   background: none;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   text-decoration: underline;
   text-underline-offset: 3px;
   cursor: pointer;
@@ -2688,7 +2688,7 @@
 }
 
 .back-id {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -2706,7 +2706,7 @@
 }
 
 .record-kicker {
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.04em;
   color: var(--faint);
   text-transform: uppercase;
@@ -2726,7 +2726,7 @@
   flex-wrap: wrap;
   gap: 5px 8px;
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--muted);
 }
 
@@ -2736,7 +2736,7 @@
 }
 
 .record-tag {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -2809,7 +2809,7 @@
 }
 
 .verdict-kicker {
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--faint);
@@ -2825,7 +2825,7 @@
 
 .verdict-clean {
   margin: 2px 0 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.55;
   color: var(--muted);
   max-width: 74ch;
@@ -2842,7 +2842,7 @@
 
 .reason-figure {
   grid-column: 2;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -2899,7 +2899,7 @@
 .verdict-role {
   margin: 0;
   max-width: 230px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -2948,7 +2948,7 @@
 }
 
 .record-row dt {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   flex: none;
 }
@@ -2961,7 +2961,7 @@
 }
 
 .record-id-value {
-  font-size: 11px;
+  font-size: 12px;
   max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2982,7 +2982,7 @@
 
 .record-none {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.55;
   color: var(--muted);
 }
@@ -2990,7 +2990,7 @@
 .card-footnote {
   margin: 0;
   max-width: 72ch;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--faint);
 }
@@ -3015,7 +3015,7 @@
 .line-head {
   padding-bottom: 7px;
   border-bottom: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--faint);
@@ -3047,7 +3047,7 @@
 }
 
 .line-item b {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.35;
   overflow: hidden;
@@ -3056,7 +3056,7 @@
 }
 
 .line-meta {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3064,7 +3064,7 @@
 }
 
 .line-vendor {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3072,7 +3072,7 @@
 }
 
 .line-num {
-  font-size: 11.5px;
+  font-size: 12px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -3118,7 +3118,7 @@
 }
 
 .trail-seq {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -3134,13 +3134,13 @@
 }
 
 .trail-detail {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--muted);
 }
 
 .trail-at {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -3163,7 +3163,7 @@
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -3180,7 +3180,7 @@
 
 .range-label {
   margin: -8px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -3225,7 +3225,7 @@
   position: absolute;
   left: 0;
   bottom: -17px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -3265,7 +3265,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .agg-name b {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3274,7 +3274,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .agg-sub {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3322,7 +3322,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .rule-count {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -3333,7 +3333,7 @@ a.agg-row:hover .agg-name b {
 
 .rule-example {
   grid-column: 2;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--faint);
   overflow: hidden;
@@ -3371,7 +3371,7 @@ a.agg-row:hover .agg-name b {
   background: var(--hold-soft);
   color: var(--hold-ink);
   border-radius: var(--radius-control);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -3387,7 +3387,7 @@ a.agg-row:hover .agg-name b {
   border-radius: 4px;
   background: var(--surface);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.03em;
 }
 
@@ -3405,7 +3405,7 @@ a.agg-row:hover .agg-name b {
 
 .route-title {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--faint);
@@ -3427,12 +3427,12 @@ a.agg-row:hover .agg-name b {
 }
 
 .route-channel {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
 .route-arrow {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -3459,7 +3459,7 @@ a.agg-row:hover .agg-name b {
 
 .api-sample-label {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--faint);
@@ -3468,7 +3468,7 @@ a.agg-row:hover .agg-name b {
 
 .api-code {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.65;
   color: var(--muted);
   white-space: pre-wrap;
@@ -3501,7 +3501,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .key-secret-value {
-  font-size: 11px;
+  font-size: 12px;
   word-break: break-all;
   color: var(--accent-ink);
 }
@@ -3535,12 +3535,12 @@ a.agg-row:hover .agg-name b {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
 }
 
 .key-agent-tag {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -3561,13 +3561,13 @@ a.agg-row:hover .agg-name b {
 }
 
 .key-prefix {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text);
 }
 
 .key-meta {
   flex: 1;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -3576,7 +3576,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .key-none {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -3749,7 +3749,7 @@ a.agg-row:hover .agg-name b {
   .record-line .line-vendor,
   .record-line .line-num {
     display: inline;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--muted);
   }
 
@@ -3808,7 +3808,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .pending-agent {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -3825,14 +3825,14 @@ a.agg-row:hover .agg-name b {
 }
 
 .pending-meta {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
 }
 
 /* a URL in a card must be readable in full; it is pasted into another product */
 .record-url-value {
-  font-size: 11px;
+  font-size: 12px;
   overflow-wrap: anywhere;
   word-break: break-all;
   min-width: 0;
@@ -3847,13 +3847,13 @@ a.agg-row:hover .agg-name b {
 }
 
 .record-url-host {
-  font-size: 11px;
+  font-size: 12px;
   max-width: 300px;
   overflow-wrap: anywhere;
 }
 
 .record-url-path {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   overflow-wrap: anywhere;
 }
@@ -3879,12 +3879,12 @@ a.agg-row:hover .agg-name b {
 }
 
 .endpoint-label {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
 .endpoint-value {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
   color: var(--text);
   overflow-wrap: anywhere;
@@ -3913,7 +3913,7 @@ a.agg-row:hover .agg-name b {
   padding: 2px 0;
   background: none;
   color: var(--faint);
-  font-size: 11px;
+  font-size: 12px;
   text-decoration: underline;
   text-underline-offset: 3px;
   cursor: pointer;
@@ -4101,7 +4101,7 @@ a.agg-row:hover .agg-name b {
 
 .verdict-legend {
   margin: 2px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--faint);
   max-width: 280px;
@@ -4125,7 +4125,7 @@ a.agg-row:hover .agg-name b {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--accent-ink);
   white-space: nowrap;
 }
@@ -4159,7 +4159,7 @@ a.agg-row:hover .agg-name b {
 /* model routing: the agents and what the model may use to choose */
 .route-explain {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -4171,7 +4171,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .route-scope {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4189,7 +4189,7 @@ a.agg-row:hover .agg-name b {
 
 .dry-send-note {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--faint);
   max-width: 62ch;
@@ -4209,7 +4209,7 @@ a.agg-row:hover .agg-name b {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -4223,7 +4223,7 @@ a.agg-row:hover .agg-name b {
 
 .dry-live-note {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -4244,7 +4244,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .live-index {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -4255,7 +4255,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .live-state {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -4302,7 +4302,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .command-name {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--accent-ink);
 }
 
@@ -4319,7 +4319,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .command-hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   overflow-wrap: anywhere;
 }
@@ -4394,7 +4394,7 @@ a.agg-row:hover .agg-name b {
   align-items: center;
   flex-wrap: wrap;
   gap: 3px 9px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -4414,7 +4414,7 @@ a.agg-row:hover .agg-name b {
   border-radius: var(--radius-control);
   background: var(--hold-soft);
   color: var(--hold-ink);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -4455,7 +4455,7 @@ a.agg-row:hover .agg-name b {
 
 .routine-result-head {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.45;
   color: var(--text);
 }
@@ -4498,13 +4498,13 @@ a.agg-row:hover .agg-name b {
 }
 
 .routine-envelope-figure {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
 .routine-note {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.55;
   color: var(--muted);
 }
@@ -4525,7 +4525,7 @@ a.agg-row:hover .agg-name b {
 
 .routine-runs-head h3 {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
 }
@@ -4552,7 +4552,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .routine-run-when {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -4563,7 +4563,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .routine-run-money {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -4571,7 +4571,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .routine-run-link {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--accent);
   text-decoration: none;
   white-space: nowrap;
@@ -4588,7 +4588,7 @@ a.agg-row:hover .agg-name b {
 .routine-run-note {
   grid-column: 1 / -1;
   margin: 1px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--faint);
 }
@@ -4649,7 +4649,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .copy-value-text {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4716,7 +4716,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .account-caret {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -4753,7 +4753,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .account-who span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4777,7 +4777,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .account-facts dt {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -4792,7 +4792,7 @@ a.agg-row:hover .agg-name b {
 }
 
 .account-link {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text);
   text-decoration: none;
@@ -4809,7 +4809,7 @@ a.agg-row:hover .agg-name b {
   border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .account-signout:hover {
@@ -4849,7 +4849,7 @@ a.agg-row:hover .agg-name b {
 
   .topnav-item {
     padding: 0 7px;
-    font-size: 11.5px;
+    font-size: 12px;
   }
 }
 
@@ -4881,7 +4881,7 @@ a.agg-row:hover .agg-name b {
 .chart-table summary {
   width: fit-content;
   cursor: pointer;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
 }
@@ -4910,12 +4910,12 @@ a.agg-row:hover .agg-name b {
 .chart-table td {
   padding: 4px 8px;
   border-bottom: 1px solid var(--rule);
-  font-size: 11.5px;
+  font-size: 12px;
   text-align: left;
 }
 
 .chart-table thead th {
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--faint);
@@ -4954,7 +4954,7 @@ a.agg-row:hover .agg-name b {
 
 .danger-copy {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--negative-ink);
 }
@@ -5032,7 +5032,7 @@ a.agg-row:hover .agg-name b {
 
 .boot-hint {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.55;
   color: var(--faint);
 }

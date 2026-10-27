@@ -11,6 +11,8 @@ import {
   type AgentInput,
   type Me,
   type Reason,
+  type RequestDetail,
+  type RequestSummary,
   type Routine,
   type RoutineRun,
   type ScopedSearch,
@@ -22,6 +24,7 @@ import { AgentAvatar } from '../components/AgentAvatar'
 import { InlineError, Track } from '../components/Bits'
 import { FreshnessButton, useFreshness } from '../components/freshness'
 import { PipelineLive, type Live, type LiveItem } from '../components/live'
+import { StatusMark, requestLabel, when } from '../components/request'
 import { PressButton, Spinner } from '../components/PressButton'
 import { motionSet } from '../components/motion'
 import { State, agentState } from '../components/state'
@@ -210,8 +213,58 @@ function dryOutcome(outcome: SimulateResult['decision']['outcome']): {
   return { label: 'Refused', tone: 'neg' }
 }
 
-function DryRun({ agent }: { agent: Agent }) {
+const FIT_LABELS = {
+  category: 'category blocked',
+  per_unit: 'over per-item cap',
+  per_order: 'over per-order cap',
+} as const
+
+function FitFlags({ item }: { item: ScopedSearch['results'][number] }) {
+  const flags: { key: keyof typeof FIT_LABELS; soft: boolean }[] = []
+  if (!item.fits.category) flags.push({ key: 'category', soft: false })
+  if (!item.fits.per_order) flags.push({ key: 'per_order', soft: false })
+  if (!item.fits.per_unit) flags.push({ key: 'per_unit', soft: true })
+  if (!flags.length) return null
+  return (
+    <span className="fit-flags">
+      {flags.map((flag) => (
+        <span className={flag.soft ? 'fit-soon' : 'fit-bad'} key={flag.key}>
+          {FIT_LABELS[flag.key]}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+/** A search result's own verdict — not an approval, so it does not borrow the
+    consent language ("fits", not "auto-approved"). Only the category and
+    per-order caps are hard blocks; a per-item cap or the signature threshold
+    still lets a human say yes. */
+function FitPill({ item }: { item: ScopedSearch['results'][number] }) {
+  if (!item.fits.category || !item.fits.per_order) {
+    return <State tone="neg">Blocked</State>
+  }
+  if (!item.fits.per_unit || !item.fits.threshold) {
+    return <State tone="wait">Needs signature</State>
+  }
+  return <State tone="pos">Fits</State>
+}
+
+type AddOutcome =
+  | { state: 'done'; request: RequestDetail }
+  | { state: 'error'; message: string }
+
+/**
+ * The one tool card on an agent: judge a message first, then act on a real offer.
+ * The dry run streams the pipeline and never orders; the catalogue below it
+ * lists what the approved merchants actually return, and one press turns an
+ * offer into a real request that lands in the Inbox and in the receipts.
+ */
+function TestRequest({ agent, onCreated }: { agent: Agent; onCreated: () => void }) {
   const reduce = useReducedMotion()
+  const navigate = useNavigate()
+
+  // the dry run
   const [text, setText] = useState(() => defaultCart(agent))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -220,7 +273,14 @@ function DryRun({ agent }: { agent: Agent }) {
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const runAbort = useRef<AbortController | null>(null)
-  const navigate = useNavigate()
+
+  // the catalogue under it
+  const [query, setQuery] = useState(() => defaultQuery(agent))
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [search, setSearch] = useState<ScopedSearch | null>(null)
+  const [adding, setAdding] = useState<string | null>(null)
+  const [outcomes, setOutcomes] = useState<Record<string, AddOutcome>>({})
 
   useEffect(() => () => runAbort.current?.abort(), [])
 
@@ -285,8 +345,52 @@ function DryRun({ agent }: { agent: Agent }) {
     }
   }
 
+  const find = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!query.trim() || searching) return
+    setSearching(true)
+    setSearchError(null)
+    try {
+      setSearch(await api.searchAgent(agent.id, query))
+      setOutcomes({})
+    } catch (err) {
+      setSearchError(err instanceof ApiError ? err.message : 'The search failed.')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  /* One real request for this agent: the offer's own title, quantity one.
+     Nothing is faked — the outcome is the record the engine wrote. */
+  const requestItem = async (item: ScopedSearch['results'][number], key: string) => {
+    if (adding) return
+    setAdding(key)
+    setOutcomes((prev) => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+    try {
+      const record = await api.createPinnedRequest(agent.id, item)
+      setOutcomes((prev) => ({ ...prev, [key]: { state: 'done', request: record } }))
+      onCreated()
+    } catch (err) {
+      setOutcomes((prev) => ({
+        ...prev,
+        [key]: {
+          state: 'error',
+          message: err instanceof ApiError ? err.message : 'The request was not created.',
+        },
+      }))
+    } finally {
+      setAdding(null)
+    }
+  }
+
+  const scope = search?.scoped_by
+
   return (
-    <section className="card">
+    <section className="card test-request">
       <header className="card-head">
         <h2>Test a request</h2>
         <span className="card-note">dry run</span>
@@ -431,161 +535,240 @@ function DryRun({ agent }: { agent: Agent }) {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      <section className="tool-sub" aria-label="Catalogue">
+        <header className="tool-sub-head">
+          <h3>Catalogue</h3>
+          <span className="card-note">scoped to the rules</span>
+        </header>
+        <p className="card-lede">
+          Live offers from the approved merchants, tagged with the rule each one fails.
+        </p>
+        <form className="inline-form" onSubmit={find}>
+          <input
+            className="input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="what should it look for?"
+            disabled={searching}
+            aria-label="Product search"
+          />
+          <PressButton type="submit" loading={searching} variant="secondary">
+            {searching ? (
+              <>
+                <Spinner label="searching" /> Searching…
+              </>
+            ) : (
+              'Search'
+            )}
+          </PressButton>
+        </form>
+
+        {searchError ? <p className="inline-error">{searchError}</p> : null}
+
+        <AnimatePresence mode="wait">
+          {search ? (
+            <motion.div
+              key={`${search.query}-${search.results.length}`}
+              initial={{ opacity: 0, y: reduce ? 0 : 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, transition: { duration: 0.1 } }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <p className="scoped-line">
+                Searched {scope?.vendors.length ?? 0} merchants
+                {scope?.max_price_cents
+                  ? `, under ${money(scope.max_price_cents)} per order`
+                  : ''}
+              </p>
+
+              {search.results.length ? (
+                <ul className="search-results">
+                  {search.results.map((item, i) => {
+                    const key = `${item.sku ?? item.title}-${i}`
+                    const outcome = outcomes[key]
+                    return (
+                      <motion.li
+                        key={key}
+                        initial={{ opacity: 0, y: reduce ? 0 : 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: reduce ? 0 : i * 0.04, duration: 0.2 }}
+                      >
+                        <span className="thumb">
+                          {item.image ? <img src={item.image} alt="" loading="lazy" /> : null}
+                        </span>
+                        <span className="result-main">
+                          <a
+                            className="result-title"
+                            href={item.url ?? '#'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {item.title}
+                          </a>
+                          <span className="result-meta">
+                            <span className="mono">{item.vendor ?? 'unknown merchant'}</span>
+                            {item.category ? (
+                              <span className="chip chip-quiet">{item.category}</span>
+                            ) : null}
+                          </span>
+                          <FitFlags item={item} />
+                        </span>
+                        <span className="result-right">
+                          <span className="result-price mono">{money(item.unit_cents)}</span>
+                          <FitPill item={item} />
+                          {outcome?.state === 'done' ? null : (
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-small result-request"
+                              onClick={() => void requestItem(item, key)}
+                              disabled={adding !== null}
+                            >
+                              {adding === key ? 'Requesting…' : 'Request this'}
+                            </button>
+                          )}
+                        </span>
+                        {outcome ? (
+                          <span
+                            className={`result-outcome${
+                              outcome.state === 'error' ? ' is-error' : ''
+                            }`}
+                            role={outcome.state === 'error' ? 'alert' : 'status'}
+                          >
+                            {outcome.state === 'done' ? (
+                              <>
+                                <span className="mono result-outcome-id">
+                                  {requestLabel(outcome.request.seq)}
+                                </span>
+                                <StatusMark status={outcome.request.status} />
+                                <span className="result-outcome-amount">
+                                  {money(outcome.request.total_cents)}
+                                </span>
+                                <Link
+                                  className="text-link"
+                                  to={`/inbox/${outcome.request.id}`}
+                                >
+                                  Open record
+                                </Link>
+                              </>
+                            ) : (
+                              <span className="inline-error">{outcome.message}</span>
+                            )}
+                          </span>
+                        ) : null}
+                      </motion.li>
+                    )
+                  })}
+                </ul>
+              ) : (
+                <p className="dry-empty">Nothing matched inside these rules.</p>
+              )}
+
+              {search.filtered.irrelevant ? (
+                <p className="fineprint">
+                  {search.filtered.irrelevant} unrelated catalogue{' '}
+                  {search.filtered.irrelevant === 1 ? 'offer was' : 'offers were'} left out.
+                </p>
+              ) : null}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </section>
     </section>
   )
 }
 
-const FIT_LABELS = {
-  category: 'category blocked',
-  per_unit: 'over per-item cap',
-  per_order: 'over per-order cap',
-} as const
-
-function FitFlags({ item }: { item: ScopedSearch['results'][number] }) {
-  const flags: { key: keyof typeof FIT_LABELS; soft: boolean }[] = []
-  if (!item.fits.category) flags.push({ key: 'category', soft: false })
-  if (!item.fits.per_order) flags.push({ key: 'per_order', soft: false })
-  if (!item.fits.per_unit) flags.push({ key: 'per_unit', soft: true })
-  if (!flags.length) return null
-  return (
-    <span className="fit-flags">
-      {flags.map((flag) => (
-        <span className={flag.soft ? 'fit-soon' : 'fit-bad'} key={flag.key}>
-          {FIT_LABELS[flag.key]}
-        </span>
-      ))}
-    </span>
-  )
-}
-
-/** A search result's own verdict — not an approval, so it does not borrow the
-    consent language ("fits", not "auto-approved"). Only the category and
-    per-order caps are hard blocks; a per-item cap or the signature threshold
-    still lets a human say yes. */
-function FitPill({ item }: { item: ScopedSearch['results'][number] }) {
-  if (!item.fits.category || !item.fits.per_order) {
-    return <State tone="neg">Blocked</State>
-  }
-  if (!item.fits.per_unit || !item.fits.threshold) {
-    return <State tone="wait">Needs signature</State>
-  }
-  return <State tone="pos">Fits</State>
-}
-
-function FindProduct({ agent }: { agent: Agent }) {
-  const [query, setQuery] = useState(() => defaultQuery(agent))
-  const [busy, setBusy] = useState(false)
+/**
+ * The receipts: every request this instance has raised, newest first. A bot
+ * that spends is only trustworthy if its paper trail sits beside its charter —
+ * who asked, who signed, what it cost, where the record is.
+ */
+function Orders({ agent, refreshTick }: { agent: Agent; refreshTick: number }) {
+  const [rows, setRows] = useState<RequestSummary[] | null>(null)
+  const [total, setTotal] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<ScopedSearch | null>(null)
-  const reduce = useReducedMotion()
+  const [retry, setRetry] = useState(0)
 
-  const run = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!query.trim() || busy) return
-    setBusy(true)
+  useEffect(() => {
+    let live = true
     setError(null)
-    try {
-      setResult(await api.searchAgent(agent.id, query))
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'The search failed.')
-    } finally {
-      setBusy(false)
+    api
+      .requests(`agent_id=${encodeURIComponent(agent.id)}&limit=15&sort=newest`)
+      .then((data) => {
+        if (!live) return
+        setRows(data.requests)
+        setTotal(data.total)
+      })
+      .catch(() => {
+        if (live) setError('The orders did not load.')
+      })
+    return () => {
+      live = false
     }
-  }
+  }, [agent.id, refreshTick, retry])
 
-  const scope = result?.scoped_by
   return (
-    <section className="card">
+    <section className="card orders">
       <header className="card-head">
-        <h2>Browse the catalogue</h2>
-        <span className="card-note">scoped to the rules</span>
+        <h2>Orders</h2>
+        <span className="card-note">
+          {rows
+            ? total > rows.length
+              ? `Latest ${rows.length} of ${total}`
+              : `${total} ${total === 1 ? 'order' : 'orders'}`
+            : 'receipts'}
+        </span>
       </header>
-      <p className="card-lede">
-        Live offers from the approved merchants, tagged with the rule each one fails.
-      </p>
-      <form className="inline-form" onSubmit={run}>
-        <input
-          className="input"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="what should it look for?"
-          disabled={busy}
-          aria-label="Product search"
-        />
-        <PressButton type="submit" loading={busy} variant="secondary">
-          {busy ? (
-            <>
-              <Spinner label="searching" /> Searching…
-            </>
-          ) : (
-            'Search'
-          )}
-        </PressButton>
-      </form>
 
-      {error ? <p className="inline-error">{error}</p> : null}
+      {error ? (
+        <InlineError onRetry={() => setRetry((value) => value + 1)}>{error}</InlineError>
+      ) : null}
 
-      <AnimatePresence mode="wait">
-        {result ? (
-          <motion.div
-            key={`${result.query}-${result.results.length}`}
-            initial={{ opacity: 0, y: reduce ? 0 : 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, transition: { duration: 0.1 } }}
-            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-          >
-            <p className="scoped-line">
-              Searched {scope?.vendors.length ?? 0} merchants
-              {scope?.max_price_cents ? `, under ${money(scope.max_price_cents)} per order` : ''}
-            </p>
+      {!rows && !error ? (
+        <div className="receipt-list receipt-list-skel" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <div className="receipt-skel" key={i}>
+              <span className="skel" style={{ width: '46%', height: 11 }} />
+              <span className="skel" style={{ width: 64, height: 11 }} />
+            </div>
+          ))}
+        </div>
+      ) : null}
 
-            {result.results.length ? (
-              <ul className="search-results">
-                {result.results.map((item, i) => (
-                  <motion.li
-                    key={`${item.sku ?? item.title}-${i}`}
-                    initial={{ opacity: 0, y: reduce ? 0 : 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: reduce ? 0 : i * 0.04, duration: 0.2 }}
-                  >
-                    <span className="thumb">
-                      {item.image ? <img src={item.image} alt="" loading="lazy" /> : null}
-                    </span>
-                    <span className="result-main">
-                      <a
-                        className="result-title"
-                        href={item.url ?? '#'}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {item.title}
-                      </a>
-                      <span className="result-meta">
-                        <span className="mono">{item.vendor ?? 'unknown merchant'}</span>
-                        {item.category ? <span className="chip chip-quiet">{item.category}</span> : null}
-                      </span>
-                      <FitFlags item={item} />
-                    </span>
-                    <span className="result-right">
-                      <span className="result-price mono">{money(item.unit_cents)}</span>
-                      <FitPill item={item} />
-                    </span>
-                  </motion.li>
-                ))}
-              </ul>
-            ) : (
-              <p className="dry-empty">Nothing matched inside these rules.</p>
-            )}
+      {rows && rows.length ? (
+        <ul className="receipt-list">
+          {rows.map((req) => (
+            <li key={req.id}>
+              <Link className="receipt" to={`/inbox/${req.id}`}>
+                <span className="receipt-main">
+                  <span className="receipt-title">{req.title}</span>
+                  <span className="receipt-meta">
+                    <span className="mono receipt-id">{requestLabel(req.seq)}</span>
+                    <span className="receipt-when">{when(req.created_at)}</span>
+                    {req.requester ? (
+                      <span className="receipt-person">Asked by {req.requester}</span>
+                    ) : null}
+                    {req.approver ? (
+                      <span className="receipt-person">Signed by {req.approver.name}</span>
+                    ) : null}
+                  </span>
+                </span>
+                <span className="receipt-right">
+                  <span className="receipt-amount">{money(req.total_cents)}</span>
+                  <StatusMark status={req.status} />
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
-            {result.filtered.irrelevant ? (
-              <p className="fineprint">
-                {result.filtered.irrelevant} unrelated catalogue{' '}
-                {result.filtered.irrelevant === 1 ? 'offer was' : 'offers were'} left out.
-              </p>
-            ) : null}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+      {rows && !rows.length ? (
+        <div className="orders-empty">
+          <p className="empty-title">No orders yet.</p>
+          <p className="empty-note">Anything this bot requests shows up here as a receipt.</p>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -607,6 +790,7 @@ export function AgentDetail({ me }: { me: Me }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [ordersTick, setOrdersTick] = useState(0)
   const { tick, markLoaded } = useFreshness()
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
@@ -646,6 +830,15 @@ export function AgentDetail({ me }: { me: Me }) {
 
   const refresh = async () => {
     applyDetail(await api.agentDetail(id))
+  }
+
+  /* A catalogue request is real money traffic: re-read the agent (spent and
+     committed move) and the receipts list under it. */
+  const requestCreated = () => {
+    setOrdersTick((value) => value + 1)
+    void refresh().catch(() => {
+      // the live tick and the next visit will catch up; the request exists
+    })
   }
 
   const setStatus = async (status: 'active' | 'paused') => {
@@ -742,12 +935,17 @@ export function AgentDetail({ me }: { me: Me }) {
           <span className="skel" style={{ width: 132, height: 16 }} />
           <span className="skel" style={{ width: '100%', height: 62, marginTop: 14 }} />
         </div>
-        <div className="cols cols-tools">
-          {[0, 1].map((i) => (
-            <div className="card" key={i}>
-              <span className="skel" style={{ width: '42%', height: 16 }} />
-              <span className="skel" style={{ width: '100%', height: 84, marginTop: 14 }} />
-            </div>
+        <div className="card">
+          <span className="skel" style={{ width: '34%', height: 16 }} />
+          <span className="skel" style={{ width: '100%', height: 38, marginTop: 14 }} />
+          <span className="skel" style={{ width: '100%', height: 10, marginTop: 22 }} />
+          <span className="skel" style={{ width: '72%', height: 10, marginTop: 8 }} />
+          <span className="skel" style={{ width: '100%', height: 38, marginTop: 18 }} />
+        </div>
+        <div className="card">
+          <span className="skel" style={{ width: '26%', height: 16 }} />
+          {[0, 1, 2].map((i) => (
+            <span className="skel" style={{ width: '100%', height: 26, marginTop: i ? 10 : 16 }} key={i} />
           ))}
         </div>
       </div>
@@ -867,14 +1065,13 @@ export function AgentDetail({ me }: { me: Me }) {
         />
       </motion.div>
 
-      <div className="cols cols-tools">
-        <motion.div variants={m.riseIn}>
-          <DryRun agent={agent} />
-        </motion.div>
-        <motion.div variants={m.riseIn}>
-          <FindProduct agent={agent} />
-        </motion.div>
-      </div>
+      <motion.div variants={m.riseIn}>
+        <TestRequest agent={agent} onCreated={requestCreated} />
+      </motion.div>
+
+      <motion.div variants={m.riseIn}>
+        <Orders agent={agent} refreshTick={tick + ordersTick} />
+      </motion.div>
 
       {me.user.role === 'viewer' ? null : (
         <motion.section className="card danger-card" variants={m.riseIn}>

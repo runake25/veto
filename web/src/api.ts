@@ -47,6 +47,8 @@ export interface RequestSummary {
   line_count: number
   created_at: string
   decided_at: string | null
+  /** The person who signed or vetoed it, for receipt rows. */
+  approver?: { id: string; name: string } | null
   intent?: string | null
   consent_expires_at?: string | null
   consent_expired?: boolean
@@ -767,6 +769,13 @@ export const api = {
     post<{ request: RequestDetail }>('/api/v1/requests', {
       text,
       agent_id: agentId ?? null,
+    }).then((d) => d.request),
+  /** Order exactly the offer a person picked from the catalogue (no re-pricing). */
+  createPinnedRequest: (agentId: string, line: PricedLine) =>
+    post<{ request: RequestDetail }>('/api/v1/requests', {
+      text: line.title,
+      agent_id: agentId,
+      pinned: line,
     }).then((d) => d.request),
   login: (email: string, password: string) =>
     post<SessionData>('/api/v1/login', { email, password }),

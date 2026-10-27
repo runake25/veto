@@ -664,6 +664,22 @@ def _consent_expired(row: dict) -> bool:
     return expires is not None and expires <= datetime.now(timezone.utc)
 
 
+def _approver(row: dict) -> dict | None:
+    """The human who signed or vetoed this request, or None if nobody has yet.
+
+    Accepts either a list row (``approver_id``) or a full request record
+    (``approver_user_id``); both queries join the users table for the display
+    name. Falls back to the id if the user row is gone, so the shape is stable.
+    """
+    approver_id = row.get("approver_user_id") or row.get("approver_id")
+    if not approver_id:
+        return None
+    return {
+        "id": approver_id,
+        "name": row.get("approver_name") or approver_id,
+    }
+
+
 def public_summary(row: dict) -> dict:
     """The list shape: no lines, no events, just what an inbox row needs."""
     return {
@@ -676,6 +692,7 @@ def public_summary(row: dict) -> dict:
         "currency": row.get("currency") or CURRENCY,
         "channel": row.get("channel"),
         "requester": row.get("requester"),
+        "approver": _approver(row),
         "origin": row.get("origin"),
         "line_count": row.get("line_count") or 0,
         "created_at": row.get("created_at"),
@@ -708,6 +725,7 @@ def public_request(record: dict, *, full: bool = True) -> dict:
         "created_at": record.get("created_at"),
         "decided_at": record.get("decided_at"),
         "approver_user_id": record.get("approver_user_id"),
+        "approver": _approver(record),
     }
     agent = record.get("agent") or {}
     data["agent"] = {

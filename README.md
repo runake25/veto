@@ -137,7 +137,7 @@ captures with real ids.
 ## Verify
 
 ```bash
-python3 -m unittest discover -s tests   # 343 tests
+python3 -m unittest discover -s tests   # 344 tests
 python3 tools/check_m4.py               # 42 checks: every number a screen reads (read-only)
 python3 tools/check_polish.py           # 21 checks: live feed, filters, delete guards, built controls
 python3 tools/check_m3.py               # 19 checks: the request loop over HTTP (real pipeline)
@@ -176,7 +176,7 @@ veto/         store · pipeline · policy · requests · settlement · routines 
               engine · channel3 · paypal_client · auth · seed · slack_commands
 web/src/      React console (screens, components, per-screen stylesheets)
 app/          built console served at / and /app/
-tests/        343 tests        tools/  live check harnesses + demo history
+tests/        344 tests        tools/  live check harnesses + demo history
 slack/        app manifest + signature verifier     shots/  screenshots used here
 Dockerfile · render.yaml · start.sh · .env.example · DESIGN.md · SPEC.md · PRODUCT.md
 ```

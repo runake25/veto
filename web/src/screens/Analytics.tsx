@@ -216,6 +216,125 @@ function RuleRows({ data }: { data: AnalyticsData }) {
   )
 }
 
+interface DonutSlice {
+  label: string
+  cents: number
+  pct: number
+}
+
+/** Top five captured rows plus Other; the centre total is the sum of the rows. */
+function buildDonut(rows: { label: string; captured_cents: number }[]): {
+  slices: DonutSlice[]
+  total: number
+} {
+  const positive = rows
+    .filter((row) => row.captured_cents > 0)
+    .sort((a, b) => b.captured_cents - a.captured_cents)
+  const total = positive.reduce((sum, row) => sum + row.captured_cents, 0)
+  if (!total) return { slices: [], total: 0 }
+  const slices: DonutSlice[] = positive.slice(0, 5).map((row) => ({
+    label: row.label,
+    cents: row.captured_cents,
+    pct: (row.captured_cents / total) * 100,
+  }))
+  if (positive.length > 5) {
+    const other = positive.slice(5).reduce((sum, row) => sum + row.captured_cents, 0)
+    slices.push({ label: 'Other', cents: other, pct: (other / total) * 100 })
+  }
+  return { slices, total }
+}
+
+/**
+ * Captured share, in the same navy family as the rest of the data. Categories are
+ * the real split; agent is the fallback when a workspace has no category spend.
+ */
+function DonutBody({ data, kind }: { data: AnalyticsData; kind: RangeKind }) {
+  const category = buildDonut(data.by_category)
+  const fallback = buildDonut(data.by_agent)
+  const usingAgents = category.total === 0 && fallback.total > 0
+  const { slices, total } = usingAgents ? fallback : category
+  const dimension = usingAgents ? 'agent' : 'category'
+  const when = kind === 'month' ? 'this month' : 'this range'
+  const unit = usingAgents
+    ? slices.length === 1
+      ? 'agent'
+      : 'agents'
+    : slices.length === 1
+      ? 'category'
+      : 'categories'
+  const note = slices.length > 5 ? 'top 5 + other' : `${slices.length} ${unit}`
+
+  if (!total) {
+    return (
+      <>
+        <header className="card-head">
+          <h2>{usingAgents ? 'By agent' : 'By category'}</h2>
+        </header>
+        <p className="donut-empty">No captured spend in this range.</p>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <header className="card-head">
+        <h2>{usingAgents ? 'By agent' : 'By category'}</h2>
+        <span className="card-note mono">{note}</span>
+      </header>
+      <div className="donut-layout">
+        <div
+          className="donut-figure"
+          role="img"
+          aria-label={`Captured spend by ${dimension}: ${money(total)}. ${slices
+            .map((slice) => `${slice.label} ${money(slice.cents)}`)
+            .join(', ')}`}
+        >
+          <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+            <g transform="rotate(-90 60 60)">
+              {slices.map((slice, index) => {
+                const offset = slices
+                  .slice(0, index)
+                  .reduce((sum, prior) => sum + prior.pct, 0)
+                return (
+                  <circle
+                    key={`${slice.label}-${index}`}
+                    className={`donut-seg donut-seg-${index}`}
+                    cx="60"
+                    cy="60"
+                    r="48"
+                    pathLength={100}
+                    strokeDasharray={`${slice.pct} ${100 - slice.pct}`}
+                    strokeDashoffset={-offset}
+                  />
+                )
+              })}
+            </g>
+          </svg>
+          <div className="donut-centre" aria-hidden="true">
+            <span className="donut-total">{money(total)}</span>
+            <span className="donut-centre-label">captured</span>
+          </div>
+        </div>
+        <ul className="donut-legend">
+          {slices.map((slice, index) => (
+            <li key={`${slice.label}-${index}`}>
+              <span className={`donut-swatch donut-swatch-${index}`} aria-hidden="true" />
+              <span className="donut-name" title={slice.label}>
+                {slice.label}
+              </span>
+              <span className="donut-amount">{money(slice.cents)}</span>
+              <span className="donut-pct">{slice.pct.toFixed(1)}%</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <p className="donut-caption">
+        captured by {dimension} · {when}
+      </p>
+    </>
+  )
+}
+
 /**
  * Analytics: the same stored rows, added up — never a second set of numbers.
  */
@@ -357,15 +476,8 @@ export function Analytics() {
               <AgentRows data={data} />
             </motion.section>
 
-            <motion.section className="card" variants={m.riseIn}>
-              <header className="card-head">
-                <h2>What the rules caught</h2>
-                <span className="card-note mono">triggers</span>
-              </header>
-              <RuleRows data={data} />
-              <p className="card-footnote">
-                A request can trigger several rules, so these counts overlap.
-              </p>
+            <motion.section className="card donut-card" variants={m.riseIn}>
+              <DonutBody data={data} kind={kind} />
             </motion.section>
 
             <motion.section className="card" variants={m.riseIn}>
@@ -378,10 +490,13 @@ export function Analytics() {
 
             <motion.section className="card" variants={m.riseIn}>
               <header className="card-head">
-                <h2>By category</h2>
-                <span className="card-note mono">settled</span>
+                <h2>What the rules caught</h2>
+                <span className="card-note mono">triggers</span>
               </header>
-              <SpendRows rows={data.by_category} empty="No category was paid in this range." />
+              <RuleRows data={data} />
+              <p className="card-footnote">
+                A request can trigger several rules, so these counts overlap.
+              </p>
             </motion.section>
           </div>
 

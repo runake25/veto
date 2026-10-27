@@ -415,6 +415,59 @@ class LifecycleTestCase(unittest.TestCase):
         self.assertEqual(counts["settled_month_cents"], 2_000)
         self.assertEqual(counts["agent_count"], 3)
 
+    def test_summaries_carry_the_approver_only_once_decided(self) -> None:
+        approver = self.store.create_user(
+            self.workspace["id"],
+            "caroline@brackenfield.demo",
+            name="Caroline Hayes",
+            password_hash="x",
+            role="approver",
+        )
+        review = self.make_agent(approval_threshold_cents=100)
+        awaiting = self.create(agent=review)
+        self.assertEqual(awaiting["status"], "awaiting")
+        veto_requests.approve(
+            self.store,
+            workspace=self.workspace,
+            request_id=awaiting["id"],
+            user=approver,
+            settlement=FakeSettlement(),
+        )
+        captured = self.store.request(self.workspace["id"], awaiting["id"])
+        self.assertEqual(captured["status"], "captured")
+
+        # list rows join the signer's name; detail rows do the same
+        row = next(
+            row for row in self.store.list_requests(self.workspace["id"])
+            if row["id"] == awaiting["id"]
+        )
+        self.assertEqual(row["approver_name"], "Caroline Hayes")
+        summary = veto_requests.public_summary(row)
+        self.assertEqual(summary["approver"],
+                         {"id": approver["id"], "name": "Caroline Hayes"})
+        detail = veto_requests.public_request(captured)
+        self.assertEqual(detail["approver"],
+                         {"id": approver["id"], "name": "Caroline Hayes"})
+        # additive only: every previous key still exists
+        for key in ("id", "title", "status", "total_cents", "requester", "agent"):
+            self.assertIn(key, summary)
+        self.assertEqual(detail["approver_user_id"], approver["id"])
+        self.assertIn("requester", detail)
+
+        # a blocked, never-decided request has nobody to show
+        blocked = self.create(
+            agent=self.make_agent(categories=["equipment"]),
+            search=search_one(category="pantry"),
+        )
+        self.assertEqual(blocked["status"], "blocked")
+        blocked_row = next(
+            row for row in self.store.list_requests(self.workspace["id"])
+            if row["id"] == blocked["id"]
+        )
+        self.assertIsNone(veto_requests.public_summary(blocked_row)["approver"])
+        blocked_detail = self.store.request(self.workspace["id"], blocked["id"])
+        self.assertIsNone(veto_requests.public_request(blocked_detail)["approver"])
+
     # -- keys ----------------------------------------------------------
     def test_api_keys_mint_resolve_and_revoke(self) -> None:
         plaintext, record = veto_auth.mint_api_key(self.store, self.agent)

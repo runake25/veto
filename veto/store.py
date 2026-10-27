@@ -1150,7 +1150,10 @@ class Store:
     def request(self, workspace_id: str, request_id: str) -> dict | None:
         """One request with its lines, reasons, consents, payments, events and agent."""
         row = self.one(
-            "SELECT * FROM requests WHERE workspace_id = ? AND id = ?",
+            "SELECT r.*, approver.name AS approver_name "
+            "FROM requests r LEFT JOIN users approver "
+            "  ON approver.id = r.approver_user_id "
+            "WHERE r.workspace_id = ? AND r.id = ?",
             (workspace_id, request_id),
         )
         if row is None:
@@ -1232,6 +1235,7 @@ class Store:
             "SELECT r.id, r.seq, r.title, r.status, r.decision_outcome, r.total_cents, "
             "r.currency, r.channel, r.requester, r.origin, r.created_at, r.decided_at, "
             "r.agent_id, a.name AS agent_name, a.tag AS agent_tag, "
+            "r.approver_user_id AS approver_id, approver.name AS approver_name, "
             "(SELECT ro.name FROM routine_runs rr JOIN routines ro ON ro.id = rr.routine_id "
             " WHERE rr.request_id = r.id ORDER BY rr.started_at DESC, rr.rowid DESC LIMIT 1) "
             "AS routine_name, "
@@ -1318,6 +1322,7 @@ class Store:
         """
         sql = (
             " FROM requests r LEFT JOIN agents a ON a.id = r.agent_id "
+            "LEFT JOIN users approver ON approver.id = r.approver_user_id "
             "WHERE r.workspace_id = ?"
         )
         params: list[Any] = [workspace_id]

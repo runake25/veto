@@ -100,7 +100,7 @@
   border-radius: var(--radius-control);
   background: none;
   color: #7d8896;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -119,7 +119,7 @@
 }
 
 .instances-count {
-  font-size: 10.5px;
+  font-size: 12px;
   letter-spacing: 0;
   color: #7d8896;
 }
@@ -127,7 +127,7 @@
 .instances-caret {
   display: inline-block;
   width: 8px;
-  font-size: 9px;
+  font-size: 12px;
   color: #7d8896;
 }
 
@@ -152,7 +152,7 @@
   padding: 0 10px;
   border-radius: var(--radius-control);
   color: var(--rail-ink);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 400;
   text-decoration: none;
 }
@@ -178,7 +178,7 @@
 .instance-empty {
   padding: 4px 10px 6px;
   color: #7d8896;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* ---- page head: the one place the document voice leads ----------------- */
@@ -223,7 +223,7 @@
 }
 
 .settings-card-head .card-note {
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .settings-grid {
@@ -243,7 +243,7 @@
 }
 
 .setting-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -258,7 +258,7 @@
 
 .setting-value.is-mono {
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 13px;
   letter-spacing: -0.01em;
 }
 
@@ -282,7 +282,7 @@
 
 .settings-flash {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--positive);
 }
 
@@ -358,6 +358,15 @@
 
   .topnav-item {
     padding: 0 6px;
-    font-size: 11px;
+    font-size: 12px;
+  }
+}
+
+/* Six sections + the wordmark must fit a 390px bar at the 12px floor. */
+@media (max-width: 560px) {
+  .topnav-item {
+    padding: 0 5px;
+    font-size: 12px;
+    letter-spacing: -0.01em;
   }
 }

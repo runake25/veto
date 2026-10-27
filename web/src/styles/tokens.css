@@ -73,8 +73,8 @@
   /* ink — blue-black, the colour of printed ledgers */
   --text: #0e141b;
   --text-hover: #1b2733;
-  --muted: #4e5761;
-  --faint: #68717c;
+  --muted: #3f4954;
+  --faint: #566170;
 
   /* the one hue: institutional navy (PayPal-adjacent, not consumer teal) */
   --accent: #1b3f63;
@@ -139,7 +139,7 @@ body {
   background: var(--ground);
   color: var(--text);
   font-family: var(--font);
-  font-size: 14px;
+  font-size: 14.5px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
