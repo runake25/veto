@@ -26,10 +26,11 @@ services:
       # disk is empty after a cold start, so a judge never lands on an empty Inbox
       - key: VETO_DEMO_HISTORY
         value: "1"
-      # the hosted demo opens a longer consent window so a passing judge can
-      # still sign the waiting cart; the console reads the real window from the record
+      # the hosted demo opens a long consent window so a passing judge can still
+      # sign the waiting cart through the whole judging period; the console reads
+      # the real window from the record, so the screen never lies. 60 days.
       - key: VETO_CONSENT_MINUTES
-        value: "720"
+        value: "86400"
       - key: PAYPAL_LIVE
         value: "1"
       - key: PAYPAL_BASE
