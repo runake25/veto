@@ -29,7 +29,7 @@ import { StatusMark, requestLabel, when } from '../components/request'
 import { PressButton, Spinner } from '../components/PressButton'
 import { motionSet } from '../components/motion'
 import { State, agentState } from '../components/state'
-import { StandingJob } from '../components/StandingJob'
+import { StandingJobs } from '../components/StandingJob'
 
 /* What each rule is called when a person reads it, not when the engine does. */
 const RULE_WORD: Record<string, string> = {
@@ -758,7 +758,7 @@ export function AgentDetail({ me }: { me: Me }) {
   const { id = '' } = useParams()
   const navigate = useNavigate()
   const [agent, setAgent] = useState<Agent | null>(null)
-  const [routine, setRoutine] = useState<Routine | null>(null)
+  const [routines, setRoutines] = useState<Routine[]>([])
   const [runs, setRuns] = useState<RoutineRun[]>([])
   const [error, setError] = useState<string | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
@@ -778,7 +778,7 @@ export function AgentDetail({ me }: { me: Me }) {
 
   const applyDetail = (detail: AgentDetailData) => {
     setAgent(detail.agent)
-    setRoutine(detail.routine)
+    setRoutines(detail.routines ?? (detail.routine ? [detail.routine] : []))
     setRuns(detail.runs)
   }
 
@@ -1035,13 +1035,13 @@ export function AgentDetail({ me }: { me: Me }) {
       </motion.div>
 
       <motion.div variants={m.riseIn}>
-        <StandingJob
+        <StandingJobs
           agent={agent}
-          routine={routine}
+          routines={routines}
           runs={runs}
           role={me.user.role}
           defaultInstruction={defaultCart(agent)}
-          onRoutineChange={setRoutine}
+          onRoutinesChange={setRoutines}
           onRefresh={refresh}
         />
       </motion.div>
@@ -1061,7 +1061,7 @@ export function AgentDetail({ me }: { me: Me }) {
             <span className="card-note">irreversible</span>
           </header>
           <p className="card-lede">
-            Deletes the agent, its rules and its job. An agent with requests on record cannot be
+            Deletes the agent, its rules and its jobs. An agent with requests on record cannot be
             deleted — pause it instead.
           </p>
           {deleteError ? (
@@ -1072,7 +1072,7 @@ export function AgentDetail({ me }: { me: Me }) {
           {confirmDelete ? (
             <div className="danger-confirm">
               <p className="danger-copy">
-                Delete {agent.name}? This cannot be undone. Its job goes too; requests it made
+                Delete {agent.name}? This cannot be undone. Its jobs go too; requests it made
                 stay in the record.
               </p>
               <div className="form-actions">

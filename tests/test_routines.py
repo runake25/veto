@@ -180,6 +180,61 @@ class RunTests(RoutineTestCase):
         self.assertEqual(view["last_run_at"], stamp(FIXED))
 
 
+class SeveralJobsTests(RoutineTestCase):
+    """An agent is the role; it can do more than one piece of recurring work."""
+
+    def test_one_agent_can_own_several_jobs(self) -> None:
+        first = self.make_routine(name="Pantry restock")
+        second = self.make_routine(
+            name="Coffee restock",
+            instruction="a bag of coffee beans",
+            next_run_at=stamp(FIXED + timedelta(days=14)),
+        )
+        jobs = self.store.routines_for_agent(self.workspace["id"], self.agent["id"])
+        self.assertEqual([job["name"] for job in jobs], ["Pantry restock", "Coffee restock"])
+        # the legacy single-job accessor keeps returning the first job
+        self.assertEqual(
+            self.store.routine_for_agent(self.workspace["id"], self.agent["id"])["id"],
+            first["id"],
+        )
+        self.assertEqual(
+            self.store.routine_runs_for_agent(self.workspace["id"], self.agent["id"]),
+            [],
+        )
+        self.assertTrue(self.store.delete_routine(self.workspace["id"], first["id"]))
+        self.assertEqual(
+            [
+                job["id"]
+                for job in self.store.routines_for_agent(
+                    self.workspace["id"], self.agent["id"]
+                )
+            ],
+            [second["id"]],
+        )
+
+    def test_each_job_keeps_its_own_run_history(self) -> None:
+        first = self.make_routine(name="Pantry restock")
+        second = self.make_routine(
+            name="Desk kit", instruction="a box of pens",
+            next_run_at=stamp(FIXED + timedelta(days=14)),
+        )
+        self.run_once(first)
+        self.run_once(second)
+        first_runs = self.store.routine_runs_for(
+            self.workspace["id"], first["id"]
+        )
+        second_runs = self.store.routine_runs_for(
+            self.workspace["id"], second["id"]
+        )
+        self.assertEqual(len(first_runs), 1)
+        self.assertEqual(len(second_runs), 1)
+        self.assertNotEqual(first_runs[0]["request_id"], second_runs[0]["request_id"])
+        self.assertEqual(
+            len(self.store.routine_runs_for_agent(self.workspace["id"], self.agent["id"])),
+            2,
+        )
+
+
 class SchedulerTests(RoutineTestCase):
     def due_routine(self, **overrides) -> dict:
         return self.make_routine(
@@ -238,6 +293,19 @@ class SchedulerTests(RoutineTestCase):
             next_run_at=stamp(FIXED + timedelta(days=14)),
         )
         self.assertFalse(again)
+
+    def test_two_jobs_on_one_agent_both_run_from_one_tick(self) -> None:
+        self.due_routine(name="First job")
+        self.due_routine(name="Second job")
+        runs = self.tick()
+        self.assertEqual(len(runs), 2)
+        self.assertEqual(len(self.requests()), 2)
+        # the schedule of each job moved forward independently
+        jobs = self.store.routines_for_agent(self.workspace["id"], self.agent["id"])
+        for job in jobs:
+            self.assertEqual(
+                job["next_run_at"], stamp(FIXED + timedelta(days=7))
+            )
 
 
 class ProgressFrameTests(RoutineTestCase):

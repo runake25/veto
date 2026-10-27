@@ -29,10 +29,13 @@ const cents = (value: string): number | null => {
   return Number.isFinite(n) ? Math.round(n * 100) : null
 }
 
+/** The five runs a job card shows; the record itself keeps every one. */
+const RUNS_PER_JOB = 5
+
 /** What a finished run did, in the same words a record would use. A skip or a
     failure explains itself through the note the runner recorded. */
 function runHeadline(result: RoutineRunResult): string {
-  const amount = result.run.amount_cents ? ` ${money(result.run.amount_cents)}` : ''
+  const amount = result.run.amount_cents ? money(result.run.amount_cents) : ''
   if (
     result.run.note &&
     (result.run.outcome === 'skipped' || result.run.outcome === 'failed')
@@ -41,11 +44,15 @@ function runHeadline(result: RoutineRunResult): string {
   }
   switch (result.run.outcome) {
     case 'captured':
-      return `Ordered and captured${amount}.`
+      return amount ? `Captured ${amount}.` : 'Captured.'
     case 'awaiting':
-      return `Needs a signature${amount} — the request waits in the Inbox.`
+      return amount
+        ? `Held ${amount} — the request waits in the Inbox.`
+        : 'The request waits in the Inbox.'
     case 'approved':
-      return `Approved${amount}; the capture waits for the wallet.`
+      return amount
+        ? `${amount} approved; the capture waits for the wallet.`
+        : 'The capture waits for the wallet.'
     case 'blocked':
       return 'Refused by the rules. Nothing was ordered.'
     case 'skipped':
@@ -57,6 +64,101 @@ function runHeadline(result: RoutineRunResult): string {
 
 function runsWithNotes(outcome: RoutineOutcome): boolean {
   return outcome === 'skipped' || outcome === 'failed' || outcome === 'awaiting'
+}
+
+/** A chevron that says whether the card is open. */
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`job-chevron${open ? ' is-open' : ''}`}
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+    >
+      <path
+        d="M4.5 6.25 8 9.75l3.5-3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+type MenuItem = {
+  label: string
+  onSelect: () => void
+  disabled?: boolean
+  danger?: boolean
+  title?: string
+}
+
+/**
+ * The "..." menu on a job card. It holds the quiet actions (edit, delete, hide
+ * details); run and pause stay on the card because they are the frequent ones.
+ * Closes on an outside click and on Escape, like a native menu.
+ */
+function JobMenu({ label, items }: { label: string; items: MenuItem[] }) {
+  const [open, setOpen] = useState(false)
+  const wrap = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (event: MouseEvent) => {
+      if (wrap.current && !wrap.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="job-menu" ref={wrap}>
+      <button
+        type="button"
+        className="job-menu-trigger"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="3.25" cy="8" r="1.35" fill="currentColor" />
+          <circle cx="8" cy="8" r="1.35" fill="currentColor" />
+          <circle cx="12.75" cy="8" r="1.35" fill="currentColor" />
+        </svg>
+      </button>
+      {open ? (
+        <div className="job-menu-list" role="menu">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              className={`job-menu-item${item.danger ? ' is-danger' : ''}`}
+              disabled={item.disabled}
+              title={item.title}
+              onClick={() => {
+                setOpen(false)
+                item.onSelect()
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 /**
@@ -185,25 +287,31 @@ function RoutineForm({
 }
 
 /**
- * The standing job: what the agent orders on its own, and the runs that prove it.
- * Every action here is the backend's, not a local mock: pause stops the schedule,
- * run now streams the real pipeline, and the run history is the recorded table.
+ * One scheduled job as a card. Run now and Pause job stay on the card (they are
+ * the frequent actions); the "..." menu keeps edit, delete and "hide details",
+ * which collapses the card down to its header to save the page's height.
  */
-export function StandingJob({
+function JobCard({
   agent,
   routine,
   runs,
   role,
   defaultInstruction,
-  onRoutineChange,
+  expanded,
+  onExpandedChange,
+  onUpsert,
+  onRemove,
   onRefresh,
 }: {
   agent: Agent
-  routine: Routine | null
+  routine: Routine
   runs: RoutineRun[]
   role: string
   defaultInstruction: string
-  onRoutineChange: (routine: Routine | null) => void
+  expanded: boolean
+  onExpandedChange: (open: boolean) => void
+  onUpsert: (routine: Routine) => void
+  onRemove: (routineId: string) => void
   onRefresh: () => Promise<void>
 }) {
   const canWrite = role === 'admin' || role === 'approver'
@@ -223,19 +331,11 @@ export function StandingJob({
 
   useEffect(() => () => runAbort.current?.abort(), [])
 
-  // A different job on the same agent: the old inline result no longer applies.
-  useEffect(() => {
-    setResult(null)
-    setConfirming(false)
-    setEditing(false)
-    setError(null)
-  }, [routine?.id])
-
   const save = async (input: RoutineInput) => {
     setSaving(true)
     setFormError(null)
     try {
-      onRoutineChange(await api.saveRoutine(agent.id, input))
+      onUpsert(await api.updateRoutine(routine.id, input))
       setEditing(false)
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'The job was not saved.')
@@ -245,12 +345,12 @@ export function StandingJob({
   }
 
   const setJobStatus = async (action: 'pause' | 'resume') => {
-    if (!routine) return
     setStatusBusy(true)
     setError(null)
     try {
-      onRoutineChange(await api.setRoutineStatus(agent.id, action))
+      onUpsert(await api.setRoutineStatus(routine.id, action))
     } catch (err) {
+      onExpandedChange(true)
       setError(err instanceof ApiError ? err.message : 'The job state did not change.')
     } finally {
       setStatusBusy(false)
@@ -258,15 +358,14 @@ export function StandingJob({
   }
 
   const deleteJob = async () => {
-    if (!routine) return
     setDeleteBusy(true)
     setDeleteError(null)
     try {
-      await api.deleteRoutine(agent.id)
+      await api.deleteRoutine(routine.id)
       setConfirmDelete(false)
       setResult(null)
       setEditing(false)
-      onRoutineChange(null)
+      onRemove(routine.id)
       try {
         await onRefresh()
       } catch {
@@ -282,7 +381,8 @@ export function StandingJob({
   }
 
   const runNow = async () => {
-    if (!routine || running) return
+    if (running) return
+    onExpandedChange(true)
     setConfirming(false)
     setRunning(true)
     setError(null)
@@ -292,7 +392,7 @@ export function StandingJob({
     runAbort.current = controller
     try {
       const done = await api.runRoutineStream(
-        agent.id,
+        routine.id,
         (frame: RoutineStreamFrame) => {
           if (frame.type === 'event') {
             setLive((prev) =>
@@ -333,94 +433,178 @@ export function StandingJob({
     }
   }
 
-  const active = routine?.status === 'active'
+  const active = routine.status === 'active'
   const agentPaused = agent.status !== 'active'
-  const shownRuns = runs.slice(0, 5)
+  const jobRuns = runs.filter((run) => run.routine_id === routine.id)
+  const shownRuns = jobRuns.slice(0, RUNS_PER_JOB)
+  const usedCents = routine.spent_cents + routine.committed_cents
+
+  const menuItems: MenuItem[] = []
+  if (canWrite) {
+    menuItems.push({
+      label: 'Edit job',
+      disabled: running,
+      onSelect: () => {
+        onExpandedChange(true)
+        setFormError(null)
+        setEditing(true)
+      },
+    })
+  }
+  menuItems.push({
+    label: expanded ? 'Hide details' : 'Show details',
+    onSelect: () => onExpandedChange(!expanded),
+  })
+  if (canWrite) {
+    menuItems.push({
+      label: 'Delete job',
+      danger: true,
+      disabled: running || deleteBusy,
+      onSelect: () => {
+        onExpandedChange(true)
+        setConfirmDelete(true)
+      },
+    })
+  }
 
   return (
-    <section className="card routine">
-      <header className="card-head">
-        <h2>Standing job</h2>
-        <span className="card-note">a routine you approve once</span>
+    <article className={`job-card${expanded ? ' is-open' : ''}`}>
+      <header className="job-card-head">
+        <div className="job-card-ident">
+          <div className="job-card-title">
+            <State tone={routineState(routine).tone}>{routineState(routine).label}</State>
+            <h3 className="job-card-name">{routine.name}</h3>
+          </div>
+          <p className="job-card-meta">
+            <span>Runs {routine.cadence_word}</span>
+            <span className="mono">
+              {active ? `next run ${when(routine.next_run_at)}` : 'schedule stopped'}
+            </span>
+            {agentPaused ? <span>agent paused</span> : null}
+            {routine.envelope_cents > 0 ? (
+              <span className="mono job-card-envelope">
+                {capMoney(usedCents)} of {capMoney(routine.envelope_cents)} this month
+              </span>
+            ) : null}
+          </p>
+          {!expanded ? (
+            <p className="job-card-preview">{routine.instruction}</p>
+          ) : null}
+        </div>
+
+        <div className="job-card-actions">
+          {canWrite ? (
+            active ? (
+              <PressButton
+                variant="secondary"
+                disabled={running || agentPaused || confirming}
+                onClick={() => {
+                  onExpandedChange(true)
+                  setConfirming(true)
+                  setError(null)
+                }}
+              >
+                Run now
+              </PressButton>
+            ) : (
+              <PressButton
+                variant="secondary"
+                loading={statusBusy}
+                disabled={running}
+                onClick={() => void setJobStatus('resume')}
+              >
+                Resume job
+              </PressButton>
+            )
+          ) : null}
+          {canWrite && active ? (
+            <PressButton
+              variant="quiet"
+              loading={statusBusy}
+              disabled={running}
+              onClick={() => void setJobStatus('pause')}
+            >
+              Pause job
+            </PressButton>
+          ) : null}
+          <button
+            type="button"
+            className="job-card-toggle"
+            aria-label={expanded ? 'Hide details' : 'Show details'}
+            aria-expanded={expanded}
+            onClick={() => onExpandedChange(!expanded)}
+          >
+            <Chevron open={expanded} />
+          </button>
+          {canWrite ? <JobMenu label={`More actions for ${routine.name}`} items={menuItems} /> : null}
+        </div>
       </header>
 
-      {routine ? (
-        <>
-          <div className="routine-top">
-            <div className="routine-ident">
-              <h3 className="routine-name">{routine.name}</h3>
-              <p className="routine-line">
-                <State tone={routineState(routine).tone}>{routineState(routine).label}</State>
-                <span className="routine-line-sep" aria-hidden="true" />
-                <span>Runs {routine.cadence_word}</span>
-                <span className="routine-line-sep" aria-hidden="true" />
-                <span className="mono routine-next">
-                  {active ? `next run ${when(routine.next_run_at)}` : 'schedule stopped'}
-                </span>
+      {expanded ? (
+        <div className="job-card-body">
+          {confirming ? (
+            <div className="routine-confirm">
+              <p>
+                A run creates a real request now and can capture money. It uses the same rules,
+                consent and PayPal path as any other request.
               </p>
-            </div>
-            {canWrite ? (
-              <div className="agent-actions">
-                {active ? (
-                  confirming ? (
-                    <>
-                      <PressButton
-                        variant="secondary"
-                        loading={running}
-                        onClick={() => void runNow()}
-                      >
-                        Confirm run
-                      </PressButton>
-                      <PressButton variant="quiet" onClick={() => setConfirming(false)}>
-                        Cancel
-                      </PressButton>
-                    </>
-                  ) : agentPaused ? (
-                    <span className="card-note">agent paused — resume it to run</span>
-                  ) : (
-                    <PressButton
-                      variant="secondary"
-                      disabled={running}
-                      onClick={() => setConfirming(true)}
-                    >
-                      Run now
-                    </PressButton>
-                  )
-                ) : (
-                  <PressButton
-                    variant="secondary"
-                    loading={statusBusy}
-                    onClick={() => void setJobStatus('resume')}
-                  >
-                    Resume job
-                  </PressButton>
-                )}
-                {active ? (
-                  <PressButton
-                    variant="quiet"
-                    loading={statusBusy}
-                    onClick={() => void setJobStatus('pause')}
-                  >
-                    Pause job
-                  </PressButton>
-                ) : null}
-                <PressButton variant="quiet" onClick={() => setEditing((v) => !v)}>
-                  {editing ? 'Close editor' : 'Edit job'}
+              <div className="form-actions">
+                <PressButton
+                  variant="secondary"
+                  loading={running}
+                  onClick={() => void runNow()}
+                >
+                  Confirm run
                 </PressButton>
-                <PressButton variant="quiet" onClick={() => setConfirmDelete(true)}>
-                  Delete job
+                <PressButton variant="quiet" onClick={() => setConfirming(false)}>
+                  Cancel
                 </PressButton>
               </div>
-            ) : (
-              <span className="card-note">viewer — read only</span>
-            )}
-          </div>
+            </div>
+          ) : null}
 
-          {confirming ? (
-            <p className="routine-confirm">
-              A run creates a real request now and can capture money. It uses the same rules,
-              consent and PayPal path as any other request.
+          {error ? (
+            <p className="inline-error" role="alert">
+              {error}
             </p>
+          ) : null}
+
+          {running && live ? (
+            <PipelineLive
+              steps={live.steps}
+              items={live.items}
+              title="Running the job"
+              note="real request · may capture"
+            />
+          ) : null}
+
+          {result && !running ? (
+            <div className="routine-result">
+              <div className="routine-result-main">
+                <State tone={runState(result.run.outcome).tone}>
+                  {runState(result.run.outcome).label}
+                </State>
+                <p className="routine-result-head">{runHeadline(result)}</p>
+              </div>
+              {result.request ? (
+                <Link className="text-link mono" to={`/inbox/${result.request.id}`}>
+                  Open {requestLabel(result.request.seq)}
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
+
+          {editing ? (
+            <div className="routine-editor">
+              <RoutineForm
+                routine={routine}
+                defaultInstruction={defaultInstruction}
+                busy={saving}
+                error={formError}
+                onSave={(input) => void save(input)}
+                onCancel={() => setEditing(false)}
+              />
+            </div>
           ) : null}
 
           {confirmDelete ? (
@@ -462,178 +646,285 @@ export function StandingJob({
             </p>
           ) : null}
 
-          {editing ? (
-            <div className="routine-editor">
-              <RoutineForm
-                routine={routine}
-                defaultInstruction={defaultInstruction}
-                busy={saving}
-                error={formError}
-                onSave={(input) => void save(input)}
-                onCancel={() => setEditing(false)}
-              />
-            </div>
-          ) : null}
-
-          {error ? (
-            <p className="inline-error" role="alert">
-              {error}
-            </p>
-          ) : null}
-
-          {running && live ? (
-            <PipelineLive
-              steps={live.steps}
-              items={live.items}
-              title="Running the job"
-              note="real request · may capture"
-            />
-          ) : null}
-
-          {result && !running ? (
-            <div className="routine-result">
-              <div className="routine-result-main">
-                <State tone={runState(result.run.outcome).tone}>
-                  {runState(result.run.outcome).label}
-                </State>
-                <p className="routine-result-head">{runHeadline(result)}</p>
-              </div>
-              {result.request ? (
-                <Link className="text-link mono" to={`/inbox/${result.request.id}`}>
-                  Open {requestLabel(result.request.seq)}
-                </Link>
-              ) : null}
-            </div>
-          ) : null}
-
-          {!editing ? (
-          <div className="routine-body">
-            <div className="routine-spec">
-              <p className="spec-label">Standing instruction</p>
-              <blockquote className="routine-quote">{routine.instruction}</blockquote>
-              {routine.envelope_cents > 0 ? (
-                <div className="routine-envelope">
-                  <div className="routine-envelope-head">
-                    <span className="spec-label">Envelope this month</span>
-                    <span className="mono routine-envelope-figure">
-                      {capMoney(routine.envelope_cents)}
-                    </span>
+          {!editing && !confirmDelete ? (
+            <div className="routine-body">
+              <div className="routine-spec">
+                <p className="spec-label">Standing instruction</p>
+                <blockquote className="routine-quote">{routine.instruction}</blockquote>
+                {routine.envelope_cents > 0 ? (
+                  <div className="routine-envelope">
+                    <div className="routine-envelope-head">
+                      <span className="spec-label">Envelope this month</span>
+                      <span className="mono routine-envelope-figure">
+                        {capMoney(routine.envelope_cents)}
+                      </span>
+                    </div>
+                    <Track
+                      spentCents={routine.spent_cents}
+                      committedCents={routine.committed_cents}
+                      capCents={routine.envelope_cents}
+                    />
+                    {routine.remaining_cents === 0 ? (
+                      <p className="fineprint">
+                        The envelope is used up; due runs skip until the month turns.
+                      </p>
+                    ) : null}
                   </div>
-                  <Track
-                    spentCents={routine.spent_cents}
-                    committedCents={routine.committed_cents}
-                    capCents={routine.envelope_cents}
-                  />
-                  {routine.remaining_cents === 0 ? (
-                    <p className="fineprint">
-                      The envelope is used up; due runs skip until the month turns.
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
+                ) : (
+                  <p className="routine-note">
+                    No envelope on this job — each run is judged by the agent&rsquo;s own caps.
+                  </p>
+                )}
                 <p className="routine-note">
-                  No envelope on this job — each run is judged by the agent&rsquo;s own caps.
+                  {routine.dedupe_days > 0
+                    ? `Won't reorder within ${routine.dedupe_days} days.`
+                    : 'No reorder window — every due run becomes a request.'}{' '}
+                  The same rules, consent and capture apply.
                 </p>
-              )}
-              <p className="routine-note">
-                {routine.dedupe_days > 0
-                  ? `Won't reorder within ${routine.dedupe_days} days.`
-                  : 'No reorder window — every due run becomes a request.'}{' '}
-                The same rules, consent and capture apply.
-              </p>
-              {!active ? (
-                <p className="routine-note">
-                  Paused — the schedule will not run until you resume the job.
-                </p>
-              ) : null}
-              {agentPaused ? (
-                <p className="routine-note">
-                  The agent is paused, so a due run records a skip and orders nothing.
-                </p>
-              ) : null}
-            </div>
-
-            <div className="routine-runs">
-              <header className="routine-runs-head">
-                <h3>Recent runs</h3>
-                {runs.length > 5 ? (
-                  <span className="card-note">the five most recent</span>
+                {!active ? (
+                  <p className="routine-note">
+                    Paused — the schedule will not run until you resume the job.
+                  </p>
                 ) : null}
-              </header>
-              {shownRuns.length ? (
-                <ol className="routine-run-list">
-                  {shownRuns.map((run) => (
-                    <li className="routine-run" key={run.id}>
-                      <span className="routine-run-when mono">
-                        {when(run.started_at ?? run.due_at)}
-                      </span>
-                      <span className="routine-run-state">
-                        <State tone={runState(run.outcome).tone}>
-                          {runState(run.outcome).label}
-                        </State>
-                      </span>
-                      <span className="routine-run-money mono">
-                        {run.amount_cents
-                          && run.outcome !== 'skipped'
-                          && run.outcome !== 'failed'
-                          ? money(run.amount_cents)
-                          : ''}
-                      </span>
-                      {run.request_id ? (
-                        <Link className="routine-run-link mono" to={`/inbox/${run.request_id}`}>
-                          {run.request_id}
-                        </Link>
-                      ) : (
-                        <span className="routine-run-link mono is-void">no request</span>
-                      )}
-                      {run.note && runsWithNotes(run.outcome) ? (
-                        <p className="routine-run-note">{run.note}</p>
-                      ) : null}
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="fineprint">
-                  No runs yet. The first one is due {when(routine.next_run_at)}.
-                </p>
-              )}
+                {agentPaused ? (
+                  <p className="routine-note">
+                    The agent is paused, so a due run records a skip and orders nothing.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="routine-runs">
+                <header className="routine-runs-head">
+                  <h3>Recent runs</h3>
+                  {jobRuns.length > RUNS_PER_JOB ? (
+                    <span className="card-note">the {RUNS_PER_JOB} most recent</span>
+                  ) : null}
+                </header>
+                {shownRuns.length ? (
+                  <ol className="routine-run-list">
+                    {shownRuns.map((run) => (
+                      <li className="routine-run" key={run.id}>
+                        <span className="routine-run-when mono">
+                          {when(run.started_at ?? run.due_at)}
+                        </span>
+                        <span className="routine-run-state">
+                          <State tone={runState(run.outcome).tone}>
+                            {runState(run.outcome).label}
+                          </State>
+                        </span>
+                        <span className="routine-run-money mono">
+                          {run.amount_cents
+                            && run.outcome !== 'skipped'
+                            && run.outcome !== 'failed'
+                            ? money(run.amount_cents)
+                            : ''}
+                        </span>
+                        {run.request_id ? (
+                          <Link
+                            className="routine-run-link mono"
+                            to={`/inbox/${run.request_id}`}
+                          >
+                            {run.request_id}
+                          </Link>
+                        ) : (
+                          <span className="routine-run-link mono is-void">no request</span>
+                        )}
+                        {run.note && runsWithNotes(run.outcome) ? (
+                          <p className="routine-run-note">{run.note}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="fineprint">
+                    No runs yet. The first one is due {when(routine.next_run_at)}.
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
           ) : null}
-        </>
-      ) : (
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
+/**
+ * The standing jobs: one card per scheduled job in the agent. Each card can be
+ * collapsed from its "..." menu (or the chevron) so several jobs still fit the
+ * page; opening the agent shows the cards, not a wall of instructions.
+ */
+export function StandingJobs({
+  agent,
+  routines,
+  runs,
+  role,
+  defaultInstruction,
+  onRoutinesChange,
+  onRefresh,
+}: {
+  agent: Agent
+  routines: Routine[]
+  runs: RoutineRun[]
+  role: string
+  defaultInstruction: string
+  onRoutinesChange: (updater: (prev: Routine[]) => Routine[]) => void
+  onRefresh: () => Promise<void>
+}) {
+  const canWrite = role === 'admin' || role === 'approver'
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const [adding, setAdding] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+
+  const toggle = (routineId: string, open: boolean) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (open) next.add(routineId)
+      else next.delete(routineId)
+      return next
+    })
+  }
+
+  const upsert = (routine: Routine) => {
+    onRoutinesChange((prev) => {
+      const exists = prev.some((item) => item.id === routine.id)
+      return exists
+        ? prev.map((item) => (item.id === routine.id ? routine : item))
+        : [...prev, routine]
+    })
+  }
+
+  const remove = (routineId: string) => {
+    onRoutinesChange((prev) => prev.filter((item) => item.id !== routineId))
+    setExpanded((prev) => {
+      if (!prev.has(routineId)) return prev
+      const next = new Set(prev)
+      next.delete(routineId)
+      return next
+    })
+  }
+
+  const create = async (input: RoutineInput) => {
+    setCreating(true)
+    setCreateError(null)
+    try {
+      const routine = await api.createRoutine(agent.id, input)
+      onRoutinesChange((prev) => [...prev, routine])
+      setAdding(false)
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        next.add(routine.id)
+        return next
+      })
+      try {
+        await onRefresh()
+      } catch {
+        // the job exists; the card above already shows it
+      }
+    } catch (err) {
+      setCreateError(err instanceof ApiError ? err.message : 'The job was not created.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const jobCount = routines.length
+  const countNote =
+    jobCount === 0
+      ? 'none yet'
+      : jobCount === 1
+        ? 'one scheduled job'
+        : `${jobCount} scheduled jobs`
+
+  return (
+    <section className="card routine standing-jobs">
+      <header className="card-head">
+        <h2>Standing jobs</h2>
+        <div className="job-head-tools">
+          <span className="card-note">{countNote}</span>
+          {canWrite ? (
+            <button
+              type="button"
+              className="btn btn-quiet job-add"
+              onClick={() => {
+                setAdding((value) => !value)
+                setCreateError(null)
+              }}
+            >
+              {adding ? 'Close' : 'New job'}
+            </button>
+          ) : null}
+        </div>
+      </header>
+
+      {routines.length === 0 && !adding ? (
         <>
           <p className="card-lede">
-            This agent has no standing job. It buys only when something asks it to; a job gives
-            it a recurring instruction, a schedule and its own monthly ceiling.
+            This agent has no standing jobs. Each job is a recurring instruction, a schedule and
+            its own monthly ceiling; a job still has to pass the same rules on every run.
           </p>
           {canWrite ? (
-            editing ? (
-              <RoutineForm
-                routine={null}
-                defaultInstruction={defaultInstruction}
-                busy={saving}
-                error={formError}
-                onSave={(input) => void save(input)}
-                onCancel={() => setEditing(false)}
-              />
-            ) : (
-              <div className="routine-empty">
-                <PressButton variant="secondary" onClick={() => setEditing(true)}>
-                  Set a standing job
-                </PressButton>
-                <p className="fineprint">
-                  You approve the job once; every due run still has to pass the same rules.
-                </p>
-              </div>
-            )
+            <div className="routine-empty">
+              <PressButton variant="secondary" onClick={() => setAdding(true)}>
+                Set a standing job
+              </PressButton>
+              <p className="fineprint">
+                You approve the job once; every due run still has to pass the same rules.
+              </p>
+            </div>
           ) : (
             <p className="fineprint">
               Your role is viewer — an admin or approver sets this job.
             </p>
           )}
         </>
-      )}
+      ) : null}
+
+      {adding ? (
+        <div className="job-card is-new">
+          <div className="job-card-body">
+            <RoutineForm
+              routine={null}
+              defaultInstruction={defaultInstruction}
+              busy={creating}
+              error={createError}
+              onSave={(input) => void create(input)}
+              onCancel={() => {
+                setAdding(false)
+                setCreateError(null)
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {jobCount ? (
+        <div className="job-list">
+          {routines.map((routine) => (
+            <JobCard
+              key={routine.id}
+              agent={agent}
+              routine={routine}
+              runs={runs}
+              role={role}
+              defaultInstruction={defaultInstruction}
+              expanded={expanded.has(routine.id)}
+              onExpandedChange={(open) => toggle(routine.id, open)}
+              onUpsert={upsert}
+              onRemove={remove}
+              onRefresh={onRefresh}
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {jobCount ? (
+        <p className="fineprint job-foot">
+          Run now creates a real request and can capture money. Pause stops the schedule; the
+          job keeps its rules and its monthly ceiling.
+        </p>
+      ) : null}
     </section>
   )
 }

@@ -291,6 +291,9 @@ MAX_AGENT_NAME = 80
 MAX_AGENT_TAG = 40
 MAX_AGENT_CHANNEL = 60
 MAX_SIMULATE_CHARS = 1000
+# A job is a recurring order, not a catalogue; a dozen per agent is plenty and
+# keeps the agent page (and the scheduler tick) bounded.
+MAX_ROUTINES_PER_AGENT = 12
 _CAP_FIELDS = ("monthly_cap_cents", "per_order_cap_cents",
                "per_unit_cap_cents", "approval_threshold_cents")
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -638,25 +641,39 @@ class Handler(BaseHTTPRequestHandler):
             session = self._require_session()
             workspace_id = session["workspace"]["id"]
             totals = STORE.agent_month_totals(workspace_id, since=month_start_iso())
-            routines = {row["agent_id"]: row for row in STORE.list_routines(workspace_id)}
+            by_agent: dict[str, list[dict]] = {}
+            for row in STORE.list_routines(workspace_id):
+                by_agent.setdefault(row["agent_id"], []).append(row)
             agents = []
             for agent in STORE.list_agents(workspace_id):
                 month = totals.get(agent["id"]) or {}
-                routine = routines.get(agent["id"])
+                jobs = by_agent.get(agent["id"]) or []
+                primary = jobs[0] if jobs else None
+                # A plate shows one line, so it leads with the first job and,
+                # when there are more, the soonest active slot across all of them.
+                upcoming = [
+                    job["next_run_at"] for job in jobs
+                    if job["status"] == "active" and job.get("next_run_at")
+                ]
                 agents.append({
                     **agent,
                     "spent_month_cents": int(month.get("spent_cents") or 0),
                     "committed_month_cents": int(month.get("committed_cents") or 0),
+                    "routine_count": len(jobs),
                     "routine": (
                         {
-                            "id": routine["id"],
-                            "name": routine["name"],
-                            "cadence": routine["cadence"],
-                            "cadence_word": veto_routines.cadence_word(routine["cadence"]),
-                            "status": routine["status"],
-                            "next_run_at": routine["next_run_at"],
+                            "id": primary["id"],
+                            "name": primary["name"],
+                            "cadence": primary["cadence"],
+                            "cadence_word": veto_routines.cadence_word(primary["cadence"]),
+                            "status": (
+                                "active"
+                                if any(job["status"] == "active" for job in jobs)
+                                else "paused"
+                            ),
+                            "next_run_at": min(upcoming) if upcoming else primary["next_run_at"],
                         }
-                        if routine
+                        if primary
                         else None
                     ),
                 })
@@ -740,6 +757,9 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 2 and parts[1] == "keys":
                 self._v1_create_key(parts[0])
                 return True
+            if len(parts) == 2 and parts[1] == "routines":
+                self._v1_create_routine(parts[0])
+                return True
             if len(parts) == 2 and parts[1] == "routine":
                 self._v1_save_routine(parts[0])
                 return True
@@ -753,11 +773,22 @@ class Handler(BaseHTTPRequestHandler):
                     and parts[3] == "stream":
                 self._v1_routine_run_stream(parts[0])
                 return True
+        if path.startswith("/api/v1/routines/"):
+            parts = [unquote(part) for part in path[len("/api/v1/routines/"):].split("/") if part]
+            if len(parts) == 2 and parts[1] in ("pause", "resume"):
+                self._v1_set_routine_status_by_id(parts[0], parts[1])
+                return True
+            if len(parts) == 2 and parts[1] == "run":
+                self._v1_routine_run_by_id(parts[0])
+                return True
+            if len(parts) == 3 and parts[1] == "run" and parts[2] == "stream":
+                self._v1_routine_run_stream_by_id(parts[0])
+                return True
         self._api_error(404, "not_found", "Unknown route.")
         return True
 
     def _v2_delete(self, path: str) -> bool:
-        """Handle DELETE /api/v1/agents/{id}[/routine|/keys/{kid}]. True = handled."""
+        """Handle DELETE /api/v1/{agents/{id}[/routine|/keys/{kid}],routines/{rid}}."""
         if not path.startswith("/api/v1/"):
             return False
         prefix = "/api/v1/agents/"
@@ -772,11 +803,17 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 3 and parts[1] == "keys":
                 self._v1_revoke_key(parts[0], parts[2])
                 return True
+        routine_prefix = "/api/v1/routines/"
+        if path.startswith(routine_prefix):
+            parts = [unquote(part) for part in path[len(routine_prefix):].split("/") if part]
+            if len(parts) == 1:
+                self._v1_delete_routine_by_id(parts[0])
+                return True
         self._api_error(404, "not_found", "Unknown route.")
         return True
 
     def _v2_patch(self, path: str) -> bool:
-        """Handle PATCH /api/v1/me, /api/v1/workspace and /api/v1/agents/{id}."""
+        """Handle PATCH /api/v1/me, /workspace, /agents/{id} and /routines/{rid}."""
         if not path.startswith("/api/v1/"):
             return False
         if path == "/api/v1/me":
@@ -790,6 +827,12 @@ class Handler(BaseHTTPRequestHandler):
             parts = [unquote(part) for part in path[len(prefix):].split("/") if part]
             if len(parts) == 1:
                 self._v1_update_agent(parts[0])
+                return True
+        routine_prefix = "/api/v1/routines/"
+        if path.startswith(routine_prefix):
+            parts = [unquote(part) for part in path[len(routine_prefix):].split("/") if part]
+            if len(parts) == 1:
+                self._v1_update_routine(parts[0])
                 return True
         self._api_error(404, "not_found", "Unknown route.")
         return True
@@ -1324,23 +1367,22 @@ class Handler(BaseHTTPRequestHandler):
         session = self._require_session()
         workspace = session["workspace"]
         agent = self._workspace_agent(agent_id)
-        routine = STORE.routine_for_agent(workspace["id"], agent_id)
-        runs = (
-            STORE.routine_runs_for(workspace["id"], routine["id"], limit=8)
-            if routine is not None
-            else []
-        )
+        routines = STORE.routines_for_agent(workspace["id"], agent_id)
+        runs = STORE.routine_runs_for_agent(workspace["id"], agent_id, limit=30)
+        jobs = [
+            veto_routines.public_routine(STORE, workspace, routine)
+            for routine in routines
+        ]
         self._ok({
             "agent": agent,
-            "routine": (
-                veto_routines.public_routine(STORE, workspace, routine)
-                if routine is not None
-                else None
-            ),
+            "routines": jobs,
+            # The first job keeps the old singular field readable for callers
+            # written before an agent could own several standing jobs.
+            "routine": jobs[0] if jobs else None,
             "runs": [veto_routines.public_run(run) for run in runs],
         })
 
-    # -- routines: the agent's standing job ------------------------------
+    # -- routines: an agent's standing jobs ------------------------------
     def _v1_list_routines(self) -> None:
         session = self._require_session()
         workspace = session["workspace"]
@@ -1349,16 +1391,21 @@ class Handler(BaseHTTPRequestHandler):
             "routines": [veto_routines.public_routine(STORE, workspace, row) for row in rows]
         })
 
-    def _v1_save_routine(self, agent_id: str) -> None:
-        """Create or edit an agent's standing job. A human signs off every edit."""
-        session = self._require_role(*AGENT_WRITE_ROLES)
-        workspace = session["workspace"]
-        agent = STORE.agent(workspace["id"], agent_id)
-        if agent is None:
-            self._api_error(404, "agent_not_found", "That agent does not exist.")
-        routine = STORE.routine_for_agent(workspace["id"], agent_id)
-        body = self._body()
+    def _routine_name(self, instruction: str, agent: dict) -> str:
+        """A new job's title, taken from the first words of its instruction."""
+        words = " ".join(str(instruction or "").split())
+        if not words:
+            return f"{agent['name']} job"[:MAX_NAME_CHARS]
+        if len(words) <= 56:
+            return words[:MAX_NAME_CHARS]
+        cut = words[:56].rsplit(" ", 1)[0]
+        return (cut or words[:56])[:MAX_NAME_CHARS]
 
+    def _routine_input(
+        self, agent: dict, routine: dict | None, *, default_name: str | None = None
+    ) -> dict:
+        """Parse and validate a job payload; missing fields fall back to the job."""
+        body = self._body()
         cadence = str(
             body.get("cadence") if "cadence" in body
             else (routine or {}).get("cadence") or "weekly"
@@ -1377,10 +1424,15 @@ class Handler(BaseHTTPRequestHandler):
             )
         instruction = instruction[:MAX_SIMULATE_CHARS]
 
-        name = str(
-            body.get("name") if "name" in body
-            else (routine or {}).get("name") or f"{agent['name']} routine"
-        ).strip()[:80] or f"{agent['name']} routine"
+        supplied_name = str(body.get("name") or "").strip() if "name" in body else ""
+        if supplied_name:
+            name = supplied_name[:MAX_NAME_CHARS]
+        elif routine is not None:
+            name = routine["name"]
+        elif default_name:
+            name = default_name[:MAX_NAME_CHARS]
+        else:
+            name = self._routine_name(instruction, agent)
 
         try:
             envelope = int(body.get("envelope_cents")
@@ -1391,35 +1443,114 @@ class Handler(BaseHTTPRequestHandler):
                          else (routine or {}).get("dedupe_days") or 0)
         except (TypeError, ValueError):
             self._api_error(400, "invalid_routine", "The envelope and window must be numbers.")
-        envelope = max(0, min(10_000_000, envelope))
-        dedupe = max(0, min(365, dedupe))
+        return {
+            "name": name,
+            "instruction": instruction,
+            "cadence": cadence,
+            "envelope_cents": max(0, min(10_000_000, envelope)),
+            "dedupe_days": max(0, min(365, dedupe)),
+        }
 
+    def _routine_create(
+        self, workspace: dict, agent: dict, fields: dict, user_id: str
+    ) -> dict:
+        jobs = STORE.routines_for_agent(workspace["id"], agent["id"])
+        if len(jobs) >= MAX_ROUTINES_PER_AGENT:
+            self._api_error(
+                409, "too_many_routines",
+                f"An agent can have at most {MAX_ROUTINES_PER_AGENT} standing jobs.",
+            )
+        return STORE.create_routine(
+            workspace["id"],
+            agent["id"],
+            name=fields["name"],
+            instruction=fields["instruction"],
+            cadence=fields["cadence"],
+            envelope_cents=fields["envelope_cents"],
+            dedupe_days=fields["dedupe_days"],
+            next_run_at=veto_routines.next_run_at(fields["cadence"]),
+            created_by=user_id,
+            approved_by=user_id,
+        )
+
+    def _routine_update(
+        self, workspace: dict, routine: dict, fields: dict, user_id: str
+    ) -> dict:
+        fields = {**fields, "approved_by": user_id}
+        if fields["cadence"] != routine["cadence"]:
+            fields["next_run_at"] = veto_routines.next_run_at(fields["cadence"])
+        updated = STORE.update_routine(workspace["id"], routine["id"], fields=fields)
+        if updated is None:
+            self._api_error(404, "routine_not_found", "That standing job does not exist.")
+        return updated
+
+    def _routine_by_id(self, workspace: dict, routine_id: str) -> dict:
+        routine = STORE.routine(workspace["id"], routine_id)
+        if routine is None:
+            self._api_error(404, "routine_not_found", "That standing job does not exist.")
+        return routine
+
+    def _routine_status(self, workspace: dict, routine: dict, action: str) -> dict:
+        fields: dict = {"status": "paused" if action == "pause" else "active"}
+        if action == "resume":
+            nxt = parse_iso(routine.get("next_run_at"))
+            if nxt is not None and nxt <= datetime.now(timezone.utc):
+                # a paused routine resumes on its cadence; it does not backfill
+                fields["next_run_at"] = veto_routines.next_run_at(routine["cadence"])
+        updated = STORE.update_routine(workspace["id"], routine["id"], fields=fields)
+        if updated is None:
+            self._api_error(404, "routine_not_found", "That standing job does not exist.")
+        return updated
+
+    def _v1_create_routine(self, agent_id: str) -> None:
+        """Add a standing job to an agent: the console's New job form."""
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        agent = STORE.agent(workspace["id"], agent_id)
+        if agent is None:
+            self._api_error(404, "agent_not_found", "That agent does not exist.")
+        fields = self._routine_input(agent, None)
+        routine = self._routine_create(workspace, agent, fields, session["user"]["id"])
+        _changed("agents")
+        self._ok(
+            {"routine": veto_routines.public_routine(STORE, workspace, routine)},
+            status=201,
+        )
+
+    def _v1_save_routine(self, agent_id: str) -> None:
+        """Legacy agent-scoped upsert on the agent's first job.
+
+        The console uses ``POST /routines`` and ``PATCH /routines/{id}`` now, so
+        an agent can own several jobs; this stays for old clients and scripts.
+        """
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        agent = STORE.agent(workspace["id"], agent_id)
+        if agent is None:
+            self._api_error(404, "agent_not_found", "That agent does not exist.")
+        routine = STORE.routine_for_agent(workspace["id"], agent_id)
+        fields = self._routine_input(
+            agent, routine,
+            default_name=f"{agent['name']} routine",
+        )
         user_id = session["user"]["id"]
         if routine is None:
-            routine = STORE.create_routine(
-                workspace["id"],
-                agent_id,
-                name=name,
-                instruction=instruction,
-                cadence=cadence,
-                envelope_cents=envelope,
-                dedupe_days=dedupe,
-                next_run_at=veto_routines.next_run_at(cadence),
-                created_by=user_id,
-                approved_by=user_id,
-            )
+            routine = self._routine_create(workspace, agent, fields, user_id)
         else:
-            fields = {
-                "name": name,
-                "instruction": instruction,
-                "cadence": cadence,
-                "envelope_cents": envelope,
-                "dedupe_days": dedupe,
-                "approved_by": user_id,
-            }
-            if cadence != routine["cadence"]:
-                fields["next_run_at"] = veto_routines.next_run_at(cadence)
-            routine = STORE.update_routine(workspace["id"], routine["id"], fields=fields)
+            routine = self._routine_update(workspace, routine, fields, user_id)
+        _changed("agents")
+        self._ok({"routine": veto_routines.public_routine(STORE, workspace, routine)})
+
+    def _v1_update_routine(self, routine_id: str) -> None:
+        """Edit one standing job in place: PATCH /routines/{id}."""
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        routine = self._routine_by_id(workspace, routine_id)
+        agent = STORE.agent(workspace["id"], routine["agent_id"])
+        if agent is None:
+            self._api_error(404, "agent_not_found", "That agent does not exist.")
+        fields = self._routine_input(agent, routine)
+        routine = self._routine_update(workspace, routine, fields, session["user"]["id"])
         _changed("agents")
         self._ok({"routine": veto_routines.public_routine(STORE, workspace, routine)})
 
@@ -1429,13 +1560,15 @@ class Handler(BaseHTTPRequestHandler):
         routine = STORE.routine_for_agent(workspace["id"], agent_id)
         if routine is None:
             self._api_error(404, "no_routine", "This agent has no routine yet.")
-        fields: dict = {"status": "paused" if action == "pause" else "active"}
-        if action == "resume":
-            nxt = parse_iso(routine.get("next_run_at"))
-            if nxt is not None and nxt <= datetime.now(timezone.utc):
-                # a paused routine resumes on its cadence; it does not backfill
-                fields["next_run_at"] = veto_routines.next_run_at(routine["cadence"])
-        routine = STORE.update_routine(workspace["id"], routine["id"], fields=fields)
+        routine = self._routine_status(workspace, routine, action)
+        _changed("agents")
+        self._ok({"routine": veto_routines.public_routine(STORE, workspace, routine)})
+
+    def _v1_set_routine_status_by_id(self, routine_id: str, action: str) -> None:
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        routine = self._routine_by_id(workspace, routine_id)
+        routine = self._routine_status(workspace, routine, action)
         _changed("agents")
         self._ok({"routine": veto_routines.public_routine(STORE, workspace, routine)})
 
@@ -1450,17 +1583,27 @@ class Handler(BaseHTTPRequestHandler):
             "request": veto_requests.public_request(record) if record else None,
         }
 
+    def _check_routine_run(self, routine: dict, session: dict) -> None:
+        if routine["status"] != "active":
+            self._api_error(
+                409, "routine_paused", "Resume the routine before running it."
+            )
+        self._limit("simulate", f"user:{session['user']['id']}", RATE_SESSION_PER_MIN)
+
     def _routine_for_run(self, agent_id: str) -> tuple[dict, dict]:
         session = self._require_role(*AGENT_WRITE_ROLES)
         workspace = session["workspace"]
         routine = STORE.routine_for_agent(workspace["id"], agent_id)
         if routine is None:
             self._api_error(404, "no_routine", "This agent has no routine yet.")
-        if routine["status"] != "active":
-            self._api_error(
-                409, "routine_paused", "Resume the routine before running it."
-            )
-        self._limit("simulate", f"user:{session['user']['id']}", RATE_SESSION_PER_MIN)
+        self._check_routine_run(routine, session)
+        return workspace, routine
+
+    def _routine_for_run_by_id(self, routine_id: str) -> tuple[dict, dict]:
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        routine = self._routine_by_id(workspace, routine_id)
+        self._check_routine_run(routine, session)
         return workspace, routine
 
     def _v1_routine_run(self, agent_id: str) -> None:
@@ -1469,9 +1612,14 @@ class Handler(BaseHTTPRequestHandler):
         _changed("agents", "requests")
         self._ok(self._routine_run_payload(workspace, run))
 
-    def _v1_routine_run_stream(self, agent_id: str) -> None:
-        """Run the routine now, streaming the same frames as a dry run, then the run."""
-        workspace, routine = self._routine_for_run(agent_id)
+    def _v1_routine_run_by_id(self, routine_id: str) -> None:
+        workspace, routine = self._routine_for_run_by_id(routine_id)
+        run = veto_routines.run_once(STORE, workspace, routine, settlement=SETTLEMENT)
+        _changed("agents", "requests")
+        self._ok(self._routine_run_payload(workspace, run))
+
+    def _stream_routine_run(self, workspace: dict, routine: dict) -> None:
+        """Stream one run, then send the recorded run as the last frame."""
         emit = self._start_sse()
         try:
             run = veto_routines.run_once(
@@ -1485,6 +1633,14 @@ class Handler(BaseHTTPRequestHandler):
         _changed("agents", "requests")
         payload = self._routine_run_payload(workspace, run)
         emit({"type": "run", **payload})
+
+    def _v1_routine_run_stream(self, agent_id: str) -> None:
+        workspace, routine = self._routine_for_run(agent_id)
+        self._stream_routine_run(workspace, routine)
+
+    def _v1_routine_run_stream_by_id(self, routine_id: str) -> None:
+        workspace, routine = self._routine_for_run_by_id(routine_id)
+        self._stream_routine_run(workspace, routine)
 
     def _v1_agent_search(self, agent_id: str) -> None:
         agent = self._workspace_agent(agent_id)
@@ -1563,6 +1719,14 @@ class Handler(BaseHTTPRequestHandler):
         routine = STORE.routine_for_agent(workspace["id"], agent_id)
         if routine is None:
             self._api_error(404, "no_routine", "This agent has no standing job.")
+        STORE.delete_routine(workspace["id"], routine["id"])
+        _changed("agents")
+        self._ok({"deleted": True})
+
+    def _v1_delete_routine_by_id(self, routine_id: str) -> None:
+        session = self._require_role(*AGENT_WRITE_ROLES)
+        workspace = session["workspace"]
+        routine = self._routine_by_id(workspace, routine_id)
         STORE.delete_routine(workspace["id"], routine["id"])
         _changed("agents")
         self._ok({"deleted": True})

@@ -30,12 +30,33 @@ function charter(agent: Agent) {
 
 /**
  * The standing job in one line: what it orders, how often, when it next runs.
+ * When the agent owns several jobs the line leads with the count and the
+ * soonest active slot; the cards themselves live on the agent page.
  * A paused job, or a job under a paused bot, never promises a next run.
  */
 function JobLine({ agent }: { agent: Agent }) {
   const job = agent.routine
-  if (!job) return <span className="plate-muted">No standing job</span>
+  const count = agent.routine_count ?? (job ? 1 : 0)
+  if (!job || count === 0) return <span className="plate-muted">No standing job</span>
   const paused = job.status === 'paused' || agent.status !== 'active'
+  if (count > 1) {
+    return (
+      <>
+        <span className="plate-job-name">
+          {count} standing jobs
+        </span>
+        {paused ? (
+          <span className="plate-muted"> · paused</span>
+        ) : job.next_run_at ? (
+          <span className="mono plate-job-next">
+            {' '}
+            · next {when(job.next_run_at).split(' · ')[0]}
+            <span className="plate-job-time"> · {when(job.next_run_at).split(' · ')[1]}</span>
+          </span>
+        ) : null}
+      </>
+    )
+  }
   return (
     <>
       <span className="plate-job-name">{job.name}</span>

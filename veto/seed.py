@@ -78,6 +78,17 @@ AGENTS = (
             "envelope_cents": 30_000,
             "dedupe_days": 14,
         },
+        # A second job on purpose: the agent page shows one card per schedule, and
+        # the demo should show that an agent can own more than one.
+        "extra_routines": [
+            {
+                "name": "Paper and envelopes",
+                "instruction": "Buy a ream of printer paper and a box of envelopes",
+                "cadence": "monthly",
+                "envelope_cents": 5_000,
+                "dedupe_days": 21,
+            },
+        ],
     },
     {
         "name": "Client lunch",
@@ -193,26 +204,38 @@ def _ensure_agents(store: Store, workspace_id: str) -> None:
 
 
 def _ensure_routines(store: Store, workspace_id: str) -> None:
-    """Give each demo agent its standing job once; never reset a live schedule."""
+    """Give each demo agent its standing jobs once; never reset a live schedule.
+
+    A spec carries one ``routine`` and optionally ``extra_routines``. Seeding is
+    idempotent per instruction, so a second job added to a spec later appears on
+    an existing database without duplicating the first one.
+    """
     agents = {agent["name"]: agent for agent in store.list_agents(workspace_id)}
     for spec in AGENTS:
-        routine_spec = spec.get("routine")
         agent = agents.get(spec["name"])
-        if not routine_spec or agent is None:
+        if agent is None:
             continue
-        if store.routine_for_agent(workspace_id, agent["id"]) is not None:
-            continue
-        store.create_routine(
-            workspace_id,
-            agent["id"],
-            name=routine_spec["name"],
-            instruction=routine_spec["instruction"],
-            cadence=routine_spec["cadence"],
-            envelope_cents=routine_spec["envelope_cents"],
-            dedupe_days=routine_spec["dedupe_days"],
-            next_run_at=veto_routines.next_run_at(routine_spec["cadence"]),
-            created_by="demo",
-        )
+        specs = [spec["routine"]] if spec.get("routine") else []
+        specs.extend(spec.get("extra_routines") or [])
+        existing = {
+            routine["instruction"]
+            for routine in store.routines_for_agent(workspace_id, agent["id"])
+        }
+        for routine_spec in specs:
+            if routine_spec["instruction"] in existing:
+                continue
+            store.create_routine(
+                workspace_id,
+                agent["id"],
+                name=routine_spec["name"],
+                instruction=routine_spec["instruction"],
+                cadence=routine_spec["cadence"],
+                envelope_cents=routine_spec["envelope_cents"],
+                dedupe_days=routine_spec["dedupe_days"],
+                next_run_at=veto_routines.next_run_at(routine_spec["cadence"]),
+                created_by="demo",
+            )
+            existing.add(routine_spec["instruction"])
 
 
 def _populate(store: Store) -> dict:

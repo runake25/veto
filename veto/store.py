@@ -367,13 +367,14 @@ CREATE TABLE IF NOT EXISTS events (
     at         TEXT NOT NULL
 );
 
--- An agent's standing job: what it buys, how often, and the envelope it may
--- spend inside. One routine per agent: the agent is the role, the routine is
--- the recurring work. Each due run becomes a request through the same pipeline.
+-- An agent's standing jobs: what it buys, how often, and the envelope it may
+-- spend inside. An agent is the role; each routine is one piece of recurring
+-- work it does (a weekly restock, a monthly top-up). Each due run becomes a
+-- request through the same pipeline.
 CREATE TABLE IF NOT EXISTS routines (
     id             TEXT PRIMARY KEY,
     workspace_id   TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    agent_id       TEXT NOT NULL UNIQUE REFERENCES agents(id) ON DELETE CASCADE,
+    agent_id       TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     name           TEXT NOT NULL,
     instruction    TEXT NOT NULL,
     cadence        TEXT NOT NULL DEFAULT 'weekly'
@@ -453,10 +454,84 @@ class Store:
         """Create every table/index idempotently and stamp the schema version."""
         with self._lock:
             self.conn.executescript(SCHEMA)
+            self._migrate_routines_many_per_agent()
             self.conn.execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
                 (SCHEMA_VERSION,),
             )
+
+    def _migrate_routines_many_per_agent(self) -> None:
+        """Drop the old one-job-per-agent rule from an existing database.
+
+        SQLite cannot drop a table constraint in place, so this is the standard
+        rebuild: copy the rows into a table without ``UNIQUE(agent_id)``, drop
+        the old one and rename. The ``routine_runs`` foreign key is by table
+        name, so it follows the rename; foreign keys are off only for the swap,
+        then checked. A fresh database has nothing to do here.
+        """
+        if not self._routines_unique_agent_index():
+            return
+        rebuild = """
+            BEGIN IMMEDIATE;
+            CREATE TABLE routines_next (
+                id             TEXT PRIMARY KEY,
+                workspace_id   TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                agent_id       TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                name           TEXT NOT NULL,
+                instruction    TEXT NOT NULL,
+                cadence        TEXT NOT NULL DEFAULT 'weekly'
+                               CHECK (cadence IN ('daily', 'weekly', 'monthly')),
+                envelope_cents INTEGER NOT NULL DEFAULT 0,
+                dedupe_days    INTEGER NOT NULL DEFAULT 0,
+                status         TEXT NOT NULL DEFAULT 'active'
+                               CHECK (status IN ('active', 'paused')),
+                next_run_at    TEXT NOT NULL,
+                last_run_at    TEXT,
+                created_by     TEXT,
+                approved_by    TEXT,
+                created_at     TEXT NOT NULL
+            );
+            INSERT INTO routines_next (
+                id, workspace_id, agent_id, name, instruction, cadence,
+                envelope_cents, dedupe_days, status, next_run_at, last_run_at,
+                created_by, approved_by, created_at
+            )
+            SELECT id, workspace_id, agent_id, name, instruction, cadence,
+                envelope_cents, dedupe_days, status, next_run_at, last_run_at,
+                created_by, approved_by, created_at
+            FROM routines;
+            DROP TABLE routines;
+            ALTER TABLE routines_next RENAME TO routines;
+            CREATE INDEX IF NOT EXISTS idx_routines_due
+                ON routines (status, next_run_at);
+            COMMIT;
+        """
+        self.conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            self.conn.executescript(rebuild)
+            broken = self.conn.execute("PRAGMA foreign_key_check").fetchall()
+        finally:
+            self.conn.execute("PRAGMA foreign_keys=ON")
+        if broken:
+            raise sqlite3.IntegrityError(
+                f"routines migration left {len(broken)} broken foreign key(s)"
+            )
+
+    def _routines_unique_agent_index(self) -> str | None:
+        """The autoindex that enforced one routine per agent, if it still exists."""
+        for index in self.conn.execute("PRAGMA index_list(routines)").fetchall():
+            if index["origin"] != "u":
+                continue
+            columns = [
+                row["name"]
+                for row in self.conn.execute(
+                    f'PRAGMA index_info("{index["name"]}")'
+                ).fetchall()
+            ]
+            if columns == ["agent_id"]:
+                return index["name"]
+        return None
+
 
     def close(self) -> None:
         with self._lock:
@@ -1483,8 +1558,18 @@ class Store:
         return row
 
     def routine_for_agent(self, workspace_id: str, agent_id: str) -> dict | None:
+        """The agent's first job, for callers written before an agent could have many."""
         return self.one(
-            "SELECT * FROM routines WHERE workspace_id = ? AND agent_id = ?",
+            "SELECT * FROM routines WHERE workspace_id = ? AND agent_id = ? "
+            "ORDER BY created_at, rowid LIMIT 1",
+            (workspace_id, agent_id),
+        )
+
+    def routines_for_agent(self, workspace_id: str, agent_id: str) -> list[dict]:
+        """Every standing job the agent owns, in creation order."""
+        return self.query(
+            "SELECT * FROM routines WHERE workspace_id = ? AND agent_id = ? "
+            "ORDER BY created_at, rowid",
             (workspace_id, agent_id),
         )
 
@@ -1575,6 +1660,18 @@ class Store:
         sql += " ORDER BY started_at DESC, rowid DESC LIMIT ?"
         params.append(max(1, min(100, int(limit))))
         return self.query(sql, params)
+
+    def routine_runs_for_agent(
+        self, workspace_id: str, agent_id: str, *, limit: int = 30
+    ) -> list[dict]:
+        """Runs across every job the agent owns, newest first."""
+        return self.query(
+            "SELECT rr.* FROM routine_runs rr "
+            "JOIN routines r ON r.id = rr.routine_id "
+            "WHERE rr.workspace_id = ? AND r.agent_id = ? "
+            "ORDER BY rr.started_at DESC, rr.rowid DESC LIMIT ?",
+            (workspace_id, agent_id, max(1, min(200, int(limit)))),
+        )
 
     def last_routine_order(self, routine_id: str, *, since: str) -> dict | None:
         """The last run that put an order in flight, for the dedupe window."""

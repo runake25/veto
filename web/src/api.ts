@@ -400,7 +400,12 @@ export interface Agent {
   spent_month_cents?: number
   /** This month, awaiting a signature or approved with capture owed. */
   committed_month_cents?: number
-  /** The standing job, summarised on the agent list. Full view on the agent. */
+  /** How many standing jobs the agent owns (the list shows one line). */
+  routine_count?: number
+  /**
+   * The agent's standing jobs, summarised for the list. With several jobs the
+   * fields describe the soonest active one; the full set lives on the agent.
+   */
   routine?: RoutineSummary | null
 }
 
@@ -452,7 +457,11 @@ export interface RoutineRun {
 
 export interface AgentDetailData {
   agent: Agent
+  /** Every standing job the agent owns, in creation order. */
+  routines: Routine[]
+  /** The first job, kept for callers written before an agent could have many. */
   routine: Routine | null
+  /** Runs across all of the agent's jobs, newest first. */
   runs: RoutineRun[]
 }
 
@@ -644,16 +653,16 @@ export async function streamSimulate(
 }
 
 /**
- * Run a routine now, streaming the pipeline while it works. The last frame is
- * the recorded run (and the request it created, if any).
+ * Run a standing job now, streaming the pipeline while it works. The last frame
+ * is the recorded run (and the request it created, if any).
  */
 export async function streamRoutineRun(
-  agentId: string,
+  routineId: string,
   onFrame: (frame: RoutineStreamFrame) => void,
   signal?: AbortSignal,
 ): Promise<RoutineRunResult> {
   const frames = await readStream<RoutineStreamFrame>(
-    `/api/v1/agents/${encodeURIComponent(agentId)}/routine/run/stream`,
+    `/api/v1/routines/${encodeURIComponent(routineId)}/run/stream`,
     {},
     onFrame,
     signal,
@@ -733,9 +742,9 @@ export const api = {
     request<{ deleted: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
-  deleteRoutine: (agentId: string) =>
+  deleteRoutine: (routineId: string) =>
     request<{ deleted: boolean }>(
-      `/api/v1/agents/${encodeURIComponent(agentId)}/routine`,
+      `/api/v1/routines/${encodeURIComponent(routineId)}`,
       { method: 'DELETE' },
     ),
   agents: () => request<{ agents: Agent[] }>('/api/v1/agents').then((d) => d.agents),
@@ -748,14 +757,19 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(input),
     }).then((d) => d.agent),
-  saveRoutine: (agentId: string, input: RoutineInput) =>
+  createRoutine: (agentId: string, input: RoutineInput) =>
     post<{ routine: Routine }>(
-      `/api/v1/agents/${encodeURIComponent(agentId)}/routine`,
+      `/api/v1/agents/${encodeURIComponent(agentId)}/routines`,
       input,
     ).then((d) => d.routine),
-  setRoutineStatus: (agentId: string, action: 'pause' | 'resume') =>
+  updateRoutine: (routineId: string, input: RoutineInput) =>
+    request<{ routine: Routine }>(
+      `/api/v1/routines/${encodeURIComponent(routineId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    ).then((d) => d.routine),
+  setRoutineStatus: (routineId: string, action: 'pause' | 'resume') =>
     post<{ routine: Routine }>(
-      `/api/v1/agents/${encodeURIComponent(agentId)}/routine/${action}`,
+      `/api/v1/routines/${encodeURIComponent(routineId)}/${action}`,
     ).then((d) => d.routine),
   runRoutineStream: streamRoutineRun,
   searchAgent: (id: string, q: string, qty = 1) =>

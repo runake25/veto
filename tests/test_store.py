@@ -539,6 +539,87 @@ class PersistenceTests(unittest.TestCase):
             store.close()
 
 
+class RoutineMigrationTests(unittest.TestCase):
+    """The old schema allowed one standing job per agent; the rebuild keeps the
+    rows and drops the constraint, so an existing database can grow a second job."""
+
+    OLD_ROUTINES = """
+        CREATE TABLE routines (
+            id             TEXT PRIMARY KEY,
+            workspace_id   TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            agent_id       TEXT NOT NULL UNIQUE REFERENCES agents(id) ON DELETE CASCADE,
+            name           TEXT NOT NULL,
+            instruction    TEXT NOT NULL,
+            cadence        TEXT NOT NULL DEFAULT 'weekly'
+                           CHECK (cadence IN ('daily', 'weekly', 'monthly')),
+            envelope_cents INTEGER NOT NULL DEFAULT 0,
+            dedupe_days    INTEGER NOT NULL DEFAULT 0,
+            status         TEXT NOT NULL DEFAULT 'active'
+                           CHECK (status IN ('active', 'paused')),
+            next_run_at    TEXT NOT NULL,
+            last_run_at    TEXT,
+            created_by     TEXT,
+            approved_by    TEXT,
+            created_at     TEXT NOT NULL
+        );
+        CREATE INDEX idx_routines_due ON routines (status, next_run_at);
+    """
+
+    def test_old_one_per_agent_table_is_rebuilt(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "legacy.db"
+        conn = sqlite3.connect(db_path)
+        conn.executescript(self.OLD_ROUTINES)
+        conn.close()
+
+        store = Store(db_path)
+        self.addCleanup(store.close)
+        workspace = store.create_workspace("Legacy Co")
+        agent = store.create_agent(
+            workspace["id"],
+            dict(AGENT_FIELDS, name="Legacy bot"),
+        )
+        first = store.create_routine(
+            workspace["id"], agent["id"], name="Restock", instruction="buy paper"
+        )
+        second = store.create_routine(
+            workspace["id"], agent["id"], name="Top-up", instruction="buy pens"
+        )
+        self.assertEqual(second["agent_id"], agent["id"])
+        self.assertEqual(
+            [job["id"] for job in store.routines_for_agent(workspace["id"], agent["id"])],
+            [first["id"], second["id"]],
+        )
+        # the uniqueness was on agent_id; the primary key autoindex may remain
+        for index in store.query("PRAGMA index_list(routines)"):
+            if index["origin"] != "u":
+                continue
+            columns = [
+                row["name"]
+                for row in store.query(f'PRAGMA index_info("{index["name"]}")')
+            ]
+            self.assertNotEqual(columns, ["agent_id"])
+
+    def test_a_reopen_does_not_migrate_twice(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "fresh.db"
+        store = Store(db_path)
+        workspace = store.create_workspace("Fresh Co")
+        agent = store.create_agent(workspace["id"], dict(AGENT_FIELDS, name="Fresh bot"))
+        store.create_routine(workspace["id"], agent["id"], name="One", instruction="one thing")
+        store.close()
+
+        reopened = Store(db_path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(len(reopened.list_routines(workspace["id"])), 1)
+        reopened.create_routine(
+            workspace["id"], agent["id"], name="Two", instruction="two things"
+        )
+        self.assertEqual(len(reopened.list_routines(workspace["id"])), 2)
+
+
 class HelperTests(unittest.TestCase):
     def test_now_iso_parses(self) -> None:
         parsed = parse_iso("2026-10-22T05:00:00+00:00")
