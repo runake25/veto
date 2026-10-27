@@ -875,12 +875,15 @@
 /* ---- captured by category: one navy family, centre total, readable legend -- */
 
 .analytics .donut-card {
-  --donut-0: var(--accent-ink);
-  --donut-1: var(--accent);
-  --donut-2: color-mix(in srgb, var(--accent) 72%, var(--surface));
-  --donut-3: color-mix(in srgb, var(--accent) 52%, var(--surface));
-  --donut-4: color-mix(in srgb, var(--accent) 36%, var(--surface));
-  --donut-5: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  /* Categorical spend: six distinct hues, all deep enough to read on white and
+     to separate in grayscale. Money-state colours (green/red/amber) are not
+     reused here — this chart is settled spend, not a verdict. */
+  --donut-0: #1b3f63; /* navy */
+  --donut-1: #1f6f6a; /* teal */
+  --donut-2: #704a6e; /* plum */
+  --donut-3: #8a6a1f; /* ochre */
+  --donut-4: #8c3b2e; /* rust */
+  --donut-5: #6b7280; /* other: slate */
   align-content: start;
 }
 

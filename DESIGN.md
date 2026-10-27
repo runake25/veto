@@ -55,8 +55,10 @@ radius: card 6, control 4, sheet 12   sheet inset 8   sidebar 228   topbar 48
 gap 20-24   card padding 15-16   row 48
 ```
 
-Colour budget: under 3%. Navy carries links, focus and the one chart series; navy is never a
-surface. Green means money moved, red means money was refused, amber means money is held
+Colour budget: under 3%. Navy carries links, focus and the single-series chart; navy is never a
+surface. Categorical charts (captured spend by category) use a six-hue deep palette — navy
+`#1b3f63`, teal `#1f6f6a`, plum `#704a6e`, ochre `#8a6a1f`, rust `#8c3b2e`, slate `#6b7280` —
+and never reuse the money-state green/red/amber. Green means money moved, red means money was refused, amber means money is held
 for a signature — those three never appear as decoration. The only filled primary button is
 near-black. No gradients.
 
