@@ -41,6 +41,7 @@ from veto.ratelimit import RateLimiter  # noqa: E402
 from veto import settlement as veto_settlement  # noqa: E402
 from veto import slack_commands as veto_slack  # noqa: E402
 from veto.seed import migrate_demo_identity, seed_demo  # noqa: E402
+from veto import demo_history as veto_demo_history  # noqa: E402
 
 ENGINE = Engine()
 PORT = int(os.environ.get("PORT", "8787"))
@@ -2372,6 +2373,37 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"error": "unknown route"})
 
 
+def _bootstrap_demo_history(port: int) -> None:
+    """Rebuild the demo history after a cold start, through the real pipeline.
+
+    A free instance loses its disk when it sleeps or redeploys, which would leave
+    a judge on an empty record. The replay goes through the same public API a
+    person uses (``veto/demo_history.py``), so the requests, captures and
+    decisions are genuine; it is skipped entirely when the record already has
+    rows.
+    """
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(90):  # the server may still be binding its socket
+        try:
+            with urllib.request.urlopen(base + "/api/health", timeout=2):
+                break
+        except Exception:  # noqa: BLE001
+            time.sleep(1)
+    try:
+        summary = veto_demo_history.populate(base)
+        if os.environ.get("VETO_DEMO_SPREAD", "1") != "0":
+            try:
+                veto_demo_history.spread(STORE)
+            except Exception:  # noqa: BLE001 - dates are cosmetic; never fatal
+                traceback.print_exc()
+        print(
+            f"  history   {summary['requests']} requests rebuilt on a cold instance",
+            flush=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - a demo replay must not stop the runner
+        print(f"  history   not rebuilt ({exc})", flush=True)
+
+
 def main() -> int:
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"\n  Veto runner")
@@ -2383,6 +2415,17 @@ def main() -> int:
         print(f"  slack     {PUBLIC_URL}/api/slack/veto   {PUBLIC_URL}/api/slack/interact")
     # the schedule lives in this process: due routines run through the same pipeline
     veto_routines.start_scheduler(STORE, SETTLEMENT)
+    # A free host has no disk that survives a night: rebuild the demo history on an
+    # empty store before anyone lands on it. Off unless the platform opts in.
+    if os.environ.get("VETO_DEMO_HISTORY", "").strip() == "1":
+        try:
+            empty = STORE.one("SELECT COUNT(*) AS n FROM requests")["n"] == 0
+        except Exception:  # noqa: BLE001
+            empty = False
+        if empty:
+            threading.Thread(
+                target=_bootstrap_demo_history, args=(PORT,), daemon=True
+            ).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

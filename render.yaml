@@ -22,6 +22,14 @@ services:
         value: /data/veto.db
       - key: VETO_SEED_DEMO
         value: "1"
+      # rebuild the demo history through the real pipeline when the ephemeral
+      # disk is empty after a cold start, so a judge never lands on an empty Inbox
+      - key: VETO_DEMO_HISTORY
+        value: "1"
+      # the hosted demo opens a longer consent window so a passing judge can
+      # still sign the waiting cart; the console reads the real window from the record
+      - key: VETO_CONSENT_MINUTES
+        value: "720"
       - key: PAYPAL_LIVE
         value: "1"
       - key: PAYPAL_BASE

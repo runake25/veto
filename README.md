@@ -40,8 +40,9 @@ A policy and consent service between the agent and PayPal.
   write the same stored request and the same append-only trail.
 - **The charter decides.** Monthly budget, per-order and per-item caps, merchant and category
   allowlists, approval threshold — every fired rule is stored with its observed value and limit.
-- **Only a signed consent can spend.** A sha256 of the cart, single use, ten minutes; its nonce
-  is the PayPal idempotency key, so a retried approval replays the order instead of charging twice.
+- **Only a signed consent can spend.** A sha256 of the cart, single use, ten minutes by default
+  (the hosted demo opens a longer window so a visitor can sign); its nonce is the PayPal
+  idempotency key, so a retried approval replays the order instead of charging twice.
 - **The catalogue is the rule set.** Channel3 search prices every line; an offer that breaks a
   rule is marked with the rule and the number, not hidden.
 
@@ -152,9 +153,13 @@ cd web && npm run build                 # tsc --noEmit + vite build
 The demo runs on Render's free Docker plan from `server.py` + `veto/` + `app/`. A free instance
 sleeps after 15 idle minutes and loses its disk, so three independent GitHub Actions warmers ping
 it (the `*/5` schedule, a self-renewing bridge, and a second schedule in `runake25/veto-wake`) —
-always-on is 744 h in a 31-day month, inside the 750 free hours, so it stays $0. The instance
-reseeds its workspace on boot; `tools/demo_history.py` recreates the sandbox history through the
-public API.
+always-on is 744 h in a 31-day month, inside the 750 free hours, so it stays $0.
+
+The disk is ephemeral, so the runner rebuilds the demo on a cold start: if the record is empty
+it replays a month of activity through its own public API (`veto/demo_history.py`, the same
+pipeline a person or agent uses), spreads those requests' timestamps across the current month
+so Analytics has a month to draw, and leaves one cart waiting for a signature. Requests, rules,
+consents and PayPal ids are recorded live — only the replay's dates are arranged.
 
 ## Limits
 

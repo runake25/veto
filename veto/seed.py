@@ -87,7 +87,7 @@ AGENTS = (
         "per_order_cap_cents": 25_000,
         "per_unit_cap_cents": None,
         "approval_threshold_cents": 10_000,
-        "vendors": [],
+        "vendors": ["doordash.com", "grubhub.com", "sweetgreen.com"],
         "categories": ["meals"],
         "rules": ["vendor_allowlist", "per_order_cap", "approval_threshold"],
         "overrides": [],
