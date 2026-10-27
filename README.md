@@ -107,12 +107,12 @@ flowchart TB
 
 ## The console
 
-<img src="shots/r4-record-1440.png" width="100%" alt="A record: verdict with the rules that fired, cart, PayPal objects, consent, trail">
+<img src="shots/hosted3-record-1440.png" width="100%" alt="A record: verdict with the rules that fired, cart, PayPal objects, consent, trail">
 
 One record: every rule that fired with its observed value and limit, the cart, the PayPal
 object chain, the consent hash and window, the trail. Approve, veto and void are gated by state.
 
-<img src="shots/r4-agents-1440.png" width="100%" alt="Agents: instance plates with charters, standing jobs and scope">
+<img src="shots/hosted3-agents-1440.png" width="100%" alt="Agents: instance plates with charters, standing jobs and scope">
 
 Agents are instances with their own charter and standing job. The rest of the console —
 [Overview](https://veto-bracken-field.onrender.com/app/#/), [Inbox](https://veto-bracken-field.onrender.com/app/#/inbox),
