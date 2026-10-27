@@ -20,7 +20,7 @@ PayPal moves money only against that signature.
 
 **Try it in Slack:** [join the Veto llc workspace](https://join.slack.com/t/vetollc/shared_invite/zt-4drdephaf-2GOX~63llMwFmLJPM7XFRQ) · `/veto 2 packs of bamboo toilet paper`
 
-<img src="shots/hosted3-overview-1440.png" width="100%" alt="Veto console: a cart waiting for a signature, the month's money, the agent fleet">
+<img src="submission/media/01-overview.png" width="100%" alt="Veto console: a cart waiting for a signature, the month's money, the agent fleet">
 
 </div>
 
@@ -107,12 +107,12 @@ flowchart TB
 
 ## The console
 
-<img src="shots/hosted3-record-1440.png" width="100%" alt="A record: verdict with the rules that fired, cart, PayPal objects, consent, trail">
+<img src="submission/media/02-record-awaiting.png" width="100%" alt="A record waiting for a signature: every rule that fired with its observed value and limit, the cart, and the consent">
 
 One record: every rule that fired with its observed value and limit, the cart, the PayPal
 object chain, the consent hash and window, the trail. Approve, veto and void are gated by state.
 
-<img src="shots/hosted3-agent-detail-1440.png" width="100%" alt="An agent page: charter, standing job, one request tool and every order as a receipt">
+<img src="submission/media/07-agent-jobs.png" width="100%" alt="An agent page: the charter, its standing jobs and the monthly envelope">
 
 An agent is an instance: charter, standing job, one tool that both dry-runs a cart and browses the catalogue (every offer can be ordered exactly as shown), and every order as a receipt — amount, state, who asked, who signed. The rest of the console —
 [Overview](https://veto-bracken-field.onrender.com/app/#/), [Inbox](https://veto-bracken-field.onrender.com/app/#/inbox),
@@ -137,7 +137,7 @@ captures with real ids.
 ## Verify
 
 ```bash
-python3 -m unittest discover -s tests   # 344 tests
+python3 -m unittest discover -s tests   # 349 tests
 python3 tools/check_m4.py               # 42 checks: every number a screen reads (read-only)
 python3 tools/check_polish.py           # 21 checks: live feed, filters, delete guards, built controls
 python3 tools/check_m3.py               # 19 checks: the request loop over HTTP (real pipeline)
@@ -176,8 +176,8 @@ veto/         store · pipeline · policy · requests · settlement · routines 
               engine · channel3 · paypal_client · auth · seed · slack_commands
 web/src/      React console (screens, components, per-screen stylesheets)
 app/          built console served at / and /app/
-tests/        344 tests        tools/  live check harnesses + demo history
-slack/        app manifest + signature verifier     shots/  screenshots used here
+tests/        349 tests        tools/  live check harnesses + demo history
+slack/        app manifest + signature verifier     submission/  Devpost media
 Dockerfile · render.yaml · start.sh · .env.example · DESIGN.md · SPEC.md · PRODUCT.md
 ```
 
