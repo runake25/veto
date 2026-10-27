@@ -51,9 +51,18 @@ text #0e141b     muted #4e5761     faint #68717c
 accent #1b3f63   accent-soft #e2e9f1   accent-ink #12304d
 positive #0f6b43 (money captured)  negative #a01f24 (refused)  hold #8a5a09 (money held)
 rail #0f1822  rail-ink #b3bdca  rail-active #1d2c3b  rail-line #233140  rail-mark #8fb4d6
+brand #0fb4a0 (mark tile only)  brand-ink #ffffff  brand-word #0c2a58
 radius: card 6, control 4, sheet 12   sheet inset 8   sidebar 228   topbar 48
 gap 20-24   card padding 15-16   row 48
 ```
+
+The mark is a **V that is also a tick**: short left arm, long right arm, two eye slots
+punched into a broad rounded chin, on one filled teal tile. The teal appears only there —
+money state owns green, red and amber, so the tile is never a signal. The lockup sets the
+word in lowercase, Plex Sans 600, one step larger and tighter than body to hold the same
+optical weight. Drawn as one filled path (`components/Logo.tsx`), no runtime mask, so it is
+identical at 16, 22, 44 and 512px; `web/public/veto-app-icon.svg` + `.png` carry the tile,
+`veto-mark.svg` is the navy monochrome cut for docs.
 
 Colour budget: under 3%. Navy carries links, focus and the single-series chart; navy is never a
 surface. Categorical charts (captured spend by category) use a six-hue deep palette — navy

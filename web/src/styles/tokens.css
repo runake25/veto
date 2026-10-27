@@ -76,10 +76,17 @@
   --muted: #3f4954;
   --faint: #566170;
 
-  /* the one hue: institutional navy (PayPal-adjacent, not consumer teal) */
+  /* the one hue: institutional navy (PayPal-adjacent) */
   --accent: #1b3f63;
   --accent-soft: #e2e9f1;
   --accent-ink: #12304d;
+
+  /* brand mark only — the tile and its V. This teal lives nowhere else in the
+     console: money state owns green/red/amber, and the mark must never read as
+     one of those. The wordmark navy is the logotype's, not the link colour. */
+  --brand-tile: #0fb4a0;
+  --brand-ink: #ffffff;
+  --brand-word: #0c2a58;
 
   /* signals — deep, not candy */
   --negative: #a01f24;

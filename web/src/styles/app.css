@@ -37,20 +37,17 @@
 .wordmark {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   font-weight: 600;
-  font-size: 15px;
-  letter-spacing: -0.01em;
-  color: var(--text);
+  /* lowercase logotype: x-height is smaller than the old "Veto", so it sits one
+     step up in size and one step tighter to keep the same optical weight */
+  font-size: 16px;
+  letter-spacing: -0.03em;
+  color: var(--brand-word);
 }
 
 .logo-mark {
   flex: none;
-}
-
-/* the seal is the one coloured piece of the lockup; it brightens on the rail */
-.logo-seal {
-  fill: var(--accent);
 }
 
 .auth-title {
@@ -494,13 +491,10 @@
   background: var(--rail);
 }
 
-/* inside the rail everything speaks light; the seal brightens to stay visible */
+/* inside the rail everything speaks light; the tile carries its own contrast,
+   so only the logotype flips to rail ink */
 .sidebar .wordmark {
   color: var(--rail-ink-strong);
-}
-
-.sidebar .logo-seal {
-  fill: var(--rail-mark);
 }
 
 .sidebar .nav-label {
