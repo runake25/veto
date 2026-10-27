@@ -1,26 +1,28 @@
 /**
- * The mark: the V of the name with the seal on its shoulder. No enclosing frame —
- * a framed square with a tick inside reads as a checkbox, which is the opposite of
- * what this product does.
+ * The mark: the V of the name with the seal stamped onto its right shoulder.
+ * The stroke and the seal are one object — a stamp landing on a page — so the
+ * mark reads at 16px (favicon) and at 44px (auth). No enclosing frame: a framed
+ * square with a tick inside reads as a checkbox, which is the opposite of what
+ * this product does.
  */
 export function Logo({ size = 22 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 20 20"
+      viewBox="0 0 24 24"
       fill="none"
       aria-hidden="true"
       className="logo-mark"
     >
       <path
-        d="M3.4 4.6L10 16.4l6.6-11.8"
+        d="M3.4 5.2 11.6 19.4 17.6 8.2"
         stroke="currentColor"
-        strokeWidth="2.1"
+        strokeWidth="3"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <rect x="13.5" y="2.2" width="4.6" height="4.6" rx="1.5" fill="var(--accent)" />
+      <rect className="logo-seal" x="14.6" y="1.4" width="6.6" height="6.6" rx="1.9" />
     </svg>
   )
 }

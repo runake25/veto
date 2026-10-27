@@ -60,7 +60,9 @@ function JobLine({ agent }: { agent: Agent }) {
   return (
     <>
       <span className="plate-job-name">{job.name}</span>
-      <span className="plate-muted plate-job-cadence">· {job.cadence_word}</span>
+      {/* the separator carries its own space: JSX drops the newline between the
+          two spans, which rendered "restock· every week" */}
+      <span className="plate-muted plate-job-cadence">{' · '}{job.cadence_word}</span>
       {paused ? (
         <span className="plate-muted"> · paused</span>
       ) : job.next_run_at ? (
@@ -226,14 +228,9 @@ export function Agents() {
       <motion.header className="screen-head" variants={m.riseIn}>
         <div>
           <h1>Agents</h1>
-          <p>The bots that can spend, and the charters they run inside.</p>
+          <p>The agents that can spend, and the charters they run inside.</p>
         </div>
         <div className="head-actions">
-          {agents ? (
-            <span className="head-count">
-              {agents.length} instance{agents.length === 1 ? '' : 's'}
-            </span>
-          ) : null}
           <FreshnessButton />
           <Link className="btn btn-primary" to="/agents/new">
             New agent

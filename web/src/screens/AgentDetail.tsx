@@ -400,9 +400,7 @@ function TestRequest({ agent, onCreated }: { agent: Agent; onCreated: () => void
         <span className="card-note">dry run · nothing ordered</span>
       </header>
       <p className="card-lede">
-        Type a cart. The run shows the offer this agent would actually get — its title, merchant,
-        category and price — then the catalogue offers around it; any row can be ordered exactly
-        as shown.
+        Type a cart. The run shows the offer this agent would get, and the catalogue around it.
       </p>
       <form className="inline-form" onSubmit={run}>
         <input
@@ -574,10 +572,7 @@ function TestRequest({ agent, onCreated }: { agent: Agent; onCreated: () => void
           <span className="card-note">catalogue · scoped to the rules</span>
         </header>
         {!result ? (
-          <p className="fineprint">
-            Run a test and the catalogue offers behind its pick appear here — pick any one to
-            order it exactly as shown.
-          </p>
+          <p className="fineprint">Offers behind a test appear here, ready to request.</p>
         ) : null}
         {searching ? <p className="fineprint">Reading the catalogue…</p> : null}
         {searchError ? <p className="inline-error">{searchError}</p> : null}
@@ -1061,8 +1056,8 @@ export function AgentDetail({ me }: { me: Me }) {
             <span className="card-note">irreversible</span>
           </header>
           <p className="card-lede">
-            Deletes the agent, its rules and its jobs. An agent with requests on record cannot be
-            deleted — pause it instead.
+            Deletes the agent, its rules and its jobs. Agents with requests on record cannot be
+            deleted — pause instead.
           </p>
           {deleteError ? (
             <p className="inline-error" role="alert">

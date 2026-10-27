@@ -9,29 +9,35 @@ import { motionSet } from '../components/motion'
 import { stateGroupHref, stateGroupLabel } from '../components/state'
 import { age, requestLabel, whenFull } from '../components/request'
 
+/**
+ * The two caps a summary row needs: the order ceiling and the signature line.
+ * The per-item cap stays on the agent's own page, where the full charter lives.
+ */
 function capsLine(agent: Agent): string {
   const parts: string[] = []
-  if (agent.per_order_cap_cents !== null)
+  if (agent.per_order_cap_cents !== null) {
     parts.push(`${capMoney(agent.per_order_cap_cents)} / order`)
-  if (agent.per_unit_cap_cents !== null)
+  } else if (agent.per_unit_cap_cents !== null) {
     parts.push(`${capMoney(agent.per_unit_cap_cents)} / item`)
+  }
   if (agent.approval_threshold_cents !== null)
     parts.push(`signature above ${capMoney(agent.approval_threshold_cents)}`)
   return parts.join(' · ')
-}
-
-function monthLabel(month: string | undefined): string | null {
-  if (!month) return null
-  const date = new Date(month)
-  if (Number.isNaN(date.getTime())) return null
-  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date)
 }
 
 /**
  * One request waiting on a person. Title and money lead; the agent that raised
  * it, its age and the way in are quiet.
  */
-function NeedRow({ request, agent }: { request: RequestSummary; agent?: Agent }) {
+function NeedRow({
+  request,
+  agent,
+  expired,
+}: {
+  request: RequestSummary
+  agent?: Agent
+  expired?: boolean
+}) {
   return (
     <li>
       <Link className="ov-need" to={`/inbox/${request.id}`} title={request.title}>
@@ -43,7 +49,10 @@ function NeedRow({ request, agent }: { request: RequestSummary; agent?: Agent })
         <span className="ov-need-main">
           <b>{request.title}</b>
           <span className="ov-need-agent">
-            {request.agent.name} · {requestLabel(request.seq)}
+            <span>
+              {request.agent.name} · {requestLabel(request.seq)}
+            </span>
+            {expired ? <span className="ov-need-expired">consent expired</span> : null}
           </span>
         </span>
         <span className="ov-need-amount">{money(request.total_cents, request.currency)}</span>
@@ -101,7 +110,13 @@ export function Overview() {
   const pending = overview?.pending ?? []
   const expired = overview?.expired ?? []
   const expiredCount = counts?.expired_consents ?? expired.length
-  const needsCount = counts?.needs_you ?? 0
+  // A lapsed consent is still a request waiting on a person: it belongs in the
+  // one group that needs a decision, not in a footnote below an empty panel.
+  const needsRows = [
+    ...pending.map((request) => ({ request, expired: false })),
+    ...expired.map((request) => ({ request, expired: true })),
+  ]
+  const needsCount = (counts?.needs_you ?? 0) + expiredCount
   const action =
     needsCount > 0
       ? {
@@ -116,28 +131,11 @@ export function Overview() {
     return map
   }, [agents])
 
-  const month = monthLabel(overview?.month)
   const settled = counts?.settled_month_cents ?? 0
   const committed = counts?.committed_cents ?? 0
   const used = settled + committed
   const budget = overview?.budget_cents ?? 0
   const usedPct = budget > 0 ? Math.min(100, Math.round((used / budget) * 100)) : 0
-
-  const lapsedRequest = expired[0]
-  const lapsedLine =
-    expiredCount > 0 ? (
-      expiredCount === 1 && lapsedRequest ? (
-        <p className="ov-lapsed">
-          Consent lapsed on {requestLabel(lapsedRequest.seq)} before it was signed —{' '}
-          <Link to={`/inbox/${lapsedRequest.id}`}>send it again from the record</Link>.
-        </p>
-      ) : (
-        <p className="ov-lapsed">
-          {expiredCount} consents lapsed before signing —{' '}
-          <Link to={stateGroupHref('needs')}>send them again from their records</Link>.
-        </p>
-      )
-    ) : null
 
   return (
     <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
@@ -163,11 +161,6 @@ export function Overview() {
       <motion.section className="ov-needs" variants={m.riseIn}>
         <header className="ov-panel-head">
           <h2>{stateGroupLabel('needs')}</h2>
-          {overview && pending.length ? (
-            <Link className="text-link" to={stateGroupHref('needs')}>
-              open inbox →
-            </Link>
-          ) : null}
         </header>
 
         {!overview && !overviewError ? (
@@ -185,25 +178,27 @@ export function Overview() {
           </ul>
         ) : null}
 
-        {overview && pending.length ? (
+        {overview && needsRows.length ? (
           <ul className="ov-needs-rows">
-            {pending.map((request) => (
-              <NeedRow key={request.id} request={request} agent={byId.get(request.agent.id)} />
+            {needsRows.map(({ request, expired: lapsed }) => (
+              <NeedRow
+                key={request.id}
+                request={request}
+                agent={byId.get(request.agent.id)}
+                expired={lapsed}
+              />
             ))}
           </ul>
         ) : null}
 
-        {overview && !pending.length && !expiredCount ? (
+        {overview && !needsRows.length ? (
           <p className="empty-title ov-needs-empty">Nothing is waiting.</p>
         ) : null}
-
-        {overview ? lapsedLine : null}
       </motion.section>
 
       <motion.section className="ov-month" variants={m.riseIn}>
         <div className="ov-month-head">
           <h2>This month</h2>
-          {month ? <span className="ov-month-name">{month}</span> : null}
           <Link className="text-link ov-month-link" to="/analytics">
             analytics →
           </Link>

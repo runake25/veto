@@ -45,8 +45,12 @@
 }
 
 .logo-mark {
-  color: var(--text);
   flex: none;
+}
+
+/* the seal is the one coloured piece of the lockup; it brightens on the rail */
+.logo-seal {
+  fill: var(--accent);
 }
 
 .auth-title {
@@ -495,12 +499,8 @@
   color: var(--rail-ink-strong);
 }
 
-.sidebar .logo-mark rect {
+.sidebar .logo-seal {
   fill: var(--rail-mark);
-}
-
-.sidebar .brand-workspace {
-  color: var(--rail-ink);
 }
 
 .sidebar .nav-label {
@@ -542,15 +542,7 @@
 }
 
 .brand-row {
-  display: grid;
-  gap: 3px;
   padding: 0 8px;
-}
-
-.brand-workspace {
-  font-size: 12px;
-  color: var(--muted);
-  padding-left: 31px;
 }
 
 .nav {
@@ -606,6 +598,40 @@
 .sidebar-foot {
   display: grid;
   gap: 8px;
+}
+
+/* setup sits with the account facts at the bottom of the rail, not in the
+   working nav: a person visits it to connect things, not to do the day's work */
+.nav-setup {
+  display: grid;
+  gap: 2px;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--rail-line);
+}
+
+.side-workspace {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 2px 10px 0;
+}
+
+.side-workspace-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7d8896;
+}
+
+.side-workspace-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--rail-ink);
 }
 
 .wallet-chip {
@@ -671,6 +697,18 @@
   justify-content: space-between;
   gap: 16px;
   padding: 0 12px 0 24px;
+}
+
+/* At desktop the top bar holds the sheet's own edges: the inset is the sheet's
+   1px border plus its 32px padding, or the gutter the centred 1080px screen
+   leaves on a wide window. The month and the account then sit on the same left
+   and right edge as the page title and its primary action — the frame carries
+   one grid, not two. */
+@media (min-width: 901px) {
+  .topbar {
+    padding-left: max(33px, calc((100% - 1080px) / 2));
+    padding-right: max(33px, calc((100% - 1080px) / 2));
+  }
 }
 
 .crumb {
@@ -1244,7 +1282,10 @@
    even when the lead figure and the "No cap" fallbacks are different sizes. */
 .agent-plate-rules {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* every track is at least as wide as its own label, so a long key
+     ("Signature above") can never push into the band's padding; the leftover
+     space is shared so the four figures still spread evenly. */
+  grid-template-columns: repeat(4, minmax(max-content, 1fr));
   grid-template-rows: auto auto;
   column-gap: 12px;
   row-gap: 5px;
@@ -1298,21 +1339,21 @@
   /* one line box for every value, so a plate whose lead is "No cap" keeps the
      same readout height as its neighbours and the foot rule stays aligned */
   line-height: 25px;
-  font-weight: 500;
-  letter-spacing: -0.025em;
+  /* money reads like the rest of the app: 600, tabular, barely tracked */
+  font-weight: 600;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .agent-plate-value.is-lead {
   font-size: 24px;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.025em;
 }
 
+/* an absent figure is quiet by tone, not by switching to a second typography:
+   same size, weight and tracking as the figure beside it, muted ink only */
 .agent-plate-value.is-void {
-  font-size: 13px;
-  font-weight: 400;
-  letter-spacing: 0;
   color: var(--faint);
 }
 
@@ -1392,10 +1433,12 @@
   gap: 12px;
 }
 
-/* when the plate itself is narrow the readout folds to a 2×2 of label/value rows */
-@container (max-width: 370px) {
+/* when the plate itself is narrow the readout folds to a 2×2 of label/value rows.
+   The threshold is where four tracks stop fitting their own labels: 4 × max-content
+   labels + 3 gaps needs ~421px of plate, so fold at 430 rather than clip at 370. */
+@container (max-width: 430px) {
   .agent-plate-rules {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(max-content, 1fr));
     grid-template-rows: auto minmax(27px, auto) auto minmax(27px, auto);
   }
 
@@ -3914,13 +3957,16 @@ a.agg-row:hover .agg-name b {
   background: none;
   color: var(--faint);
   font-size: 12px;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  /* a quiet status line, not a hyperlink: the underline arrives on hover/focus,
+     which is where it earns its keep as the "read now" affordance */
+  text-decoration: none;
   cursor: pointer;
 }
 
 .refresh-link:hover {
   color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .refresh-link:focus-visible {
@@ -5166,7 +5212,6 @@ a.agg-row:hover .agg-name b {
   flex: none;
 }
 
-.job-card-toggle,
 .job-menu-trigger {
   display: inline-flex;
   align-items: center;
@@ -5174,31 +5219,28 @@ a.agg-row:hover .agg-name b {
   width: 30px;
   height: 30px;
   padding: 0;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: var(--radius-control);
-  background: none;
+  background: var(--surface);
   color: var(--muted);
   cursor: pointer;
 }
 
-.job-card-toggle:hover,
 .job-menu-trigger:hover {
   color: var(--text);
   background: var(--raised);
+  border-color: var(--control);
 }
 
-.job-card-toggle:focus-visible,
 .job-menu-trigger:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-.job-chevron {
-  transition: transform 0.18s var(--ease-out);
-}
-
-.job-chevron.is-open {
-  transform: rotate(180deg);
+.job-menu-trigger[aria-expanded='true'] {
+  background: var(--raised);
+  border-color: var(--control);
+  color: var(--text);
 }
 
 .job-menu {
@@ -5289,14 +5331,23 @@ a.agg-row:hover .agg-name b {
 
 @media (max-width: 760px) {
   .job-card-head {
+    position: relative;
     flex-direction: column;
     align-items: stretch;
   }
 
+  .job-card-ident {
+    padding-right: 42px;
+  }
+
+  /* the one action menu rides the top-right corner instead of taking a row */
   .job-card-actions {
-    width: 100%;
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: auto;
+    margin: 0;
     justify-content: flex-end;
-    margin-left: 0;
   }
 }
 
@@ -5313,12 +5364,14 @@ a.agg-row:hover .agg-name b {
     white-space: normal;
   }
 
-  .job-card-actions {
-    gap: 2px;
-  }
-
   .job-card-meta {
     gap: 2px 7px;
+  }
+
+  /* the meta facts each sit on their own line here: a leading dot would read
+     as a bullet, not a separator */
+  .job-card-meta > span + span::before {
+    content: none;
   }
 
   /* the run row keeps its facts on two lines: date + outcome, then id + money */

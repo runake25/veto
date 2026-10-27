@@ -121,7 +121,7 @@ export function FreshnessButton() {
   return (
     <button
       type="button"
-      className="refresh-link mono"
+      className="refresh-link"
       onClick={refresh}
       title={
         live
@@ -130,9 +130,10 @@ export function FreshnessButton() {
       }
     >
       <span className={`freshness-dot${live ? ' is-live' : ''}`} aria-hidden="true" />
-      {stamp ? `Updated ${stamp}` : 'Not read yet'}
-      <span aria-hidden="true"> · </span>
-      {live ? 'Live' : 'Refresh'}
+      {/* the stamp is machine voice; the stream state is not, so only the time is mono */}
+      <span className="mono">{stamp ? `Updated ${stamp}` : 'Not read yet'}</span>
+      <span aria-hidden="true">·</span>
+      <span>{live ? 'Live' : 'Refresh'}</span>
     </button>
   )
 }

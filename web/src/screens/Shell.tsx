@@ -21,23 +21,30 @@ function titleFor(pathname: string): string {
   return TITLES[pathname] ?? 'Veto — spend control'
 }
 
-const GROUPS = [
-  {
-    label: 'Control',
-    sections: [
-      { to: '/', label: 'Overview', end: true },
-      { to: '/inbox', label: 'Inbox' },
-      { to: '/agents', label: 'Agents' },
-      { to: '/analytics', label: 'Analytics' },
-    ],
-  },
-  {
-    label: 'Setup',
-    sections: [{ to: '/integrations', label: 'Integrations' }, { to: '/settings', label: 'Settings' }],
-  },
-]
+type NavSection = { to: string; label: string; end?: boolean }
 
-const SECTIONS = GROUPS.flatMap((group) => group.sections)
+const CONTROL: { label: string; sections: NavSection[] } = {
+  label: 'Control',
+  sections: [
+    { to: '/', label: 'Overview', end: true },
+    { to: '/inbox', label: 'Inbox' },
+    { to: '/agents', label: 'Agents' },
+    { to: '/analytics', label: 'Analytics' },
+  ],
+}
+
+/**
+ * Setup is the rail's bottom cluster, beside the account facts: connecting a
+ * wallet or renaming a workspace is a visit, not the day's work.
+ */
+const SETUP: { label: string; sections: NavSection[] } = {
+  label: 'Setup',
+  sections: [
+    { to: '/integrations', label: 'Integrations' },
+    { to: '/settings', label: 'Settings' },
+  ],
+}
+
 const RAIL_KEY = 'veto.instances'
 
 /**
@@ -247,30 +254,45 @@ function ShellInner({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       <aside className="sidebar">
         <div className="brand-row">
           <Wordmark />
-          <span className="brand-workspace">{me.workspace.name}</span>
         </div>
 
         <nav className="nav" aria-label="Sections">
-          {GROUPS.map((group) => (
-            <div className="nav-group" key={group.label}>
-              <p className="nav-label">{group.label}</p>
-              {group.sections.map((section) => (
-                <div className="nav-slot" key={section.to}>
-                  <NavLink
-                    to={section.to}
-                    end={section.end}
-                    className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
-                  >
-                    {section.label}
-                  </NavLink>
-                  {section.to === '/agents' ? <InstanceRail me={me} /> : null}
-                </div>
-              ))}
-            </div>
-          ))}
+          <div className="nav-group">
+            <p className="nav-label">{CONTROL.label}</p>
+            {CONTROL.sections.map((section) => (
+              <div className="nav-slot" key={section.to}>
+                <NavLink
+                  to={section.to}
+                  end={section.end}
+                  className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
+                >
+                  {section.label}
+                </NavLink>
+                {section.to === '/agents' ? <InstanceRail me={me} /> : null}
+              </div>
+            ))}
+          </div>
         </nav>
 
         <div className="sidebar-foot">
+          <nav className="nav-setup" aria-label="Setup">
+            <p className="nav-label">{SETUP.label}</p>
+            {SETUP.sections.map((section) => (
+              <NavLink
+                key={section.to}
+                to={section.to}
+                className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
+              >
+                {section.label}
+              </NavLink>
+            ))}
+          </nav>
+
+          <div className="side-workspace">
+            <span className="side-workspace-label">Workspace</span>
+            <span className="side-workspace-name">{me.workspace.name}</span>
+          </div>
+
           <div className={`wallet-chip${walletOn ? ' is-on' : ''}`}>
             <span className="dot" aria-hidden="true" />
             <span>{walletOn ? 'Wallet connected' : 'Wallet not connected'}</span>
@@ -287,8 +309,10 @@ function ShellInner({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           <span className="topbar-brand">
             <Wordmark />
           </span>
+          {/* the phone bar carries the working sections; Setup lives in the
+              account menu, where sign-out is */}
           <nav className="topnav" aria-label="Sections">
-            {SECTIONS.map((section) => (
+            {CONTROL.sections.map((section) => (
               <NavLink
                 key={section.to}
                 to={section.to}

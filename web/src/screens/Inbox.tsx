@@ -157,6 +157,7 @@ export function Inbox() {
   const [error, setError] = useState<string | null>(null)
   const [moreBusy, setMoreBusy] = useState(false)
   const [search, setSearch] = useState(q)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const { tick, markLoaded } = useFreshness()
   const reduce = useReducedMotion()
   const m = motionSet(reduce)
@@ -281,6 +282,14 @@ export function Inbox() {
   const count = rows ? `${total} ${total === 1 ? 'request' : 'requests'}` : ''
   const open = (id: string) => navigate(`/inbox/${id}`)
 
+  // The three filters live behind one disclosure; what is active stays visible
+  // as chips, so the list never starts with a wall of controls.
+  const agentWord = agents?.find((agent) => agent.id === agentId)?.name
+  const whenWord =
+    WHEN_OPTIONS.find((option) => option.value === period)?.label ?? period
+  const sortWord = SORT_OPTIONS.find((option) => option.value === sort)?.label ?? sort
+  const activeFilterCount = [agentId, period, sort].filter(Boolean).length
+
   return (
     <motion.div className="screen" variants={m.stagger} initial="hidden" animate="show">
       <motion.header className="screen-head" variants={m.riseIn}>
@@ -320,53 +329,130 @@ export function Inbox() {
               onChange={(event) => setSearch(event.target.value)}
             />
           </label>
-          <label className="inbox-filter">
-            <span className="sr-only">Filter by agent</span>
-            <select
-              className="select"
-              value={agentId}
-              aria-label="Filter by agent"
-              onChange={(event) => choose({ agent: event.target.value })}
-            >
-              <option value="">All agents</option>
-              {(agents ?? []).map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inbox-filter">
-            <span className="sr-only">Filter by day</span>
-            <select
-              className="select"
-              value={period}
-              aria-label="Filter by day"
-              title="Calendar days in your own time zone"
-              onChange={(event) => choose({ when: event.target.value })}
-            >
-              {WHEN_OPTIONS.map((option) => (
-                <option key={option.value || 'any'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inbox-filter">
-            <span className="sr-only">Order requests</span>
-            <select
-              className="select"
-              value={sort}
-              aria-label="Order requests"
-              onChange={(event) => choose({ sort: event.target.value })}
-            >
-              {SORT_OPTIONS.map((option) => (
-                <option key={option.value || 'priority'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <button
+            type="button"
+            className={`inbox-filters-toggle${filtersOpen ? ' is-open' : ''}`}
+            aria-expanded={filtersOpen}
+            aria-controls="inbox-filter-panel"
+            onClick={() => setFiltersOpen((value) => !value)}
+          >
+            Filters
+            {activeFilterCount ? (
+              <span className="inbox-filter-count">{activeFilterCount}</span>
+            ) : null}
+            <svg className="inbox-filter-caret" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M4.5 6.25 8 9.75l3.5-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+
+          {filtersOpen ? (
+            <div className="inbox-filter-panel" id="inbox-filter-panel">
+              <label className="inbox-filter">
+                <span className="inbox-filter-label">Agent</span>
+                <select
+                  className="select"
+                  value={agentId}
+                  onChange={(event) => choose({ agent: event.target.value })}
+                >
+                  <option value="">All agents</option>
+                  {(agents ?? []).map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="inbox-filter">
+                <span className="inbox-filter-label">When</span>
+                <select
+                  className="select"
+                  value={period}
+                  title="Calendar days in your own time zone"
+                  onChange={(event) => choose({ when: event.target.value })}
+                >
+                  {WHEN_OPTIONS.map((option) => (
+                    <option key={option.value || 'any'} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="inbox-filter">
+                <span className="inbox-filter-label">Order</span>
+                <select
+                  className="select"
+                  value={sort}
+                  onChange={(event) => choose({ sort: event.target.value })}
+                >
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.value || 'priority'} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
+
+          {activeFilterCount ? (
+            <div className="inbox-chips" role="group" aria-label="Active filters">
+              {agentId ? (
+                <button
+                  type="button"
+                  className="inbox-chip"
+                  aria-label={`Remove agent filter: ${agentWord ?? 'agent'}`}
+                  onClick={() => choose({ agent: '' })}
+                >
+                  {agentWord ?? 'Agent'}
+                  <span className="inbox-chip-remove" aria-hidden="true">
+                    ×
+                  </span>
+                </button>
+              ) : null}
+              {period ? (
+                <button
+                  type="button"
+                  className="inbox-chip"
+                  aria-label={`Remove day filter: ${whenWord}`}
+                  onClick={() => choose({ when: '' })}
+                >
+                  {whenWord}
+                  <span className="inbox-chip-remove" aria-hidden="true">
+                    ×
+                  </span>
+                </button>
+              ) : null}
+              {sort ? (
+                <button
+                  type="button"
+                  className="inbox-chip"
+                  aria-label={`Reset order: ${sortWord}`}
+                  onClick={() => choose({ sort: '' })}
+                >
+                  Order: {sortWord}
+                  <span className="inbox-chip-remove" aria-hidden="true">
+                    ×
+                  </span>
+                </button>
+              ) : null}
+              {activeFilterCount > 1 ? (
+                <button
+                  type="button"
+                  className="inbox-chips-clear"
+                  onClick={() => choose({ agent: '', when: '', sort: '' })}
+                >
+                  Clear all
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </motion.div>
 

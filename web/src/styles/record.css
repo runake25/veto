@@ -247,19 +247,11 @@
   margin-right: auto;
 }
 
-.record-doc .verdict-lock,
 .record-doc .verdict-role {
   flex-basis: 100%;
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-}
-
-.record-doc .verdict-lock {
-  color: var(--hold-ink);
-}
-
-.record-doc .verdict-role {
   color: var(--muted);
 }
 

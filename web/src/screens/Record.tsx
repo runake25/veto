@@ -318,13 +318,11 @@ export function Record({ me }: { me: Me }) {
   const expired = Boolean(record && consentLapsed(record))
   const awaiting = record?.status === 'awaiting'
   const approved = record?.status === 'approved'
-  const canDecide = canAct && awaiting && !expired
   const canVeto = canAct && awaiting
   const canVoid = canAct && (awaiting || approved)
   const canResend = canAct && awaiting && expired
   const showActions = Boolean(awaiting || (approved && canAct))
   const tone = record ? (STATUS[record.status]?.tone ?? 'quiet') : 'quiet'
-  const expiredLine = 'Consent expired — send it again for a new window.'
 
   return (
     <motion.div
@@ -408,7 +406,10 @@ export function Record({ me }: { me: Me }) {
               <span className="doc-total">
                 {record.lines.length ? money(record.total_cents, record.currency) : 'No cart priced'}
               </span>
-              <StatusMark status={record.status} />
+              <StatusMark
+                status={record.status}
+                label={expired ? 'Consent expired' : undefined}
+              />
             </div>
           </header>
 
@@ -429,12 +430,12 @@ export function Record({ me }: { me: Me }) {
 
             {showActions ? (
             <div className="verdict-actions">
-              {canAct && awaiting ? (
+              {canAct && awaiting && !expired ? (
                 <button
                   type="button"
                   className="btn btn-primary"
                   onClick={() => askAct('approve')}
-                  disabled={!canDecide || busy !== null || pendingAction !== null}
+                  disabled={busy !== null || pendingAction !== null}
                 >
                   {busy === 'approve' ? 'Capturing…' : 'Approve & capture'}
                 </button>
@@ -442,7 +443,7 @@ export function Record({ me }: { me: Me }) {
               {canResend ? (
                 <button
                   type="button"
-                  className="btn btn-secondary"
+                  className="btn btn-primary"
                   onClick={() => void again()}
                   disabled={busy !== null || resending}
                 >
@@ -472,7 +473,6 @@ export function Record({ me }: { me: Me }) {
               {!canAct && awaiting ? (
                 <p className="verdict-role">An approver or admin signs this cart.</p>
               ) : null}
-              {expired ? <p className="verdict-lock">{expiredLine}</p> : null}
 
               {pendingAction ? (
                 <div className="verdict-confirm">

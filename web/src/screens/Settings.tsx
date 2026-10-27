@@ -371,7 +371,7 @@ export function Settings({
       <motion.header className="screen-head" variants={m.riseIn}>
         <div>
           <h1>Settings</h1>
-          <p>Your seat, this workspace and the rails under it.</p>
+          <p>Your seat, workspace and environment.</p>
         </div>
       </motion.header>
 

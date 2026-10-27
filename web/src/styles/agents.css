@@ -100,10 +100,8 @@
   column-gap: 14px;
 }
 
-.plate-charter .agent-plate-label {
-  font-size: 12px;
-  letter-spacing: 0.08em;
-}
+/* the charter keys keep the one label spec the rest of the console uses
+   (`.agent-plate-label` in app.css: 12px / 500 / 0.07em); no local override. */
 
 .plate-charter .agent-plate-value {
   font-size: 16px;
@@ -145,7 +143,7 @@
   font-size: 12px;
   line-height: 1.5;
   font-weight: 500;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--faint);
 }

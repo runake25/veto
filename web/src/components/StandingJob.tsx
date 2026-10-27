@@ -66,28 +66,6 @@ function runsWithNotes(outcome: RoutineOutcome): boolean {
   return outcome === 'skipped' || outcome === 'failed' || outcome === 'awaiting'
 }
 
-/** A chevron that says whether the card is open. */
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`job-chevron${open ? ' is-open' : ''}`}
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-    >
-      <path
-        d="M4.5 6.25 8 9.75l3.5-3.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
 type MenuItem = {
   label: string
   onSelect: () => void
@@ -97,13 +75,14 @@ type MenuItem = {
 }
 
 /**
- * The "..." menu on a job card. It holds the quiet actions (edit, delete, hide
- * details); run and pause stay on the card because they are the frequent ones.
- * Closes on an outside click and on Escape, like a native menu.
+ * The one action menu on a job card. The frequent actions (run, pause) and the
+ * quiet ones (edit, collapse, delete) all live here, so the card itself carries
+ * identity and state instead of a row of buttons.
  */
 function JobMenu({ label, items }: { label: string; items: MenuItem[] }) {
   const [open, setOpen] = useState(false)
   const wrap = useRef<HTMLDivElement | null>(null)
+  const trigger = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -111,7 +90,10 @@ function JobMenu({ label, items }: { label: string; items: MenuItem[] }) {
       if (wrap.current && !wrap.current.contains(event.target as Node)) setOpen(false)
     }
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') {
+        setOpen(false)
+        trigger.current?.focus()
+      }
     }
     document.addEventListener('mousedown', onPointer)
     document.addEventListener('keydown', onKey)
@@ -124,6 +106,7 @@ function JobMenu({ label, items }: { label: string; items: MenuItem[] }) {
   return (
     <div className="job-menu" ref={wrap}>
       <button
+        ref={trigger}
         type="button"
         className="job-menu-trigger"
         aria-label={label}
@@ -265,8 +248,8 @@ function RoutineForm({
         </p>
       ) : null}
       <p className="fineprint">
-        A run is a real request: the same rules, consent and capture apply. The envelope is the
-        job&rsquo;s own monthly ceiling; a cart that would cross it waits for a signature.
+        A run is a real request. The envelope is the job&rsquo;s own monthly ceiling; a cart that
+        would cross it waits for a signature.
       </p>
       <div className="form-actions">
         <PressButton type="submit" loading={busy}>
@@ -441,6 +424,28 @@ function JobCard({
 
   const menuItems: MenuItem[] = []
   if (canWrite) {
+    if (active) {
+      menuItems.push({
+        label: 'Run now',
+        disabled: running || agentPaused || confirming,
+        onSelect: () => {
+          onExpandedChange(true)
+          setConfirming(true)
+          setError(null)
+        },
+      })
+      menuItems.push({
+        label: 'Pause job',
+        disabled: running || statusBusy,
+        onSelect: () => void setJobStatus('pause'),
+      })
+    } else {
+      menuItems.push({
+        label: 'Resume job',
+        disabled: running || statusBusy,
+        onSelect: () => void setJobStatus('resume'),
+      })
+    }
     menuItems.push({
       label: 'Edit job',
       disabled: running,
@@ -493,50 +498,7 @@ function JobCard({
         </div>
 
         <div className="job-card-actions">
-          {canWrite ? (
-            active ? (
-              <PressButton
-                variant="secondary"
-                disabled={running || agentPaused || confirming}
-                onClick={() => {
-                  onExpandedChange(true)
-                  setConfirming(true)
-                  setError(null)
-                }}
-              >
-                Run now
-              </PressButton>
-            ) : (
-              <PressButton
-                variant="secondary"
-                loading={statusBusy}
-                disabled={running}
-                onClick={() => void setJobStatus('resume')}
-              >
-                Resume job
-              </PressButton>
-            )
-          ) : null}
-          {canWrite && active ? (
-            <PressButton
-              variant="quiet"
-              loading={statusBusy}
-              disabled={running}
-              onClick={() => void setJobStatus('pause')}
-            >
-              Pause job
-            </PressButton>
-          ) : null}
-          <button
-            type="button"
-            className="job-card-toggle"
-            aria-label={expanded ? 'Hide details' : 'Show details'}
-            aria-expanded={expanded}
-            onClick={() => onExpandedChange(!expanded)}
-          >
-            <Chevron open={expanded} />
-          </button>
-          {canWrite ? <JobMenu label={`More actions for ${routine.name}`} items={menuItems} /> : null}
+          <JobMenu label={`Actions for ${routine.name}`} items={menuItems} />
         </div>
       </header>
 
@@ -544,10 +506,7 @@ function JobCard({
         <div className="job-card-body">
           {confirming ? (
             <div className="routine-confirm">
-              <p>
-                A run creates a real request now and can capture money. It uses the same rules,
-                consent and PayPal path as any other request.
-              </p>
+              <p>A run creates a real request now and can capture money.</p>
               <div className="form-actions">
                 <PressButton
                   variant="secondary"
@@ -610,9 +569,7 @@ function JobCard({
           {confirmDelete ? (
             <div className="danger-confirm">
               <p className="danger-copy">
-                Delete this standing job and its run history? The requests it already made stay
-                in the record. The agent keeps its rules and can still buy when something asks
-                it to.
+                Delete this job and its run history? Its requests stay in the record.
               </p>
               {deleteError ? (
                 <p className="inline-error" role="alert">
@@ -678,8 +635,7 @@ function JobCard({
                 <p className="routine-note">
                   {routine.dedupe_days > 0
                     ? `Won't reorder within ${routine.dedupe_days} days.`
-                    : 'No reorder window — every due run becomes a request.'}{' '}
-                  The same rules, consent and capture apply.
+                    : 'No reorder window — every due run becomes a request.'}
                 </p>
                 {!active ? (
                   <p className="routine-note">
@@ -860,17 +816,15 @@ export function StandingJobs({
 
       {routines.length === 0 && !adding ? (
         <>
-          <p className="card-lede">
-            This agent has no standing jobs. Each job is a recurring instruction, a schedule and
-            its own monthly ceiling; a job still has to pass the same rules on every run.
-          </p>
+          <p className="card-lede">No standing jobs yet.</p>
           {canWrite ? (
             <div className="routine-empty">
               <PressButton variant="secondary" onClick={() => setAdding(true)}>
                 Set a standing job
               </PressButton>
               <p className="fineprint">
-                You approve the job once; every due run still has to pass the same rules.
+                A job repeats one instruction on a schedule; every run still passes the
+                agent&rsquo;s rules.
               </p>
             </div>
           ) : (
@@ -921,8 +875,7 @@ export function StandingJobs({
 
       {jobCount ? (
         <p className="fineprint job-foot">
-          Run now creates a real request and can capture money. Pause stops the schedule; the
-          job keeps its rules and its monthly ceiling.
+          Run now creates a real request and can capture money.
         </p>
       ) : null}
     </section>

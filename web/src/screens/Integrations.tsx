@@ -146,7 +146,11 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
     <section className="card integ-card integ-keys">
       <header className="card-head">
         <h2>Agent API keys</h2>
-        <span className="integ-head-meta mono">{activeCount} active</span>
+        <span className="integ-head-meta mono">
+          {activeCount === 0
+            ? 'No active keys'
+            : `${activeCount} active key${activeCount === 1 ? '' : 's'}`}
+        </span>
       </header>
 
       <div className="integ-curl">
@@ -262,7 +266,7 @@ function KeysCard({ data, me }: { data: IntegrationsData; me: Me }) {
       <p className="card-footnote">
         {admin
           ? 'Keys are stored hashed; the secret is shown once and revoking is immediate.'
-          : 'Only a workspace admin can mint or revoke a key; every key is stored hashed.'}
+          : 'Only an admin can mint or revoke keys; keys are stored hashed.'}
       </p>
     </section>
   )
