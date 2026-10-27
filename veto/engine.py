@@ -25,6 +25,7 @@ from veto.prompts import SYSTEM
 from veto.channel3 import Channel3, Channel3Error, rank, relevant, to_line  # noqa: E402
 
 from veto.paypal_client import PayPalClient, PayPalError  # noqa: E402
+from veto.consent import ttl_minutes, window_word  # noqa: E402
 
 CURRENCY = "USD"
 MOCK_CLIENT_ID = "mock-client-id"
@@ -617,7 +618,7 @@ class Engine:
             json.dumps(payload, sort_keys=True).encode()
         ).hexdigest()
         nonce = uuid.uuid4().hex
-        expires = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(timespec="seconds")
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes())).isoformat(timespec="seconds")
         return {
             "cart_hash": cart_hash, "nonce": nonce, "expires_at": expires,
             "single_use": True, "approver": charter["approver"], "issued": False,
@@ -631,7 +632,7 @@ class Engine:
             consent["issued_at"] = now_iso()
             req["events"].append({
                 "kind": "consent", "label": "Consent issued",
-                "detail": f"sha256:{consent['cart_hash'][:12]}… · single-use · 10 min",
+                "detail": f"sha256:{consent['cart_hash'][:12]}… · single-use · {window_word()}",
             })
 
         self.ensure_vault()

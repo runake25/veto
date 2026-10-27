@@ -25,11 +25,11 @@ from datetime import datetime, timedelta, timezone
 
 from veto import pipeline as veto_pipeline
 from veto import policy
+from veto.consent import ttl_minutes, window_word
 from veto.settlement import Settlement, SettlementError, VaultRequired
 from veto.store import Store, month_start_iso, now_iso, parse_iso
 
 CURRENCY = "USD"
-CONSENT_TTL_MINUTES = 10
 MAX_TEXT_CHARS = 4000
 
 STATUS_BLOCKED = "blocked"
@@ -338,7 +338,7 @@ def create(
     consent = None
     if outcome != "block":
         issued = datetime.now(timezone.utc)
-        expires = issued + timedelta(minutes=CONSENT_TTL_MINUTES)
+        expires = issued + timedelta(minutes=ttl_minutes())
         cart = cart_hash(agent["id"], lines, total_cents)
         consent = {
             "cart_hash": cart,
@@ -349,7 +349,7 @@ def create(
         events.append({
             "kind": "consent",
             "label": "Consent issued",
-            "detail": f"sha256:{cart[:12]}… · single-use · {CONSENT_TTL_MINUTES} min",
+            "detail": f"sha256:{cart[:12]}… · single-use · {window_word()}",
         })
 
     record = store.create_request(
@@ -383,7 +383,7 @@ def create(
             "kind": "consent",
             "label": "Consent issued",
             "detail": (
-                f"single use · {CONSENT_TTL_MINUTES} min · "
+                f"single use · {window_word()} · "
                 f"sha256:{consent['cart_hash'][:12]}"
             ),
         })
@@ -567,7 +567,7 @@ def approve(
         raise RequestError(
             409,
             "consent_expired",
-            "This cart's consent expired after 10 minutes. Ask the agent for a new request.",
+            f"This cart's consent expired after {window_word()}. Ask the agent for a new request.",
         )
     store.add_event(
         record["id"],

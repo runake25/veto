@@ -152,6 +152,17 @@ function PayPalSection({ record }: { record: RequestDetail }) {
   )
 }
 
+/** The consent window in words, read from the record rather than assumed. */
+function consentWindow(issued: string | null | undefined, expires: string | null | undefined): string {
+  if (!issued || !expires) return 'Single use'
+  const minutes = Math.round(
+    (new Date(expires).getTime() - new Date(issued).getTime()) / 60000,
+  )
+  if (!Number.isFinite(minutes) || minutes <= 0) return 'Single use'
+  if (minutes % 60 === 0 && minutes >= 120) return `Single use · ${minutes / 60} hours`
+  return `Single use · ${minutes} minutes`
+}
+
 function ConsentSection({ record }: { record: RequestDetail }) {
   const consent = record.consent
   if (!consent) {
@@ -167,7 +178,11 @@ function ConsentSection({ record }: { record: RequestDetail }) {
       ? 'Expired, unused'
       : 'Not yet'
   return (
-    <DocSection title="Consent" note="Single use · 10 minutes" className="consent-seal">
+    <DocSection
+      title="Consent"
+      note={consentWindow(consent.issued_at, consent.expires_at)}
+      className="consent-seal"
+    >
       <div className="seal-hash">
         <span className="seal-label">Cart hash</span>
         <CopyValue value={consent.cart_hash} label="Copy the cart hash" />
