@@ -107,12 +107,12 @@ flowchart TB
 
 ## The console
 
-<img src="submission/media/02-record-awaiting.png" width="100%" alt="A record waiting for a signature: every rule that fired with its observed value and limit, the cart, and the consent">
+<img src="submission/media/03-record-awaiting.png" width="100%" alt="A record waiting for a signature: every rule that fired with its observed value and limit, the cart, and the consent">
 
 One record: every rule that fired with its observed value and limit, the cart, the PayPal
 object chain, the consent hash and window, the trail. Approve, veto and void are gated by state.
 
-<img src="submission/media/07-agent-jobs.png" width="100%" alt="An agent page: the charter, its standing jobs and the monthly envelope">
+<img src="submission/media/08-agent-jobs.png" width="100%" alt="An agent page: the charter, its standing jobs and the monthly envelope">
 
 An agent is an instance: charter, standing job, one tool that both dry-runs a cart and browses the catalogue (every offer can be ordered exactly as shown), and every order as a receipt — amount, state, who asked, who signed. The rest of the console —
 [Overview](https://veto-bracken-field.onrender.com/app/#/), [Inbox](https://veto-bracken-field.onrender.com/app/#/inbox),

@@ -2,37 +2,38 @@
 
 Live demo: <https://veto-bracken-field.onrender.com> · Source: <https://github.com/runake25/veto>
 
-Everything below is PNG, exactly 3:2 (2880×1920 or 3000×2000) and 90–390 KB — well under the
-5 MB cap. Upload in this order.
+Twelve files. Each one is a designed slide — the screenshot with its caption baked in, because
+Devpost's gallery has no caption field, so the story has to live on the image. All PNG, exactly
+3:2 (3000×2000), 90–483 KB, well under the 5 MB cap. Upload in this order.
 
 ## Thumbnail (Project Overview → Thumbnail image)
 
-| File | What it is |
-|---|---|
-| [media/00-thumbnail-cover.png](media/00-thumbnail-cover.png) | Brand cover: veto mark + "Consent, not checkout." |
+`media/00-thumbnail-cover.png` — the brand cover: **"Consent, not checkout."**
 
-## Project media (Image Gallery) — 7 images
+## Project media (Image Gallery) — 11 slides
 
-| # | File | What it shows |
-|---|---|---|
-| 1 | [media/01-overview.png](media/01-overview.png) | The decision first: one waiting cart, the month held / settled / left, the agent fleet |
-| 2 | [media/02-record-awaiting.png](media/02-record-awaiting.png) | A record waiting for a signature: every rule with observed vs limit, the cart, the consent; no PayPal object yet |
-| 3 | [media/03-record-paypal.png](media/03-record-paypal.png) | A captured record: PayPal order → authorization → capture ids, the consent hash and window, the append-only trail |
-| 4 | [media/04-record-blocked.png](media/04-record-blocked.png) | A refusal: the rule that stopped it, "no PayPal object exists", no consent issued |
-| 5 | [media/07-agent-jobs.png](media/07-agent-jobs.png) | An agent instance: charter figures and two standing jobs with monthly envelopes |
-| 6 | [media/08-dry-run.png](media/08-dry-run.png) | The streamed pipeline (extract → Channel3 → price → decision) and the scored catalogue around the pick |
-| 7 | [media/10-integrations.png](media/10-integrations.png) | The PayPal sandbox wallet connected, agent API keys, six Slack commands, signature verified |
+The eleven slides read as one request: the question → how a cart is built → the decision →
+the money → the refusal → the ledger → the agents → the jobs → the audit → the rails → the phone.
 
-If the form has no separate thumbnail field, upload `00` first and then the seven above.
+| # | File | Eyebrow | Caption |
+|---|---|---|---|
+| 1 | [media/01-overview.png](media/01-overview.png) | 01 · THE CONSOLE | **What needs a signature, and what is already spent.** One cart waiting, the month's held and settled money, and the agents that can spend. |
+| 2 | [media/02-pipeline.png](media/02-pipeline.png) | 02 · THE PIPELINE | **A sentence becomes a judged cart.** DeepSeek reads what to buy, Channel3 prices real offers, and code decides. |
+| 3 | [media/03-record-awaiting.png](media/03-record-awaiting.png) | 03 · THE DECISION | **Over the line, the cart stops.** Every rule stores its observed value and limit; the consent binds the approval to this exact cart. |
+| 4 | [media/04-record-paypal.png](media/04-record-paypal.png) | 04 · THE MONEY | **The signature is what moves money.** PayPal order, authorization, capture — the consent nonce is the idempotency key. |
+| 5 | [media/05-record-blocked.png](media/05-record-blocked.png) | 05 · THE REFUSAL | **A refusal is a receipt too.** The rule and its numbers, no consent issued, and zero PayPal objects. |
+| 6 | [media/06-inbox.png](media/06-inbox.png) | 06 · THE LEDGER | **Every request, every state.** Needs you, settled, refused, withdrawn — one board for every door the request came through. |
+| 7 | [media/07-agents.png](media/07-agents.png) | 07 · THE AGENTS | **Authority belongs to an agent.** Each agent owns a budget slice and a rule set — not a prompt. |
+| 8 | [media/08-agent-jobs.png](media/08-agent-jobs.png) | 08 · THE JOBS | **Agents keep working when nobody is watching.** A cadence, a monthly envelope, and a pause that is a money rule. |
+| 9 | [media/09-analytics.png](media/09-analytics.png) | 09 · THE AUDIT | **Captured is the only spend counted.** Held, stopped and refused money sits beside it — by agent, merchant, category and rule. |
+| 10 | [media/10-integrations.png](media/10-integrations.png) | 10 · THE RAILS | **The rail out, and every door in.** One PayPal sandbox wallet, agent API keys, six signed Slack commands. |
+| 11 | [media/11-mobile.png](media/11-mobile.png) | 11 · THE PHONE | **The same board, one column.** At 390px rows fold, the sidebar becomes a nav, and nothing scrolls sideways. |
 
-## Not in this set
+If the form has no separate thumbnail field, upload `00` first and then the eleven above. If it
+has per-image caption fields, use the bold sentence + the sentence after it.
 
-To keep the gallery to the eight images that carry the story, the inbox, the agents list, the
-analytics screen, the mobile composite and the contact sheet were removed. They are still in git
-history (commit `726bef1`) if you want one back, e.g.:
+## Not for upload
 
-```bash
-git show 726bef1:submission/media/09-analytics.png > 09-analytics.png
-```
-
-Do not upload this file.
+- [storyboard.png](storyboard.png) — a one-glance preview of the whole set.
+- This file.
+- The raw (uncaptioned) screenshots are still in git: `git show 726bef1:submission/media/05-inbox.png`.
